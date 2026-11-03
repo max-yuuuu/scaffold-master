@@ -2,7 +2,7 @@
 
 用于后续后台管理系统开发的 Spring Boot + Vue 底座。包含认证、菜单与按钮权限、数据权限、组织管理、字典、参数、日志、工作台和代码生成骨架；新增项目在此基础上实现业务模块。
 
-> **演进方向**：本项目正从通用脚手架演进为多租户低代码平台 **「元搭」**（Yuán Dā）。权威基线已切至 [`lowcode-ai`](https://github.com/max-yuuuu/lowcode-ai.git)（remote 名 `lowcode-ai`），上游 PR 不再等合并；完整方案见 [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)。脚手架本身继续承担三重身份 —— 元搭的底座（前端 UI + 后端 common/framework/system）、生成项目的运行时壳子、上游开源同步通道。
+> **演进方向**：本项目正从通用脚手架演进为多租户低代码平台 **「元搭」**（Yuán Dā）。权威基线已切至 [`lowcode-ai`](https://github.com/max-yuuuu/lowcode-ai.git)（remote 名 `lowcode-ai`），上游 PR 不再等合并；完整方案见 [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)。脚手架本身继续承担三重身份 —— 元搭自身（同一个 app：前端 UI + 后端 common/framework/system + 新增 `scaffold-lowcode`）、生成项目的初始框架（裁剪后的固定代码快照）、上游开源同步通道。
 
 ## 元搭演进
 
@@ -10,22 +10,27 @@
 
 **关键口径**（细节与表结构、API、流程图见方案文档）：
 
-- 平台作为独立项目，不新增到 scaffold 模块树里；scaffold 保持"底座 + 模板"两职。
-- 多租户数据隔离：平台元数据用 `tenant_id` 字段隔离，业务数据按项目独立数据库。
-- 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。
-- 页面设计器采用拖拽 + 配置融合：流式布局画布摆放容器与控件、支持嵌套、右侧属性面板配样式和数据绑定，产出结构化 JSON。
+- 平台就长在本仓库：低代码能力新增 `scaffold-lowcode` 模块承载，scaffold 同时是元搭底座与生成项目的模板来源。
+- **平台不托管项目运行时**：它是研发期工具。发布 = 生成代码 + 提交 + 推送到租户登记的 Git 仓库**生成分支**；进主干由人在平台内发起「合并请求」，选源/目标分支、看文件 diff、确认才合并，平台不自动合并、永不 force-push。
+- 多租户数据隔离：平台元数据与 `sys_*` 同库，`lc_` 前缀 + `tenant_id` 字段隔离；业务库随生成项目自带，平台不连（建表 SQL 推仓库由项目自己迁移）。
+- Git 凭据走主机级 SSH 密钥，数据库只存 `repo_url` 与分支名；Git 操作全部用 JGit，不经 shell。
+- 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。生成物按所有权分三档：A 固定（初始化后平台不碰）、B 纯生成（每次覆盖、约定人工不改）、C 扩展点（生成一次骨架后平台不碰，业务逻辑写这里）。原 `CUSTOM-START/END` 文本级合并机制取消。
+- 页面设计器采用拖拽 + 配置融合：流式布局画布摆放容器与控件、支持嵌套、右侧属性面板配样式和数据绑定，产出结构化 JSON；**自研，不引 LowCodeEngine**（选型依据见方案 §3.6）。
 - 增量发布：文件哈希对比只写变更文件；路由通过 `sys_menu` + `import.meta.glob` 自动注册，无需改前端代码。
-- 组件复用：`scaffold-vue` 是 `private: true` 单体应用，短期 fork 整个 app 起步、稳定后抽 `@scaffold/ui` npm 包。
-- 版本与回滚：Git 集成，支持文件级 / 页面级 / 发布级三级回滚；`CUSTOM-START/END` 标记保护开发者手写的业务代码不被覆盖。
+- 组件物料：抽 **`@scaffold/ui`** 包（本仓库 `packages/scaffold-ui` + npm workspaces），平台与每个生成项目共用同一个包 —— 组件源码不再拷进项目，升级从搬 diff 降为 bump 版本号。带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`）靠 `installScaffoldUi(app, {http, permission, dict})` 注入宿主能力，需先解 28 处对 `@/api`、`@/data`、`@/directives` 的 import。发布走 GitHub git tag 依赖。不存在 fork：平台前端就是 scaffold-vue 宿主，低代码视图进 `src/views/lowcode/**`。
+- 每个生成项目只有一个业务模块 `scaffold-business`（初始化时预置进 pom），生成代码进它的子包 —— 否则每次发布都要改 A 档 pom，"固定代码不随发布变动"就破了。
+- 模型（`lc_model` / `lc_field`）是**代码生成器的输入（期望态）**，不是"模型管理"业务功能；判据：「这段逻辑能不能只靠字段名 + 类型推导出来？」能 → 进模型生成，不能 → 进 C 档扩展点手写。页面与模型的耦合只在 `field_code`。
+- 接口生成边界：标准 CRUD 六端点由模型直接推导；自定义接口（状态流转、批量、聚合、跨实体）一律走扩展点不生成；**flow / 流程编排 / 状态机元数据化本期不做**。
+- 版本与回滚：每次发布打 tag，支持文件级 / 页面级 / 发布级三级回滚，一律以 `revert` 新提交实现，不倒带分支历史。
 
-**当前阶段**：方案设计完成（P0 未开工）。下一步多租户基础设施 —— `TenantContext`、`TenantFilter`、MyBatis `TenantLineInnerInterceptor`、现有 `sys_*` 表加 `tenant_id`。
+**当前阶段**：P0-A 多租户地基已完成（`lc_tenant` 建表、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）。下一步 P0-B —— MyBatis `TenantLineInnerInterceptor` 自动过滤（先定 `super_admin` 跨租户旁路口径）与租户管理 UI。
 
 ## 开发入口
 
 - [项目地图](PROJECT_MAP.md)：按功能定位页面、接口、服务、SQL 和权限。
 - [设计规范](DESIGN.md)：珍珠玻璃主题、组件复用及交互规范。
 - [开发约定](AGENTS.md)、[更新日志](changelog.md)。
-- [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)：多租户层级、可视化设计器、代码生成与增量发布。
+- [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)：多租户层级、可视化设计器、代码生成、发布与仓库合并请求。
 - [后端架构](docs/backend-architecture.md)、[前后端接口约定](docs/frontend-backend-integration.md)、[前端架构](docs/admin-redesign-architecture.md)。
 - [Docker 部署指南](docs/docker-deployment.md)：Compose 一键编排前端 / 后端 / Redis / 可选 MySQL。
 
