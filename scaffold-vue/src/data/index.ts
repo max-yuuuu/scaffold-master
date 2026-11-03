@@ -9,8 +9,8 @@ export interface BeianItem {
 }
 
 export const APP = Object.freeze({
-  name: '通用后台管理系统',
-  shortName: '管理后台',
+  name: '元搭低代码平台',
+  shortName: '元搭低代码',
   subtitle: 'Admin Console',
   version: 'v1.0.0',
   /** 登录页左侧介绍位：接入具体业务平台时改这一段 */
