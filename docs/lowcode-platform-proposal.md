@@ -4,6 +4,45 @@
 
 ---
 
+## 〇、仓库与基线
+
+**2026-11-03 现状**
+
+| 项 | 值 |
+|----|-----|
+| 权威仓库 | `https://github.com/max-yuuuu/lowcode-ai.git`（git remote 名 `lowcode-ai`） |
+| 基线 HEAD | `ba3e0dc` on `main`，含 `feat/framework-global-sync`（前端组件重写）+ `feat/deploy-docker`（Docker 部署）+ 方案文档 |
+| 上游 PR | 不再等合并；两个 PR 分支的改动已并入本地 main 后推 lowcode-ai |
+
+**scaffold-master 的三重身份**（重要修正，不只是模板来源）
+
+```
+scaffold-master = ① 低代码平台自身的底座
+                   ├─ 平台 UI 用 scaffold-vue 组件（ListPage/FormDialog/DataTable/珍珠玻璃样式）
+                   └─ 平台后端用 scaffold-common/framework/system
+
+                = ② 生成项目的运行时壳子
+                   ├─ 项目初始化时克隆整套
+                   └─ 页面发布只增量更新业务模块
+
+                = ③ 上游开源仓库
+                   └─ 现由 lowcode-ai 替代作为主推进；scaffold-master 保留同步通道
+```
+
+**待决策：低代码平台如何复用 scaffold-vue 组件？**
+
+`scaffold-vue/package.json` 是 `"private": true` 单体应用（组件在 `src/components/`，靠 `@/` 别名引用），不是可发布 npm 包。三条路：
+
+| 方案 | 优势 | 代价 |
+|------|------|------|
+| **A. fork scaffold-vue 整个 app** | 立即可用，最快开工 | 组件双份维护，与上游修复要手工来回同步 |
+| **B. 抽 `@scaffold/ui` npm 包**（推荐长期） | 平台与生成项目都依赖同一份，改一处两边同步 | 需要重构 scaffold 本体，涉及大量 import 路径改动 |
+| **C. git subtree 同步** | 折中：保留同步通道 | subtree 操作门槛高，组件局部改动易冲突 |
+
+推荐路径：**A 起步 → 稳定后走 B**。先让平台跑起来，验证设计器需求稳定后再抽包，避免过早重构。
+
+---
+
 ## 一、核心概念
 
 ### 1.1 层级关系
