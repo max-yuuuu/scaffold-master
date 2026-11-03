@@ -2,11 +2,30 @@
 
 用于后续后台管理系统开发的 Spring Boot + Vue 底座。包含认证、菜单与按钮权限、数据权限、组织管理、字典、参数、日志、工作台和代码生成骨架；新增项目在此基础上实现业务模块。
 
+> **演进方向**：本项目正从通用脚手架演进为多租户低代码平台。权威基线已切至 [`lowcode-ai`](https://github.com/max-yuuuu/lowcode-ai.git)（remote 名 `lowcode-ai`），上游 PR 不再等合并；完整方案见 [低代码平台完整方案](docs/lowcode-platform-proposal.md)。脚手架本身继续承担三重身份 —— 低代码平台的底座（前端 UI + 后端 common/framework/system）、生成项目的运行时壳子、上游开源同步通道。
+
+## 低代码平台演进
+
+**层级**：租户 → 项目 → 模型 → 页面
+
+**关键口径**（细节与表结构、API、流程图见方案文档）：
+
+- 平台作为独立项目，不新增到 scaffold 模块树里；scaffold 保持"底座 + 模板"两职。
+- 多租户数据隔离：平台元数据用 `tenant_id` 字段隔离，业务数据按项目独立数据库。
+- 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。
+- 页面设计器采用拖拽 + 配置融合：流式布局画布摆放容器与控件、支持嵌套、右侧属性面板配样式和数据绑定，产出结构化 JSON。
+- 增量发布：文件哈希对比只写变更文件；路由通过 `sys_menu` + `import.meta.glob` 自动注册，无需改前端代码。
+- 组件复用：`scaffold-vue` 是 `private: true` 单体应用，短期 fork 整个 app 起步、稳定后抽 `@scaffold/ui` npm 包。
+- 版本与回滚：Git 集成，支持文件级 / 页面级 / 发布级三级回滚；`CUSTOM-START/END` 标记保护开发者手写的业务代码不被覆盖。
+
+**当前阶段**：方案设计完成（P0 未开工）。下一步多租户基础设施 —— `TenantContext`、`TenantFilter`、MyBatis `TenantLineInnerInterceptor`、现有 `sys_*` 表加 `tenant_id`。
+
 ## 开发入口
 
 - [项目地图](PROJECT_MAP.md)：按功能定位页面、接口、服务、SQL 和权限。
 - [设计规范](DESIGN.md)：珍珠玻璃主题、组件复用及交互规范。
 - [开发约定](AGENTS.md)、[更新日志](changelog.md)。
+- [低代码平台完整方案](docs/lowcode-platform-proposal.md)：多租户层级、可视化设计器、代码生成与增量发布。
 - [后端架构](docs/backend-architecture.md)、[前后端接口约定](docs/frontend-backend-integration.md)、[前端架构](docs/admin-redesign-architecture.md)。
 - [Docker 部署指南](docs/docker-deployment.md)：Compose 一键编排前端 / 后端 / Redis / 可选 MySQL。
 

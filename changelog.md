@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-11-03（合并两个待上游 PR、切换权威仓库、低代码平台方案落地）
+
+- **仓库定位切换**：`feat/framework-global-sync`（64 文件前端组件重写、+5230 行）与 `feat/deploy-docker`（Docker 部署）合并到本地 `main`；新增 remote `lowcode-ai` 指向 `https://github.com/max-yuuuu/lowcode-ai.git` 并推送。**此后以 lowcode-ai/main 为基线**，原 `origin`（max-yuuuu/scaffold-master）与 `upstream` 保留但不再作为主推进。上游两个 PR 的处理策略由"等合并"改为"不再等"。
+- **合并冲突处理**：`AGENTS.md` 自动合并；`PROJECT_MAP.md` 保留 framework 侧的 `V3__system_resource_menu.sql` 引用 + 保留 deploy 侧的 `docs/docker-deployment.md` 引用；`README.md` 保留 deploy 侧的 Docker 段落 + 采用 framework 侧的新验证码文案（放弃 deploy 侧的旧"页面显示的字符"表述）；`changelog.md` 两个 `## 2026-11-01` 段落并列保留（回迁 + Docker）。
+- **低代码平台方案落地**：新增 `docs/lowcode-platform-proposal.md`（792 行），综合四个 agent 从架构、多租户、代码生成、前端设计器四个维度的深度分析。核心口径：租户→项目→模型→页面 四层层级；scaffold 三重身份（平台底座 + 生成项目模板 + 上游同步通道）；FreeMarker 模板替换 `GeneratorService` 的 StringBuilder 拼接、生成完整 CRUD 而非骨架；页面设计器采用拖拽 + 配置融合（流式布局、容器嵌套、属性面板），产出结构化 JSON 由运行时引擎映射到 `ListPage` / `FormDialog` / `DataTable`；增量发布按文件哈希对比只写变更；Git 集成支持文件级 / 页面级 / 发布级三级回滚，`CUSTOM-START/END` 标记保护手写代码。
+- **README 演进说明**：顶部加"演进方向"提示块，新增"低代码平台演进"段列出关键口径与当前阶段。开发入口新增方案文档链接。
+- **组件复用待决策项明确**：`scaffold-vue/package.json` 是 `"private": true` 单体应用而非可发布 npm 包，平台复用其组件的三条路径（fork 整个 app / 抽 `@scaffold/ui` 包 / git subtree）在方案中标为待决策，倾向路径为"短期 fork 起步、稳定后抽包"。
+
 ## 2026-11-01（从业务工程回迁框架通用能力）
 
 - **背景与口径**：以下能力在实际业务工程（网约车运营平台）上先落地并验证，本库原先只有精简版本。本次只搬**与业务无关的框架层**：全局修复与健壮性、系统管理新增页、组件库补齐；不搬业务模块、厂商 SDK（阿里云 OSS / 短信 / 一键登录）与 Excel/Pdf 导出工具链，因此**没有新增任何 Maven 依赖**。
