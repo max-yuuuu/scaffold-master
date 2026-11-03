@@ -38,6 +38,17 @@ public final class SecurityUtils {
     }
 
     /**
+     * 获取当前登录用户所属租户 ID。多租户下所有业务查询应据此过滤；未登录时抛 401。
+     */
+    public static Long getTenantId() {
+        try {
+            return getLoginUser().tenantId();
+        } catch (Exception ex) {
+            throw new BusinessException(UNAUTHORIZED, "获取租户信息异常");
+        }
+    }
+
+    /**
      * 获取当前登录用户凭据
      */
     public static LoginUser getLoginUser() {

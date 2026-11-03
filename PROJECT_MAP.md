@@ -1,6 +1,6 @@
 # 通用后台管理脚手架项目地图
 
-> 2026-11-01 更新。用于后续业务开发和排障；“已确认”表示代码链路已核对，运行验证记录见 `changelog.md`。数据库映射已与本地 MySQL 5.7 的真实结构及三份初始化脚本核对。
+> 2026-11-03 更新。用于后续业务开发和排障；“已确认”表示代码链路已核对，运行验证记录见 `changelog.md`。数据库映射已与本地 MySQL 5.7 的真实结构及三份初始化脚本核对；本次同步多租户地基 PR 1（`lc_tenant` 表、`sys_*` 加 `tenant_id`、`TenantContext` + `TenantFilter` 打通登录链路）。
 
 ## 一、项目总览
 
@@ -12,14 +12,15 @@
 - Maven 模块：`scaffold-common`、`scaffold-framework`、`scaffold-system`、`scaffold-generator`、`scaffold-admin`。
 - 包名前缀：`com.scaffold`；启动类：`scaffold-system/scaffold-admin/src/main/java/com/scaffold/admin/ScaffoldAdminApplication.java`。
 - 配置：`scaffold-system/scaffold-admin/src/main/resources/application.yml`、`application-dev.yml`；前端代理：`scaffold-vue/vite.config.ts`。
-- 数据库初始化：`scaffold-system/sql/V1__init_schema.sql`、`V2__seed_data.sql`、`V3__system_resource_menu.sql`；开发工具：`scaffold-admin/src/main/java/com/scaffold/admin/util/DbInit.java`。
-- 入口规范：`README.md`、`AGENTS.md`、`DESIGN.md`；部署见 `docs/docker-deployment.md`；建筑与工作流已移除。
+- 数据库初始化：`scaffold-system/sql/V1__init_schema.sql`（15 张表，含 `lc_tenant`，`sys_*` 表带 `tenant_id`）、`V2__seed_data.sql`（首行平台租户 id=1 种子）、`V3__system_resource_menu.sql`；开发工具：`scaffold-admin/src/main/java/com/scaffold/admin/util/DbInit.java`。
+- 入口规范：`README.md`、`AGENTS.md`、`DESIGN.md`；部署见 `docs/docker-deployment.md`；低代码平台方案见 `docs/lowcode-platform-proposal.md`；建筑与工作流已移除。
 
 ## 二、业务术语词典
 
 | 业务说法 | 代码 / 表 | 字段及中文含义 | 来源 |
 | --- | --- | --- | --- |
-| 后台账号 | `AuthUserRow`、`sys_user` | `username` 登录账号；`nickname` 姓名；`status` 启用状态；`deleted` 删除标记 | 已确认 |
+| 租户 | `lc_tenant` | `tenant_code` 租户编码；`tenant_name` 名称；`max_projects` 项目数配额；`expire_time` 到期时间；`status` 启用状态 | 已确认 |
+| 后台账号 | `AuthUserRow`、`sys_user` | `tenant_id` 归属租户 ID；`username` 登录账号；`nickname` 姓名；`status` 启用状态；`deleted` 删除标记 | 已确认 |
 | 角色 | `sys_role`、`sys_user_role` | `role_code` 角色编码；`builtin` 内置标记；`data_scope` 数据范围 | 已确认 |
 | 菜单 / 按钮 | `MenuRow`、`sys_menu`、`sys_role_menu` | `menu_type` 为 `dir` 目录 / `menu` 页面 / `btn` 操作；`permission` 权限码 | 已确认 |
 | 组织与岗位 | `sys_dept`、`sys_post`、`sys_user_post` | `parent_id` 上级部门；`ancestors` 上级链；`post_code` 岗位编码 | 已确认 |
@@ -35,7 +36,7 @@
 
 | 后端模块 | Controller | Service | Mapper / 表 | 来源 |
 | --- | --- | --- | --- | --- |
-| 认证与路由 | `scaffold-system/src/main/java/com/scaffold/system/controller/AuthController.java` | 同包域 `service/AuthService.java`、`SystemPermissionResolver.java` | `mapper/AuthMapper.java`；用户、角色、菜单及关联表、登录日志。登录人信息由 `framework/security/SecurityUtils` 统一读取（令牌 `userId` 声明经 `LoginUser` 挂在 `Authentication#getDetails()`） | 已确认 |
+| 认证与路由 | `scaffold-system/src/main/java/com/scaffold/system/controller/AuthController.java` | 同包域 `service/AuthService.java`、`SystemPermissionResolver.java` | `mapper/AuthMapper.java`；用户、角色、菜单及关联表、登录日志、`lc_tenant` 状态校验。登录人信息由 `framework/security/SecurityUtils` 统一读取（令牌 `userId` + `tenantId` 声明经 `LoginUser` 挂在 `Authentication#getDetails()`）；`framework/tenant/TenantFilter` 在 `JwtAuthenticationFilter` 之后从 `LoginUser` 写 `TenantContext`，请求结束清理 | 已确认 |
 | 用户、角色、组织、菜单、字典、参数 | `scaffold-system/src/main/java/com/scaffold/system/controller/SystemManagementController.java` | `service/SystemManagementService.java` | `mapper/SystemManagementMapper.java`；各 `sys_*` 管理表 | 已确认 |
 | 工作台 | `scaffold-system/src/main/java/com/scaffold/system/controller/DashboardController.java` | `service/DashboardService.java` | `mapper/DashboardMapper.java`；用户、角色、两类日志 | 已确认 |
 | 资源监测（只读） | `scaffold-system/src/main/java/com/scaffold/system/controller/ResourceMonitorController.java` | `service/ResourceMonitorService.java` | 无自有表：JMX 取主机与 JVM、Redis 连接取 `INFO` / `PING`、Hikari `HikariPoolMXBean` 与 MySQL 全局状态、`information_schema.tables` | 已确认 |
@@ -169,6 +170,7 @@
 
 ## 九、特殊机制备忘
 
+- **多租户地基（PR 1，2026-11-03）**：`TenantContext`（`scaffold-common`，纯 ThreadLocal）+ `TenantFilter`（`scaffold-framework`，`SecurityConfig` 用 `.addFilterAfter(tenantFilter, JwtAuthenticationFilter.class)` 注册）+ `LoginUser.tenantId` + JWT `tenantId` claim 已打通登录链路：`AuthService.login` 依次校验账号密码 → 用户状态 → 租户状态（`AuthMapper.countActiveTenant`），签发 token 携带 `user.getTenantId()`；`SecurityUtils.getTenantId()` 在使用点抛 401。11 张 `sys_*` 表带 `tenant_id NOT NULL DEFAULT 1`；跨租户唯一键改为 `(tenant_id, 原键)`。旧令牌（无 `tenantId` claim）解析出 `tenantId = null`，`TenantFilter` 不抛错，业务层决定是否拒绝。**本次不做**：MyBatis Plus `TenantLineInnerInterceptor` 自动 SQL 过滤（需先定 super_admin 跨租户旁路口径）、`lc_tenant_config` 表、租户管理 UI、`lc_project` 与模型/页面表 —— 都放 PR 2+。
 - Redis token key 前缀为 `auth:token:`；退出删除当前 token，每次登录的 JWT 带独立 ID。
 - JWT 签名密钥读取必填环境变量 `JWT_SECRET`，UTF-8 编码至少 32 字节且不能全为空白；缺失或长度不足时阻止启动。
 - 验证码答案只存 Redis 并在 `verify` 时消费；接口只返回 base64 PNG 图片与 `uuid`，明文不回传前端（`code` 字段已删除）。开关 `scaffold.security.captcha.enabled`（环境变量 `CAPTCHA_ENABLED`）关闭时 `verify` 直接放行，`scaffold-admin` 的 surefire 以系统属性关闭，集成测试因此不需要读图。

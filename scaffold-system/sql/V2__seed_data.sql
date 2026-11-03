@@ -1,4 +1,8 @@
 -- 本地开发示例数据；组织与用户仅供演示，电话留空，邮箱使用 example.com。
+-- 平台自身租户：所有种子数据默认归属 id=1；sys_* 表 tenant_id 走列 DEFAULT 1，无需在 INSERT 中显式声明。
+INSERT IGNORE INTO lc_tenant (id, tenant_code, tenant_name, contact_name, max_projects, status, remark, create_by, update_by)
+VALUES (1, 'platform', '平台租户', '系统', 100, 1, '低代码平台自身与所有种子数据归属的默认租户', 'system', 'system');
+
 INSERT IGNORE INTO sys_dept (id, parent_id, ancestors, dept_name, leader, phone, email, sort, status, create_by, update_by)
 VALUES
     (1, 0, '0', '云原科技集团', '周明远', '', 'hq@example.com', 1, 1, 'system', 'system'),

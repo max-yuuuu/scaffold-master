@@ -2,9 +2,9 @@
 
 用于后续后台管理系统开发的 Spring Boot + Vue 底座。包含认证、菜单与按钮权限、数据权限、组织管理、字典、参数、日志、工作台和代码生成骨架；新增项目在此基础上实现业务模块。
 
-> **演进方向**：本项目正从通用脚手架演进为多租户低代码平台。权威基线已切至 [`lowcode-ai`](https://github.com/max-yuuuu/lowcode-ai.git)（remote 名 `lowcode-ai`），上游 PR 不再等合并；完整方案见 [低代码平台完整方案](docs/lowcode-platform-proposal.md)。脚手架本身继续承担三重身份 —— 低代码平台的底座（前端 UI + 后端 common/framework/system）、生成项目的运行时壳子、上游开源同步通道。
+> **演进方向**：本项目正从通用脚手架演进为多租户低代码平台 **「元搭」**（Yuán Dā）。权威基线已切至 [`lowcode-ai`](https://github.com/max-yuuuu/lowcode-ai.git)（remote 名 `lowcode-ai`），上游 PR 不再等合并；完整方案见 [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)。脚手架本身继续承担三重身份 —— 元搭的底座（前端 UI + 后端 common/framework/system）、生成项目的运行时壳子、上游开源同步通道。
 
-## 低代码平台演进
+## 元搭演进
 
 **层级**：租户 → 项目 → 模型 → 页面
 
@@ -25,7 +25,7 @@
 - [项目地图](PROJECT_MAP.md)：按功能定位页面、接口、服务、SQL 和权限。
 - [设计规范](DESIGN.md)：珍珠玻璃主题、组件复用及交互规范。
 - [开发约定](AGENTS.md)、[更新日志](changelog.md)。
-- [低代码平台完整方案](docs/lowcode-platform-proposal.md)：多租户层级、可视化设计器、代码生成与增量发布。
+- [元搭 · 低代码平台完整方案](docs/lowcode-platform-proposal.md)：多租户层级、可视化设计器、代码生成与增量发布。
 - [后端架构](docs/backend-architecture.md)、[前后端接口约定](docs/frontend-backend-integration.md)、[前端架构](docs/admin-redesign-architecture.md)。
 - [Docker 部署指南](docs/docker-deployment.md)：Compose 一键编排前端 / 后端 / Redis / 可选 MySQL。
 

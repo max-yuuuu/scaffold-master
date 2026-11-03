@@ -6,8 +6,9 @@ package com.scaffold.framework.security;
  *
  * @param userId 用户ID（sys_user.id），用于业务归属与审计
  * @param username 用户账号，用于权限解析与审计
+ * @param tenantId 租户ID（lc_tenant.id），用于多租户隔离；旧令牌或跨租户管理动作可能为 null
  */
-public record LoginUser(Long userId, String username) {
+public record LoginUser(Long userId, String username, Long tenantId) {
 
     public Long getUserId() {
         return userId;
@@ -15,5 +16,9 @@ public record LoginUser(Long userId, String username) {
 
     public String getUsername() {
         return username;
+    }
+
+    public Long getTenantId() {
+        return tenantId;
     }
 }

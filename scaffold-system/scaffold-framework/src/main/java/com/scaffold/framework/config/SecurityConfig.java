@@ -4,6 +4,7 @@ import com.scaffold.framework.config.properties.PermitAllUrlProperties;
 import com.scaffold.framework.security.JwtAuthenticationFilter;
 import com.scaffold.framework.security.RestAccessDeniedHandler;
 import com.scaffold.framework.security.RestAuthenticationEntryPoint;
+import com.scaffold.framework.tenant.TenantFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -30,6 +31,7 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             JwtAuthenticationFilter jwtAuthenticationFilter,
+            TenantFilter tenantFilter,
             RestAuthenticationEntryPoint authenticationEntryPoint,
             RestAccessDeniedHandler accessDeniedHandler,
             PermitAllUrlProperties permitAllUrlProperties
@@ -50,7 +52,9 @@ public class SecurityConfig {
                         .requestMatchers(anonUrls.toArray(new String[0])).permitAll()
                         .anyRequest().authenticated()
                 )
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                // TenantFilter 必须在 JwtAuthenticationFilter 之后：它从 SecurityContext 里的 LoginUser 读 tenantId
+                .addFilterAfter(tenantFilter, JwtAuthenticationFilter.class);
         return http.build();
     }
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-03（低代码平台定名「元搭」）
+
+- **命名决策**：产品定名 **元搭**（Yuán Dā）。"元"取元数据驱动 / 元能力（平台造平台）/ 元学习（P2 AI 演进预留）三层；"搭"是核心动作，一秒懂产品干什么。拼音 `YuanDa`；域名候选 `yuanda.ai`（呼应 AI 方向）与 `yuanda.cn`。英文名走拼音而非 `MetaBuild` —— "Meta" 在软件类别是 Facebook 母公司商标雷区。
+- **排雷结论**：公开 web 搜索未查到精确同名产品。同族拥挤但要区分的是"X 搭"家族（阿里宜搭、腾讯微搭、奥哲氚云、简道云），语义近似是 gitee 上 `MetaLowCode 美乐低代码` 开源项目（Meta = 元），品牌不同。对外文案统一带限定「元搭 · 低代码平台」避混淆。**待人工确认**：中国商标网第 9 / 42 类精确近似查询（公开 web 查不到官方库）与域名可注状态。
+- **禁用口径不变**：本仓库示例、mockup、方案、代码注释不出现"悦海出行"及变体。
+- **文本更新**：README 顶部演进提示块与新段标题切到"元搭"；`docs/lowcode-platform-proposal.md` 标题改为「元搭 · 低代码平台完整方案」，副标题加"元搭（Yuán Dā）是..."与 P2 演进说明。技术描述段落仍用"低代码平台"作类别词。
+
+## 2026-11-03（多租户地基 PR 1）
+
+- **背景与范围**：低代码平台 P0 的第一份可验证代码。本次只做地基，跨租户 SQL 过滤（MyBatis Plus `TenantLineInnerInterceptor`）、租户管理 UI、`lc_tenant_config` 与项目/模型/页面表都放后续 PR。
+- **Schema**：按项目"初始化 SQL 是新项目起点，不是旧库自动升级"的约定，直接改 V1/V2，不写 V4。`V1__init_schema.sql` 新增 `lc_tenant` 表（`tenant_code` 唯一、`status`、`deleted`、`max_projects` 配额、`expire_time`），11 张 `sys_*` 表在 `id` 之后统一加 `tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID'`；跨租户唯一约束改为 `(tenant_id, 原键)` —— `sys_user(username)`、`sys_role(role_code)`、`sys_post(post_code)`、`sys_dict_type(dict_type)`、`sys_config(config_key)` 都改成复合唯一，允许不同租户重名；tenant_id 索引补齐（含 `sys_dict_data (tenant_id, dict_type)`、`sys_oper_log/sys_login_log (tenant_id, *_time)`）。`V2__seed_data.sql` 首行插入 `lc_tenant` 平台租户 `id=1, code=platform`，其余 sys_* INSERT 靠列 DEFAULT 1 自动归属，未逐个显式声明。关联表 `sys_user_role / sys_user_post / sys_role_menu / sys_role_dept` 保持不带 tenant_id：它们通过两端主键关联的实体已具备租户归属，跨租户串数据由应用层校验兜底。
+- **TenantContext（scaffold-common）**：新增 `com.scaffold.common.tenant.TenantContext`，纯 `ThreadLocal` 零依赖；`PLATFORM_TENANT_ID = 1L` 常量暴露平台租户 ID；`set / getTenantId / clear` 三方法。业务代码禁止直接 set，通过 `SecurityUtils` 或本类读取。
+- **LoginUser 加 tenantId**：`record LoginUser(Long userId, String username)` 改为 `record LoginUser(Long userId, String username, Long tenantId)`。全项目仅 `JwtService.parsePrincipal` 一处构造，其他调用方走 `SecurityUtils` 访问器；旧令牌（不带 tenantId claim）解析出 `tenantId = null`，由 `SecurityUtils.getTenantId()` 在使用点抛 401，`TenantFilter` 不因 null 抛错。
+- **JwtService tenantId claim**：`generateToken` 签名改为 `(Long userId, String username, Long tenantId)`，多写一个 `tenantId` claim；`parsePrincipal` 抽出 `readLong` 辅助统一读 `userId` 与 `tenantId`，缺失时为 null。`JwtServiceTest` 补 `roundTripsUserIdAndTenantIdThroughClaims` 与 `nullTenantIdClaimParsesAsNullPrincipalTenant` 两条用例，旧 4 条用例改新签名。
+- **TenantFilter**：新增 `com.scaffold.framework.tenant.TenantFilter extends OncePerRequestFilter`，从 `SecurityContext` 里的 `LoginUser` 读 `tenantId`、写入 `TenantContext`、`finally` 块清理避免污染线程池下一个请求；匿名请求（无 authentication 或 details 不是 LoginUser）不设置上下文。`SecurityConfig` 用 `.addFilterAfter(tenantFilter, JwtAuthenticationFilter.class)` 注册 —— 顺序硬约束：TenantFilter 依赖 JwtAuthenticationFilter 已经写入的 `Authentication#getDetails()`。
+- **SecurityUtils.getTenantId()**：与 getUserId/getUsername 同形态，取不到时抛 `BusinessException(401, "获取租户信息异常")`。
+- **认证链路 tenantId 打通**：`AuthUserRow` 加 `tenantId` 字段与 getter/setter；`AuthMapper.selectUserByUsername` SQL 加上 `u.tenant_id`；新增 `AuthMapper.countActiveTenant(tenantId)` 供登录校验租户状态；`insertLoginLog` 签名改为 `(tenantId, username, status, msg)`，`sys_login_log` 落表时带 `tenant_id`。账号不存在时用 `UNATTRIBUTED_TENANT = 1L` 占位（登录表单不带租户选择，无法判定归属）。`AuthService.login` 依次校验：账号密码 → 用户状态 → 租户状态（`countActiveTenant`），签发 token 时传 `user.getTenantId()`；`AuthService.logout` 从 `LoginUser.tenantId()` 读并写日志。
+- **测试**：新增 `TenantContextTest` 4 项（set/get、clear、子线程不继承、PLATFORM_TENANT_ID 常量）、`TenantFilterTest` 3 项（正常写上下文并清理、匿名请求保持 null、旧令牌 tenantId=null 不抛错），`JwtServiceTest` 由 4 项扩到 6 项。`mvn -pl scaffold-common,scaffold-framework -am test` 通过 **20 项**（common 8、framework 12，0 失败 0 跳过）；`mvn -pl scaffold-admin -am package -DskipTests` 通过（全 5 模块编译，主代码 27 + 测试代码 3 + 其他 4 组）。
+- **待用户处理**：本地 `scaffold_system` 库需要 `DbInit fix` 重建（走 V1/V2/V3 全套），因为原表结构没 tenant_id 列；重建前记得业务库不是这个（本机 3306 是业务容器）。集成测试 `mvn -pl scaffold-admin -am test` 尚未跑，需要新库就位后验证。
+- **未做（明确留 PR 2）**：MyBatis Plus 拦截器自动注入 `tenant_id = ?`（需要先定 `super_admin` 跨租户旁路口径）、租户管理页 UI、`lc_tenant_config` 表、`lc_project` 与模型/页面表、`COMPONENT_ALIAS` 前端菜单动态过滤。
+
 ## 2026-11-03（合并两个待上游 PR、切换权威仓库、低代码平台方案落地）
 
 - **仓库定位切换**：`feat/framework-global-sync`（64 文件前端组件重写、+5230 行）与 `feat/deploy-docker`（Docker 部署）合并到本地 `main`；新增 remote `lowcode-ai` 指向 `https://github.com/max-yuuuu/lowcode-ai.git` 并推送。**此后以 lowcode-ai/main 为基线**，原 `origin`（max-yuuuu/scaffold-master）与 `upstream` 保留但不再作为主推进。上游两个 PR 的处理策略由"等合并"改为"不再等"。

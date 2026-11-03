@@ -14,13 +14,21 @@ import java.util.List;
 public interface AuthMapper {
 
     @Select("""
-            SELECT u.id, u.username, u.password, u.nickname, u.status, u.dept_id, d.dept_name
+            SELECT u.id, u.tenant_id, u.username, u.password, u.nickname, u.status, u.dept_id, d.dept_name
             FROM sys_user u
             LEFT JOIN sys_dept d ON d.id = u.dept_id
             WHERE u.username = #{username} AND u.deleted = 0
             LIMIT 1
             """)
     AuthUserRow selectUserByUsername(@Param("username") String username);
+
+    /** 判断租户是否处于启用状态；登录时用于拒绝停用租户下的账号 */
+    @Select("""
+            SELECT COUNT(*)
+            FROM lc_tenant
+            WHERE id = #{tenantId} AND status = 1 AND deleted = 0
+            """)
+    int countActiveTenant(@Param("tenantId") Long tenantId);
 
     @Select("""
             SELECT r.role_code
@@ -78,11 +86,18 @@ public interface AuthMapper {
             """)
     List<MenuRow> selectAllRouteMenus();
 
+    /**
+     * 写登录日志。tenant_id 表示事件归属租户；账号不存在时为 1（"未归属"占位），
+     * 因为登录表单不携带租户选择，无法判断该用户名应该在哪个租户下失败。
+     */
     @Insert("""
-            INSERT INTO sys_login_log (username, status, msg, login_time)
-            VALUES (#{username}, #{status}, #{msg}, NOW())
+            INSERT INTO sys_login_log (tenant_id, username, status, msg, login_time)
+            VALUES (#{tenantId}, #{username}, #{status}, #{msg}, NOW())
             """)
-    void insertLoginLog(@Param("username") String username, @Param("status") int status, @Param("msg") String msg);
+    void insertLoginLog(@Param("tenantId") Long tenantId,
+                        @Param("username") String username,
+                        @Param("status") int status,
+                        @Param("msg") String msg);
 
     /** 登录成功后记录最近登录时间（sys_user.last_login_time），用户列表与看板据此展示 */
     @Update("UPDATE sys_user SET last_login_time = NOW() WHERE id = #{userId} AND deleted = 0")

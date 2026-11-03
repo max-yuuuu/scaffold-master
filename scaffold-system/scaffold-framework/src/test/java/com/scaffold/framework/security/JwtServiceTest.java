@@ -23,10 +23,35 @@ class JwtServiceTest {
     void signsAndVerifiesTokensWithAMinimumLengthSecret() {
         JwtService service = new JwtService(randomSecret(), 7200);
 
-        String token = service.generateToken(1L, "admin");
+        String token = service.generateToken(1L, "admin", 1L);
 
         assertThat(service.parseUsername(token)).isEqualTo("admin");
         assertThat(service.parseUsername("invalid-token")).isNull();
+    }
+
+    @Test
+    void roundTripsUserIdAndTenantIdThroughClaims() {
+        JwtService service = new JwtService(randomSecret(), 7200);
+
+        String token = service.generateToken(42L, "alice", 7L);
+
+        LoginUser principal = service.parsePrincipal(token);
+        assertThat(principal).isNotNull();
+        assertThat(principal.userId()).isEqualTo(42L);
+        assertThat(principal.username()).isEqualTo("alice");
+        assertThat(principal.tenantId()).isEqualTo(7L);
+    }
+
+    @Test
+    void nullTenantIdClaimParsesAsNullPrincipalTenant() {
+        JwtService service = new JwtService(randomSecret(), 7200);
+
+        String token = service.generateToken(42L, "alice", null);
+
+        LoginUser principal = service.parsePrincipal(token);
+        assertThat(principal).isNotNull();
+        assertThat(principal.userId()).isEqualTo(42L);
+        assertThat(principal.tenantId()).isNull();
     }
 
     @Test
@@ -35,7 +60,7 @@ class JwtServiceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         JwtService service = new JwtService("密".repeat(11), 7200);
 
-        assertThat(service.parseUsername(service.generateToken(1L, "admin"))).isEqualTo("admin");
+        assertThat(service.parseUsername(service.generateToken(1L, "admin", 1L))).isEqualTo("admin");
     }
 
     @Test
@@ -43,7 +68,7 @@ class JwtServiceTest {
         JwtService signer = new JwtService(randomSecret(), 7200);
         JwtService verifier = new JwtService(randomSecret(), 7200);
 
-        assertThat(verifier.parseUsername(signer.generateToken(1L, "admin"))).isNull();
+        assertThat(verifier.parseUsername(signer.generateToken(1L, "admin", 1L))).isNull();
     }
 
     private static String randomSecret() {

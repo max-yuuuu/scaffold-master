@@ -23,6 +23,9 @@ public class JwtService {
     /** 令牌中的用户ID声明（userId），与 LoginUser.userId 对应 */
     private static final String USER_ID_CLAIM = "userId";
 
+    /** 令牌中的租户ID声明（tenantId），与 LoginUser.tenantId 对应；多租户下所有业务查询据此隔离 */
+    private static final String TENANT_ID_CLAIM = "tenantId";
+
     private final String secret;
     private final long expiresSeconds;
 
@@ -37,12 +40,13 @@ public class JwtService {
         this.expiresSeconds = expiresSeconds;
     }
 
-    public String generateToken(Long userId, String username) {
+    public String generateToken(Long userId, String username, Long tenantId) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .id(UUID.randomUUID().toString())
                 .subject(username)
                 .claim(USER_ID_CLAIM, userId)
+                .claim(TENANT_ID_CLAIM, tenantId)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expiresSeconds)))
                 .signWith(secretKey())
@@ -55,8 +59,8 @@ public class JwtService {
     }
 
     /**
-     * 解析令牌中的登录主体（用户ID + 账号）；令牌无效时返回 null。
-     * userId 声明在旧版本令牌中可能缺失，此时为 null，由调用方按业务规则处理。
+     * 解析令牌中的登录主体（用户 ID + 账号 + 租户 ID）；令牌无效时返回 null。
+     * userId / tenantId 声明在旧版本令牌中可能缺失，此时为 null，由下游按业务规则处理。
      */
     public LoginUser parsePrincipal(String token) {
         try {
@@ -65,8 +69,11 @@ public class JwtService {
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            Object userId = claims.get(USER_ID_CLAIM);
-            return new LoginUser(userId instanceof Number number ? number.longValue() : null, claims.getSubject());
+            return new LoginUser(
+                    readLong(claims.get(USER_ID_CLAIM)),
+                    claims.getSubject(),
+                    readLong(claims.get(TENANT_ID_CLAIM))
+            );
         } catch (JwtException | IllegalArgumentException ex) {
             log.debug("JWT解析失败: {}", ex.getMessage());
             return null;
@@ -79,5 +86,9 @@ public class JwtService {
 
     private SecretKey secretKey() {
         return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Long readLong(Object value) {
+        return value instanceof Number number ? number.longValue() : null;
     }
 }

@@ -1,7 +1,9 @@
 package com.scaffold.system.service;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.common.tenant.TenantContext;
 import com.scaffold.framework.security.JwtService;
+import com.scaffold.framework.security.LoginUser;
 import com.scaffold.framework.security.TokenStore;
 import com.scaffold.system.domain.AuthUserRow;
 import com.scaffold.system.domain.MenuRow;
@@ -26,6 +28,8 @@ import java.util.Map;
 public class AuthService {
 
     private static final String SUPER_ADMIN = "super_admin";
+    /** 账号不存在时登录日志的归属占位租户；真实业务在启用多租户注册流程后需要重新考虑归属 */
+    private static final Long UNATTRIBUTED_TENANT = TenantContext.PLATFORM_TENANT_ID;
 
     private final AuthMapper authMapper;
     private final PasswordEncoder passwordEncoder;
@@ -42,16 +46,21 @@ public class AuthService {
     public LoginResponse login(LoginRequest request) {
         AuthUserRow user = authMapper.selectUserByUsername(request.getUsername());
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            authMapper.insertLoginLog(request.getUsername(), 0, "账号或密码错误");
+            Long tenantOfAttempt = user == null ? UNATTRIBUTED_TENANT : user.getTenantId();
+            authMapper.insertLoginLog(tenantOfAttempt, request.getUsername(), 0, "账号或密码错误");
             throw new BusinessException("账号或密码错误");
         }
         if (user.getStatus() == null || user.getStatus() != 1) {
-            authMapper.insertLoginLog(request.getUsername(), 0, "账号已停用");
+            authMapper.insertLoginLog(user.getTenantId(), user.getUsername(), 0, "账号已停用");
             throw new BusinessException("账号已停用");
         }
-        String token = jwtService.generateToken(user.getId(), user.getUsername());
+        if (authMapper.countActiveTenant(user.getTenantId()) == 0) {
+            authMapper.insertLoginLog(user.getTenantId(), user.getUsername(), 0, "所属租户已停用");
+            throw new BusinessException("所属租户已停用");
+        }
+        String token = jwtService.generateToken(user.getId(), user.getUsername(), user.getTenantId());
         tokenStore.store(token, user.getUsername(), jwtService.expiresSeconds());
-        authMapper.insertLoginLog(user.getUsername(), 1, "登录成功");
+        authMapper.insertLoginLog(user.getTenantId(), user.getUsername(), 1, "登录成功");
         authMapper.updateLastLoginTime(user.getId());
         return new LoginResponse(token, jwtService.expiresSeconds());
     }
@@ -60,7 +69,10 @@ public class AuthService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication != null && authentication.getCredentials() instanceof String token) {
             tokenStore.revoke(token);
-            authMapper.insertLoginLog(String.valueOf(authentication.getPrincipal()), 1, "退出登录");
+            Long tenantId = authentication.getDetails() instanceof LoginUser loginUser && loginUser.tenantId() != null
+                    ? loginUser.tenantId()
+                    : UNATTRIBUTED_TENANT;
+            authMapper.insertLoginLog(tenantId, String.valueOf(authentication.getPrincipal()), 1, "退出登录");
         }
         SecurityContextHolder.clearContext();
     }

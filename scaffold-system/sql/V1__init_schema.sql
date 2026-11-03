@@ -1,5 +1,26 @@
+CREATE TABLE IF NOT EXISTS lc_tenant (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '租户 ID',
+    tenant_code VARCHAR(64) NOT NULL COMMENT '租户编码，用于展示与外部标识',
+    tenant_name VARCHAR(128) NOT NULL COMMENT '租户名称',
+    contact_name VARCHAR(64) DEFAULT NULL COMMENT '联系人姓名',
+    contact_phone VARCHAR(32) DEFAULT NULL COMMENT '联系人电话',
+    max_projects INT NOT NULL DEFAULT 5 COMMENT '最大项目数（配额）',
+    expire_time DATETIME DEFAULT NULL COMMENT '到期时间，NULL 表示不限',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '租户状态：1 正常，0 停用',
+    deleted TINYINT NOT NULL DEFAULT 0 COMMENT '删除标记：1 删除，0 正常',
+    remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+    create_by VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    update_by VARCHAR(64) DEFAULT NULL COMMENT '更新人',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_lc_tenant_code (tenant_code),
+    KEY idx_lc_tenant_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户表';
+
 CREATE TABLE IF NOT EXISTS sys_dept (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '部门 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '上级部门 ID',
     ancestors VARCHAR(500) NOT NULL DEFAULT '' COMMENT '祖级列表',
     dept_name VARCHAR(100) NOT NULL COMMENT '部门名称',
@@ -14,12 +35,14 @@ CREATE TABLE IF NOT EXISTS sys_dept (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
+    KEY idx_sys_dept_tenant (tenant_id),
     KEY idx_sys_dept_parent (parent_id),
     KEY idx_sys_dept_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统部门表';
 
 CREATE TABLE IF NOT EXISTS sys_post (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '岗位 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     post_code VARCHAR(64) NOT NULL COMMENT '岗位编码',
     post_name VARCHAR(100) NOT NULL COMMENT '岗位名称',
     sort INT NOT NULL DEFAULT 0 COMMENT '排序号',
@@ -31,11 +54,12 @@ CREATE TABLE IF NOT EXISTS sys_post (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_sys_post_code (post_code)
+    UNIQUE KEY uk_sys_post_tenant_code (tenant_id, post_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统岗位表';
 
 CREATE TABLE IF NOT EXISTS sys_user (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '用户 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     username VARCHAR(64) NOT NULL COMMENT '登录账号',
     password VARCHAR(128) NOT NULL COMMENT '登录密码密文',
     nickname VARCHAR(64) NOT NULL COMMENT '用户昵称',
@@ -50,13 +74,15 @@ CREATE TABLE IF NOT EXISTS sys_user (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_sys_user_username (username),
+    UNIQUE KEY uk_sys_user_tenant_username (tenant_id, username),
+    KEY idx_sys_user_tenant (tenant_id),
     KEY idx_sys_user_dept (dept_id),
     KEY idx_sys_user_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统用户表';
 
 CREATE TABLE IF NOT EXISTS sys_role (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '角色 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     role_name VARCHAR(100) NOT NULL COMMENT '角色名称',
     role_code VARCHAR(64) NOT NULL COMMENT '角色编码',
     data_scope VARCHAR(32) NOT NULL DEFAULT 'SELF' COMMENT '数据权限范围',
@@ -70,11 +96,13 @@ CREATE TABLE IF NOT EXISTS sys_role (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_sys_role_code (role_code)
+    UNIQUE KEY uk_sys_role_tenant_code (tenant_id, role_code),
+    KEY idx_sys_role_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统角色表';
 
 CREATE TABLE IF NOT EXISTS sys_menu (
     id BIGINT NOT NULL COMMENT '菜单 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '父级菜单 ID',
     menu_name VARCHAR(100) NOT NULL COMMENT '菜单名称',
     menu_type VARCHAR(16) NOT NULL COMMENT '菜单类型：dir 目录，menu 菜单，btn 按钮',
@@ -90,6 +118,7 @@ CREATE TABLE IF NOT EXISTS sys_menu (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
+    KEY idx_sys_menu_tenant (tenant_id),
     KEY idx_sys_menu_parent (parent_id),
     KEY idx_sys_menu_permission (permission)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统菜单和按钮权限表';
@@ -120,6 +149,7 @@ CREATE TABLE IF NOT EXISTS sys_role_dept (
 
 CREATE TABLE IF NOT EXISTS sys_dict_type (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '字典类型 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     dict_name VARCHAR(100) NOT NULL COMMENT '字典类型名称',
     dict_type VARCHAR(100) NOT NULL COMMENT '字典类型编码',
     status TINYINT NOT NULL DEFAULT 1 COMMENT '字典状态：1 正常，0 停用',
@@ -129,11 +159,12 @@ CREATE TABLE IF NOT EXISTS sys_dict_type (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_sys_dict_type (dict_type)
+    UNIQUE KEY uk_sys_dict_type_tenant_code (tenant_id, dict_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典类型表';
 
 CREATE TABLE IF NOT EXISTS sys_dict_data (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '字典数据 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     dict_type VARCHAR(100) NOT NULL COMMENT '字典类型编码',
     dict_label VARCHAR(100) NOT NULL COMMENT '字典项显示文本',
     dict_value VARCHAR(100) NOT NULL COMMENT '字典项实际值',
@@ -147,11 +178,12 @@ CREATE TABLE IF NOT EXISTS sys_dict_data (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    KEY idx_sys_dict_data_type (dict_type)
+    KEY idx_sys_dict_data_tenant_type (tenant_id, dict_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='字典数据表';
 
 CREATE TABLE IF NOT EXISTS sys_config (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '参数 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     config_name VARCHAR(100) NOT NULL COMMENT '参数名称',
     config_key VARCHAR(100) NOT NULL COMMENT '参数键名',
     config_value VARCHAR(500) NOT NULL COMMENT '参数键值',
@@ -163,11 +195,12 @@ CREATE TABLE IF NOT EXISTS sys_config (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_sys_config_key (config_key)
+    UNIQUE KEY uk_sys_config_tenant_key (tenant_id, config_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='参数配置表';
 
 CREATE TABLE IF NOT EXISTS sys_oper_log (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '操作日志 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     module VARCHAR(100) NOT NULL COMMENT '操作模块',
     action VARCHAR(64) NOT NULL COMMENT '操作类型',
     request_method VARCHAR(16) DEFAULT NULL COMMENT '请求方法',
@@ -182,12 +215,14 @@ CREATE TABLE IF NOT EXISTS sys_oper_log (
     error_msg TEXT COMMENT '错误信息',
     oper_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
     PRIMARY KEY (id),
+    KEY idx_sys_oper_log_tenant_time (tenant_id, oper_time),
     KEY idx_sys_oper_log_time (oper_time),
     KEY idx_sys_oper_log_oper_name (oper_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='操作日志表';
 
 CREATE TABLE IF NOT EXISTS sys_login_log (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '登录日志 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     username VARCHAR(64) DEFAULT NULL COMMENT '登录账号',
     ip VARCHAR(64) DEFAULT NULL COMMENT 'IP 地址',
     location VARCHAR(128) DEFAULT NULL COMMENT '登录地点',
@@ -197,12 +232,14 @@ CREATE TABLE IF NOT EXISTS sys_login_log (
     msg VARCHAR(500) DEFAULT NULL COMMENT '提示消息',
     login_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '登录时间',
     PRIMARY KEY (id),
+    KEY idx_sys_login_log_tenant_time (tenant_id, login_time),
     KEY idx_sys_login_log_time (login_time),
     KEY idx_sys_login_log_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='登录日志表';
 
 CREATE TABLE IF NOT EXISTS sys_file (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '文件 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID',
     original_name VARCHAR(255) NOT NULL COMMENT '原始文件名',
     storage_name VARCHAR(255) NOT NULL COMMENT '存储文件名',
     url VARCHAR(500) NOT NULL COMMENT '访问地址',
@@ -212,7 +249,8 @@ CREATE TABLE IF NOT EXISTS sys_file (
     update_by VARCHAR(64) DEFAULT NULL COMMENT '更新人',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_sys_file_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件信息表';
 
 CREATE TABLE IF NOT EXISTS gen_table (
