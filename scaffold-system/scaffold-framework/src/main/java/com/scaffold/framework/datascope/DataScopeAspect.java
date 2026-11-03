@@ -1,5 +1,6 @@
 package com.scaffold.framework.datascope;
 
+import com.scaffold.framework.security.LoginUser;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
@@ -20,8 +21,8 @@ public class DataScopeAspect {
     @Around("@annotation(com.scaffold.framework.datascope.DataScope) || @within(com.scaffold.framework.datascope.DataScope)")
     public Object applyDataScope(ProceedingJoinPoint joinPoint) throws Throwable {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String username = authentication == null ? null : String.valueOf(authentication.getPrincipal());
-        DataScopeContext.set(dataScopeResolver.resolve(username));
+        LoginUser user = authentication == null ? null : authentication.getDetails() instanceof LoginUser loginUser ? loginUser : null;
+        DataScopeContext.set(dataScopeResolver.resolve(user));
         try {
             return joinPoint.proceed();
         } finally {

@@ -8,17 +8,27 @@ import TextInput from '@/components/ui/TextInput.vue'
 import Checkbox from '@/components/ui/Checkbox.vue'
 import { ApiError, authApi, portalApi } from '@/api'
 import NeuralNet from '@/components/NeuralNet.vue'
-import { login } from '@/composables/auth'
+import { login, registerTenant } from '@/composables/auth'
 import { EASE, afterTwoFrames, gsap, motionSkipped, prefersReducedMotion, trackGlow } from '@/composables/motion'
-import { required, validate } from '@/utils/validate'
+import { maxLength, pattern, required, validate } from '@/utils/validate'
 import { APP } from '@/data'
 
 const router = useRouter()
 const route = useRoute()
 
-const form = reactive({ username: '', password: '', captcha: '' })
+const TENANT_KEY = 'scaffold.login.tenantCode'
+// 多租户下每次都要敲租户编码很烦，登录成功后记住最后一次
+const lastTenantCode = (() => {
+  try { return sessionStorage.getItem(TENANT_KEY) ?? '' } catch { return '' }
+})()
+type AuthMode = 'login' | 'register'
+/** 登录与注册共用这张卡：只切换表单字段，版式、验证码与成功动画都保持一致 */
+const mode = ref<AuthMode>('login')
+const form = reactive({ username: '', password: '', tenantCode: lastTenantCode, captcha: '' })
+const regForm = reactive({ tenantCode: '', tenantName: '', adminUsername: '', password: '', captcha: '' })
 const year = new Date().getFullYear()
-const errors = ref<Partial<Record<keyof typeof form, string>>>({})
+const errors = ref<Record<string, string | undefined>>({})
+const cardSub = computed(() => mode.value === 'login' ? '使用管理员分配的账号登录系统' : '填写租户与管理员信息，提交后立即开通并进入')
 const remember = ref(true)
 const submitting = ref(false)
 const formError = ref('')
@@ -112,9 +122,23 @@ async function refreshCaptcha() {
     captchaLoading.value = false
   }
   form.captcha = ''
+  regForm.captcha = ''
+}
+
+function switchMode() {
+  mode.value = mode.value === 'login' ? 'register' : 'login'
+  errors.value = {}
+  formError.value = ''
+  form.captcha = ''
+  regForm.captcha = ''
 }
 
 async function submit() {
+  if (mode.value === 'login') return submitLogin()
+  return submitRegister()
+}
+
+async function submitLogin() {
   formError.value = ''
   errors.value = validate(form, {
     username: [required('请输入账号')],
@@ -124,19 +148,57 @@ async function submit() {
   if (Object.keys(errors.value).length) return
   submitting.value = true
   try {
-    await login({ username: form.username.trim(), password: form.password, captcha: form.captcha.trim(), captchaUuid: captchaUuid.value }, remember.value)
-    await playSuccess()
-    const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
-    const failure = await router.replace(redirect)
-    // 进入外壳的导航被取消（如菜单加载期间会话过期）时仍停在登录页：恢复登录按钮
-    if (failure || router.currentRoute.value.name === 'login') succeeded.value = false
+    await login({ username: form.username.trim(), password: form.password, tenantCode: form.tenantCode.trim() || undefined, captcha: form.captcha.trim(), captchaUuid: captchaUuid.value }, remember.value)
+    try { sessionStorage.setItem(TENANT_KEY, form.tenantCode.trim()) } catch { /* 存储不可用时忽略 */ }
+    await enterApp()
   } catch (error) {
-    succeeded.value = false
-    formError.value = error instanceof ApiError ? error.message : '登录失败，请稍后重试'
-    await refreshCaptcha()
+    await authFailed(error, '登录失败，请稍后重试')
   } finally {
     submitting.value = false
   }
+}
+
+async function submitRegister() {
+  formError.value = ''
+  errors.value = validate(regForm, {
+    tenantCode: [required('请输入租户编码'), pattern(/^[a-z][a-z0-9-]{1,31}$/, '小写字母开头，可含数字与短横线，长度 2-32')],
+    tenantName: [required('请输入租户名称'), maxLength(64, '长度不能超过 64')],
+    adminUsername: [required('请输入管理员账号'), pattern(/^[A-Za-z][A-Za-z0-9_]{2,31}$/, '字母开头，可含数字与下划线，长度 3-32')],
+    password: [required('请输入密码'), pattern(/^(?=.*[A-Za-z])(?=.*\d).{8,32}$/, '8-32 位且需同时包含字母和数字')],
+    captcha: captchaEnabled.value ? [required('请输入验证码')] : [],
+  })
+  if (Object.keys(errors.value).length) return
+  submitting.value = true
+  try {
+    await registerTenant({
+      tenantCode: regForm.tenantCode.trim(),
+      tenantName: regForm.tenantName.trim(),
+      adminUsername: regForm.adminUsername.trim(),
+      password: regForm.password,
+      captcha: regForm.captcha.trim(),
+      captchaUuid: captchaUuid.value,
+    }, remember.value)
+    await enterApp()
+  } catch (error) {
+    await authFailed(error, '注册失败，请稍后重试')
+  } finally {
+    submitting.value = false
+  }
+}
+
+/** 认证成功后的统一收尾：播成功动画再进外壳 */
+async function enterApp() {
+  await playSuccess()
+  const redirect = typeof route.query.redirect === 'string' && route.query.redirect.startsWith('/') ? route.query.redirect : '/'
+  const failure = await router.replace(redirect)
+  // 进入外壳的导航被取消（如菜单加载期间会话过期）时仍停在登录页：恢复按钮
+  if (failure || router.currentRoute.value.name === 'login') succeeded.value = false
+}
+
+async function authFailed(error: unknown, fallback: string) {
+  succeeded.value = false
+  formError.value = error instanceof ApiError ? error.message : fallback
+  await refreshCaptcha()
 }
 
 /* ── 一次性开场：本次会话只播一次；任意点击或按键快进而不是硬切 ── */
@@ -281,18 +343,38 @@ onBeforeUnmount(() => {
         <div class="login-card-inner">
           <span class="eyebrow">账号登录</span>
           <h2 id="login-heading" class="login-card-title">登录</h2>
-          <p class="login-card-sub">使用管理员分配的账号登录系统</p>
+          <p class="login-card-sub">{{ cardSub }}</p>
 
           <form class="login-form" novalidate @submit.prevent="submit">
-            <Field label="账号" :error="errors.username">
-              <TextInput v-model="form.username" icon="user" placeholder="请输入账号" autocomplete="username" :invalid="!!errors.username" />
-            </Field>
-            <Field label="密码" :error="errors.password">
-              <TextInput v-model="form.password" type="password" icon="lock" placeholder="请输入密码" autocomplete="current-password" :invalid="!!errors.password" />
-            </Field>
+            <template v-if="mode === 'login'">
+              <Field label="账号" :error="errors.username">
+                <TextInput v-model="form.username" icon="user" placeholder="请输入账号" autocomplete="username" :invalid="!!errors.username" />
+              </Field>
+              <Field label="租户编码" hint="账号在多个租户下重名时必填" :error="errors.tenantCode">
+                <TextInput v-model="form.tenantCode" icon="layers" placeholder="单租户部署可留空" autocomplete="organization" :invalid="!!errors.tenantCode" />
+              </Field>
+              <Field label="密码" :error="errors.password">
+                <TextInput v-model="form.password" type="password" icon="lock" placeholder="请输入密码" autocomplete="current-password" :invalid="!!errors.password" />
+              </Field>
+            </template>
+            <template v-else>
+              <Field label="租户编码" hint="全局唯一，登录时可用于定位租户" :error="errors.tenantCode">
+                <TextInput v-model="regForm.tenantCode" icon="layers" placeholder="如：acme" autocomplete="organization" :invalid="!!errors.tenantCode" />
+              </Field>
+              <Field label="租户名称" :error="errors.tenantName">
+                <TextInput v-model="regForm.tenantName" icon="dept" placeholder="如：Acme 科技有限公司" :maxlength="64" :invalid="!!errors.tenantName" />
+              </Field>
+              <Field label="管理员账号" hint="已被占用时换一个" :error="errors.adminUsername">
+                <TextInput v-model="regForm.adminUsername" icon="user" placeholder="字母开头，3-32 位" autocomplete="username" :invalid="!!errors.adminUsername" />
+              </Field>
+              <Field label="管理员密码" hint="8-32 位，需含字母与数字" :error="errors.password">
+                <TextInput v-model="regForm.password" type="password" icon="lock" placeholder="请输入密码" autocomplete="new-password" :invalid="!!errors.password" />
+              </Field>
+            </template>
             <Field v-if="captchaEnabled" label="验证码" :error="errors.captcha">
               <div class="captcha-row">
-                <TextInput v-model="form.captcha" icon="shield" placeholder="请输入右侧字符" :maxlength="6" autocomplete="off" :invalid="!!errors.captcha" />
+                <TextInput v-if="mode === 'login'" v-model="form.captcha" icon="shield" placeholder="请输入右侧字符" :maxlength="6" autocomplete="off" :invalid="!!errors.captcha" />
+                <TextInput v-else v-model="regForm.captcha" icon="shield" placeholder="请输入右侧字符" :maxlength="6" autocomplete="off" :invalid="!!errors.captcha" />
                 <button type="button" class="captcha-box m-groove" :disabled="captchaLoading" aria-label="看不清，换一张" title="看不清，换一张" @click="refreshCaptcha">
                   <img v-if="captchaImg" :src="captchaImg" class="captcha-img" alt="图形验证码，点击可换一张" draggable="false">
                   <Icon v-else name="refresh" :size="16" />
@@ -301,10 +383,11 @@ onBeforeUnmount(() => {
             </Field>
             <div class="login-options">
               <Checkbox v-model="remember" label="记住登录状态" />
+              <Button variant="text" size="sm" @click="switchMode">{{ mode === 'login' ? '还没有租户？注册租户' : '已有账号？返回登录' }}</Button>
             </div>
             <p v-if="formError" class="login-error" role="alert"><Icon name="alert" :size="15" />{{ formError }}</p>
             <div class="login-submit-slot">
-              <Button v-if="!succeeded" type="submit" variant="primary" block :loading="submitting" class="login-submit">登录</Button>
+              <Button v-if="!succeeded" type="submit" variant="primary" block :loading="submitting" class="login-submit">{{ mode === 'login' ? '登录' : '注册并进入' }}</Button>
               <div v-else class="success-orb" role="status" aria-label="登录成功，正在进入">
                 <svg width="30" height="30" viewBox="0 0 46 46" aria-hidden="true">
                   <circle cx="23" cy="23" r="20" stroke-dasharray="126" />

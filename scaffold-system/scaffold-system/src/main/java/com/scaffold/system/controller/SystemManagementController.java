@@ -5,6 +5,7 @@ import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.domain.R;
 import com.scaffold.framework.audit.OperLog;
 import com.scaffold.framework.security.RequiresPermission;
+import com.scaffold.framework.web.CsvResponse;
 import com.scaffold.system.domain.dto.ConfigWriteRequest;
 import com.scaffold.system.domain.dto.DeptWriteRequest;
 import com.scaffold.system.domain.dto.DictDataWriteRequest;
@@ -70,7 +71,7 @@ public class SystemManagementController {
             @RequestParam(required = false) Long deptId,
             @RequestParam(required = false) Long postId
     ) {
-        return csv("users.csv", service.exportUsers(keyword, status, deptId, postId));
+        return CsvResponse.attachment("users.csv", service.exportUsers(keyword, status, deptId, postId));
     }
 
     @PostMapping("/users")
@@ -112,20 +113,13 @@ public class SystemManagementController {
         return R.success(null);
     }
 
-    private ResponseEntity<String> csv(String filename, String content) {
-        return ResponseEntity.ok()
-                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
-                .body(content);
-    }
-
     @GetMapping("/roles/export")
     @RequiresPermission("system:role:list")
     public ResponseEntity<String> exportRoles(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status
     ) {
-        return csv("roles.csv", service.exportRoles(keyword, status));
+        return CsvResponse.attachment("roles.csv", service.exportRoles(keyword, status));
     }
 
     @GetMapping("/roles")
@@ -179,7 +173,7 @@ public class SystemManagementController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status
     ) {
-        return csv("menus.csv", service.exportMenus(keyword, status));
+        return CsvResponse.attachment("menus.csv", service.exportMenus(keyword, status));
     }
 
     @GetMapping("/menus/tree")
@@ -220,7 +214,7 @@ public class SystemManagementController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status
     ) {
-        return csv("depts.csv", service.exportDepts(keyword, status));
+        return CsvResponse.attachment("depts.csv", service.exportDepts(keyword, status));
     }
 
     @GetMapping("/depts/tree")
@@ -261,7 +255,7 @@ public class SystemManagementController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status
     ) {
-        return csv("posts.csv", service.exportPosts(keyword, status));
+        return CsvResponse.attachment("posts.csv", service.exportPosts(keyword, status));
     }
 
     @GetMapping("/posts")
@@ -303,7 +297,7 @@ public class SystemManagementController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Integer status
     ) {
-        return csv("dict-types.csv", service.exportDictTypes(keyword, status));
+        return CsvResponse.attachment("dict-types.csv", service.exportDictTypes(keyword, status));
     }
 
     @GetMapping("/dict/types")
@@ -376,7 +370,7 @@ public class SystemManagementController {
     @GetMapping("/configs/export")
     @RequiresPermission("system:config:list")
     public ResponseEntity<String> exportConfigs(@RequestParam(required = false) String keyword) {
-        return csv("configs.csv", service.exportConfigs(keyword));
+        return CsvResponse.attachment("configs.csv", service.exportConfigs(keyword));
     }
 
     @GetMapping("/configs")

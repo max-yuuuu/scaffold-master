@@ -2,10 +2,12 @@ package com.scaffold.system.service;
 
 import com.scaffold.common.domain.PageQuery;
 import com.scaffold.common.domain.PageResult;
+import com.scaffold.common.export.CsvUtils;
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.framework.datascope.DataScope;
 import com.scaffold.framework.datascope.DataScopeContext;
 import com.scaffold.framework.datascope.DataScopeCriteria;
+import com.scaffold.framework.security.LoginUser;
 import com.scaffold.system.domain.dto.ConfigWriteRequest;
 import com.scaffold.system.domain.dto.DeptWriteRequest;
 import com.scaffold.system.domain.dto.DictDataWriteRequest;
@@ -30,7 +32,9 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 @Service
 public class SystemManagementService {
@@ -47,11 +51,11 @@ public class SystemManagementService {
 
     /** 用户页所需的引用选项，避免为只读用户申请角色、岗位和参数管理权限。 */
     public Map<String, Object> userOptions() {
-        String username = currentUsername();
-        boolean canEdit = permissionResolver.hasPermission(username, "system:user:add")
-                || permissionResolver.hasPermission(username, "system:user:edit");
-        boolean canSetPassword = permissionResolver.hasPermission(username, "system:user:add")
-                || permissionResolver.hasPermission(username, "system:user:resetPwd");
+        LoginUser user = currentUser();
+        boolean canEdit = permissionResolver.hasPermission(user, "system:user:add")
+                || permissionResolver.hasPermission(user, "system:user:edit");
+        boolean canSetPassword = permissionResolver.hasPermission(user, "system:user:add")
+                || permissionResolver.hasPermission(user, "system:user:resetPwd");
         List<Map<String, Object>> depts = mapper.selectDepts(null, null).stream()
                 .map(row -> {
                     Map<String, Object> option = new LinkedHashMap<>();
@@ -84,7 +88,7 @@ public class SystemManagementService {
     public String exportUsers(String keyword, Integer status, Long deptId, Long postId) {
         List<Map<String, Object>> rows = mapper.selectUsers(keyword, status, deptId, postId, DataScopeContext.current(), 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(
+                .map(row -> CsvUtils.row(
                         value(row, "username"),
                         value(row, "nickname"),
                         value(row, "phone"),
@@ -97,7 +101,7 @@ public class SystemManagementService {
                         value(row, "lastLogin")
                 ))
                 .toList();
-        return csv(
+        return CsvUtils.csv(
                 List.of("登录账号", "用户昵称", "手机号", "邮箱", "部门", "岗位", "角色", "状态", "创建时间", "最近登录"),
                 data
         );
@@ -127,7 +131,7 @@ public class SystemManagementService {
                     for (String key : List.of("id", "parentId", "name", "type", "icon", "path", "permission", "sort", "visible", "status")) node.put(key, row.get(key));
                     return node;
                 }).toList();
-        boolean canSeeUsers = permissionResolver.hasPermission(currentUsername(), "system:user:list");
+        boolean canSeeUsers = permissionResolver.hasPermission(currentUser(), "system:user:list");
         List<Map<String, Object>> users = canSeeUsers ? mapper.selectGraphUsers(DataScopeContext.current()) : List.of();
         Set<Object> userIds = new HashSet<>();
         users.forEach(row -> userIds.add(numberAsLong(row.get("id"))));
@@ -151,10 +155,10 @@ public class SystemManagementService {
     public String exportRoles(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectRoles(keyword, status, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "name"), value(row, "code"), value(row, "dataScope"),
+                .map(row -> CsvUtils.row(value(row, "name"), value(row, "code"), value(row, "dataScope"),
                         userStatusText(row.get("status")), value(row, "createTime"), value(row, "remark")))
                 .toList();
-        return csv(List.of("角色名称", "权限字符", "数据权限", "状态", "创建时间", "备注"), data);
+        return CsvUtils.csv(List.of("角色名称", "权限字符", "数据权限", "状态", "创建时间", "备注"), data);
     }
 
     public List<Map<String, Object>> menus(String keyword, Integer status) {
@@ -164,11 +168,11 @@ public class SystemManagementService {
     public String exportMenus(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectMenus(keyword, status);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "name"), value(row, "type"), value(row, "icon"),
+                .map(row -> CsvUtils.row(value(row, "name"), value(row, "type"), value(row, "icon"),
                         value(row, "path"), value(row, "component"), value(row, "permission"),
                         value(row, "sort"), userStatusText(row.get("status"))))
                 .toList();
-        return csv(List.of("菜单名称", "类型", "图标", "路由地址", "组件路径", "权限标识", "排序", "状态"), data);
+        return CsvUtils.csv(List.of("菜单名称", "类型", "图标", "路由地址", "组件路径", "权限标识", "排序", "状态"), data);
     }
 
     public List<Map<String, Object>> depts(String keyword, Integer status) {
@@ -178,10 +182,10 @@ public class SystemManagementService {
     public String exportDepts(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectDepts(keyword, status);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "name"), value(row, "leader"), value(row, "phone"),
+                .map(row -> CsvUtils.row(value(row, "name"), value(row, "leader"), value(row, "phone"),
                         value(row, "email"), value(row, "sort"), userStatusText(row.get("status"))))
                 .toList();
-        return csv(List.of("部门名称", "负责人", "联系电话", "邮箱", "排序", "状态"), data);
+        return CsvUtils.csv(List.of("部门名称", "负责人", "联系电话", "邮箱", "排序", "状态"), data);
     }
 
     public PageResult<Map<String, Object>> posts(PageQuery query, String keyword, Integer status) {
@@ -193,10 +197,10 @@ public class SystemManagementService {
     public String exportPosts(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectPosts(keyword, status, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "postCode"), value(row, "postName"), value(row, "sort"),
+                .map(row -> CsvUtils.row(value(row, "postCode"), value(row, "postName"), value(row, "sort"),
                         userStatusText(row.get("status")), value(row, "createTime"), value(row, "remark")))
                 .toList();
-        return csv(List.of("岗位编码", "岗位名称", "排序", "状态", "创建时间", "备注"), data);
+        return CsvUtils.csv(List.of("岗位编码", "岗位名称", "排序", "状态", "创建时间", "备注"), data);
     }
 
     public PageResult<Map<String, Object>> dictTypes(PageQuery query, String keyword, Integer status) {
@@ -208,10 +212,10 @@ public class SystemManagementService {
     public String exportDictTypes(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectDictTypes(keyword, status, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "dictName"), value(row, "dictType"),
+                .map(row -> CsvUtils.row(value(row, "dictName"), value(row, "dictType"),
                         userStatusText(row.get("status")), value(row, "createTime"), value(row, "remark")))
                 .toList();
-        return csv(List.of("字典名称", "字典类型", "状态", "创建时间", "备注"), data);
+        return CsvUtils.csv(List.of("字典名称", "字典类型", "状态", "创建时间", "备注"), data);
     }
 
     public List<Map<String, Object>> dictData(String dictType) {
@@ -227,10 +231,10 @@ public class SystemManagementService {
     public String exportConfigs(String keyword) {
         List<Map<String, Object>> rows = mapper.selectConfigs(keyword, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(value(row, "name"), value(row, "key"), value(row, "value"),
+                .map(row -> CsvUtils.row(value(row, "name"), value(row, "key"), value(row, "value"),
                         value(row, "type"), value(row, "createTime"), value(row, "remark")))
                 .toList();
-        return csv(List.of("参数名称", "参数键名", "参数键值", "系统内置", "创建时间", "备注"), data);
+        return CsvUtils.csv(List.of("参数名称", "参数键名", "参数键值", "系统内置", "创建时间", "备注"), data);
     }
 
     public PageResult<Map<String, Object>> operLogs(PageQuery query, String keyword, Integer result) {
@@ -248,7 +252,7 @@ public class SystemManagementService {
     public String exportOperLogs(String keyword, Integer result) {
         List<Map<String, Object>> rows = mapper.selectOperLogs(keyword, result, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(
+                .map(row -> CsvUtils.row(
                         value(row, "module"),
                         value(row, "action"),
                         value(row, "method"),
@@ -264,7 +268,7 @@ public class SystemManagementService {
                         value(row, "errorMsg")
                 ))
                 .toList();
-        return csv(
+        return CsvUtils.csv(
                 List.of("模块", "类型", "请求方式", "请求地址", "请求参数", "操作人", "部门", "IP", "地点", "耗时", "结果", "操作时间", "异常信息"),
                 data
         );
@@ -273,7 +277,7 @@ public class SystemManagementService {
     public String exportLoginLogs(String keyword, Integer status) {
         List<Map<String, Object>> rows = mapper.selectLoginLogs(keyword, status, 0, 5000);
         List<List<Object>> data = rows.stream()
-                .map(row -> csvRow(
+                .map(row -> CsvUtils.row(
                         value(row, "username"),
                         value(row, "ip"),
                         value(row, "location"),
@@ -284,7 +288,7 @@ public class SystemManagementService {
                         value(row, "loginTime")
                 ))
                 .toList();
-        return csv(
+        return CsvUtils.csv(
                 List.of("登录账号", "IP", "地点", "浏览器", "系统", "状态", "描述", "登录时间"),
                 data
         );
@@ -522,10 +526,12 @@ public class SystemManagementService {
     @Transactional
     public IdResponse createMenu(MenuWriteRequest request) {
         String name = required(request.getName(), "菜单名称不能为空");
-        Long menuId = mapper.nextMenuId();
+        Long parentId = request.getParentId() == null ? 0L : request.getParentId();
+        if (parentId != 0L && mapper.selectMenuIdsInTenant(List.of(parentId)).isEmpty()) {
+            throw new BusinessException("上级菜单不存在或不属于当前租户");
+        }
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("id", menuId);
-        row.put("parentId", request.getParentId() == null ? 0L : request.getParentId());
+        row.put("parentId", parentId);
         row.put("name", name);
         row.put("type", defaultString(request.getType(), "menu"));
         row.put("icon", request.getIcon());
@@ -535,12 +541,20 @@ public class SystemManagementService {
         row.put("sort", defaultInt(request.getSort(), 0));
         row.put("visible", defaultInt(request.getVisible(), 1));
         row.put("status", defaultInt(request.getStatus(), 1));
+        // 菜单 ID 由数据库自增分配：按租户取 MAX+1 会在多个租户之间撞主键
         mapper.insertMenu(row, currentUsername());
-        return new IdResponse(menuId);
+        return new IdResponse(numberAsLong(row.get("id")));
     }
 
     @Transactional
     public void updateMenu(Long id, MenuWriteRequest request) {
+        Long parentId = request.getParentId();
+        if (parentId != null && parentId != 0L && id.equals(parentId)) {
+            throw new BusinessException("上级菜单不能是自身");
+        }
+        if (parentId != null && parentId != 0L && mapper.selectMenuIdsInTenant(List.of(parentId)).isEmpty()) {
+            throw new BusinessException("上级菜单不存在或不属于当前租户");
+        }
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("parentId", request.getParentId());
         row.put("name", trimToNull(request.getName()));
@@ -763,23 +777,36 @@ public class SystemManagementService {
 
     private void replaceUserRoles(Long userId, List<Long> roleIds) {
         mapper.deleteUserRoles(userId);
-        if (roleIds != null) {
-            roleIds.forEach(roleId -> mapper.insertUserRole(userId, roleId));
-        }
+        ownedIds(roleIds, mapper::selectRoleIdsInTenant, "角色").forEach(roleId -> mapper.insertUserRole(userId, roleId));
     }
 
     private void replaceUserPosts(Long userId, List<Long> postIds) {
         mapper.deleteUserPosts(userId);
-        if (postIds != null) {
-            postIds.forEach(postId -> mapper.insertUserPost(userId, postId));
-        }
+        ownedIds(postIds, mapper::selectPostIdsInTenant, "岗位").forEach(postId -> mapper.insertUserPost(userId, postId));
     }
 
     private void replaceRoleMenus(Long roleId, List<Long> menuIds) {
         mapper.deleteRoleMenus(roleId);
-        if (menuIds != null) {
-            menuIds.forEach(menuId -> mapper.insertRoleMenu(roleId, menuId));
+        ownedIds(menuIds, mapper::selectMenuIdsInTenant, "菜单").forEach(menuId -> mapper.insertRoleMenu(roleId, menuId));
+    }
+
+    /**
+     * 关联中间表没有租户列，拦截器管不到写入；这里按当前租户反查目标主键，
+     * 拒绝把别的租户的角色 / 岗位 / 菜单授权给本租户的对象。
+     */
+    private List<Long> ownedIds(List<Long> ids, Function<List<Long>, List<Long>> inTenantSelector, String label) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
         }
+        List<Long> distinct = ids.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> owned = new HashSet<>(inTenantSelector.apply(distinct));
+        if (distinct.stream().anyMatch(id -> !owned.contains(id))) {
+            throw new BusinessException("所选" + label + "不属于当前租户，请刷新后重试");
+        }
+        return distinct;
     }
 
     private String ancestorsFor(Long parentId) {
@@ -791,6 +818,12 @@ public class SystemManagementService {
             throw new BusinessException("上级部门不存在或已删除");
         }
         return parentAncestors.isBlank() ? String.valueOf(parentId) : parentAncestors + "," + parentId;
+    }
+
+    /** 授权判定按登录主体的用户 ID 解析：账号只在租户内唯一，不能作为跨租户身份键 */
+    private LoginUser currentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getDetails() instanceof LoginUser loginUser ? loginUser : null;
     }
 
     private String currentUsername() {
@@ -816,36 +849,6 @@ public class SystemManagementService {
     private String defaultString(String value, String defaultValue) {
         String trimmed = trimToNull(value);
         return trimmed == null ? defaultValue : trimmed;
-    }
-
-    private String csv(List<String> headers, List<List<Object>> rows) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(String.join(",", headers)).append('\n');
-        for (List<Object> row : rows) {
-            for (int i = 0; i < row.size(); i++) {
-                if (i > 0) {
-                    sb.append(',');
-                }
-                sb.append(csvCell(row.get(i)));
-            }
-            sb.append('\n');
-        }
-        return sb.toString();
-    }
-
-    private List<Object> csvRow(Object... values) {
-        return Arrays.asList(values);
-    }
-
-    private String csvCell(Object value) {
-        String text = value == null ? "" : String.valueOf(value);
-        if (text.contains("\"")) {
-            text = text.replace("\"", "\"\"");
-        }
-        if (text.contains(",") || text.contains("\"") || text.contains("\n") || text.contains("\r")) {
-            return "\"" + text + "\"";
-        }
-        return text;
     }
 
     private Object value(Map<String, Object> row, String key) {

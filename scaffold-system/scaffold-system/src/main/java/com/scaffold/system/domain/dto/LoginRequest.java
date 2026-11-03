@@ -10,6 +10,9 @@ public class LoginRequest {
     @NotBlank(message = "不能为空")
     private String password;
 
+    /** 租户编码（lc_tenant.tenant_code）：账号在多个租户下重名时必填，单租户部署可不填 */
+    private String tenantCode;
+
     private String captcha;
 
     private String captchaUuid;
@@ -18,6 +21,8 @@ public class LoginRequest {
     public void setUsername(String username) { this.username = username; }
     public String getPassword() { return password; }
     public void setPassword(String password) { this.password = password; }
+    public String getTenantCode() { return tenantCode; }
+    public void setTenantCode(String tenantCode) { this.tenantCode = tenantCode; }
     public String getCaptcha() { return captcha; }
     public void setCaptcha(String captcha) { this.captcha = captcha; }
     public String getCaptchaUuid() { return captchaUuid; }

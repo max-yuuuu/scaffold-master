@@ -12,7 +12,9 @@
 
 - 平台就长在本仓库：低代码能力新增 `scaffold-lowcode` 模块承载，scaffold 同时是元搭底座与生成项目的模板来源。
 - **平台不托管项目运行时**：它是研发期工具。发布 = 生成代码 + 提交 + 推送到租户登记的 Git 仓库**生成分支**；进主干由人在平台内发起「合并请求」，选源/目标分支、看文件 diff、确认才合并，平台不自动合并、永不 force-push。
-- 多租户数据隔离：平台元数据与 `sys_*` 同库，`lc_` 前缀 + `tenant_id` 字段隔离；业务库随生成项目自带，平台不连（建表 SQL 推仓库由项目自己迁移）。
+- 权限码前缀分两类：`platform:` 是平台运营专属（租户管理、租户参数，不下发给租户），`lowcode:` 是租户自己的开发功能（项目、模型、页面），随菜单模板复制到每个租户。平台新增租户可见菜单后，已有租户要在租户管理点「补齐资产」。
+- 租户自助注册即开通：`POST /api/auth/register`（匿名 + 验证码）建租户、管理员账号、内置 `tenant_admin` 角色与该租户的菜单树，并直接回登录令牌；管理员账号要求全局唯一。注意该接口默认公开，对外暴露前先决定是否加审核开关。
+- 多租户数据隔离：平台元数据与 `sys_*` 同库，`lc_` 前缀 + `tenant_id` 字段隔离；业务库随生成项目自带，平台不连（建表 SQL 推仓库由项目自己迁移）。运行时由 MyBatis-Plus `TenantLineInnerInterceptor` 按**表白名单**自动注入 `tenant_id`（PR 2 已落，新增带 `tenant_id` 的表必须同步登记，单测反向校验）；`super_admin` 看别的租户走会话内「切换租户」重签 JWT，不提供无租户条件的旁路查询。
 - Git 凭据走主机级 SSH 密钥，数据库只存 `repo_url` 与分支名；Git 操作全部用 JGit，不经 shell。
 - 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。生成物按所有权分三档：A 固定（初始化后平台不碰）、B 纯生成（每次覆盖、约定人工不改）、C 扩展点（生成一次骨架后平台不碰，业务逻辑写这里）。原 `CUSTOM-START/END` 文本级合并机制取消。
 - 页面设计器采用拖拽 + 配置融合：流式布局画布摆放容器与控件、支持嵌套、右侧属性面板配样式和数据绑定，产出结构化 JSON；**自研，不引 LowCodeEngine**（选型依据见方案 §3.6）。
@@ -23,7 +25,7 @@
 - 接口生成边界：标准 CRUD 六端点由模型直接推导；自定义接口（状态流转、批量、聚合、跨实体）一律走扩展点不生成；**flow / 流程编排 / 状态机元数据化本期不做**。
 - 版本与回滚：每次发布打 tag，支持文件级 / 页面级 / 发布级三级回滚，一律以 `revert` 新提交实现，不倒带分支历史。
 
-**当前阶段**：P0-A 多租户地基已完成（`lc_tenant` 建表、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）。下一步 P0-B —— MyBatis `TenantLineInnerInterceptor` 自动过滤（先定 `super_admin` 跨租户旁路口径）与租户管理 UI。
+**当前阶段**：P0-A 多租户地基（`lc_tenant`、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）与 **P0-B 租户隔离收口**（租户 SQL 拦截器、`super_admin` 切换租户旁路、`lc_tenant_config`、`scaffold-lowcode` 模块与租户管理 / 租户参数页面）均已完成，含**租户自助注册**：登录页可切换到注册表单，提交即开通租户（建租户 + 管理员账号 + `tenant_admin` 角色 + 复制平台业务菜单 / 字典 / 参数）并直接进入。P1（PR 3）进行中：**PR 3a 项目管理已完成**（`lc_project` + 仓库地址白名单 + 项目管理页面 + 已有租户的「补齐资产」入口），下一步 PR 3b（`lc_model` / `lc_field` 与模型、字段配置页面）与 PR 3c（手工新增租户的开通分支）。
 
 ## 开发入口
 
@@ -40,7 +42,7 @@
 | --- | --- | --- |
 | `scaffold-system` | 后端 Maven 多模块工程 | Java 17+、Spring Boot 3.5、MyBatis、MySQL、Redis、JWT |
 | `scaffold-vue` | 管理后台 | Vue 3、TypeScript、Vite 6、Vue Router 4、GSAP 3，自有组件库 |
-| `scaffold-system/sql` | 首次初始化脚本 | `V1__init_schema.sql` 建表，`V2__seed_data.sql` 初始化数据，`V3__system_resource_menu.sql` 补系统管理 · 资源监测菜单 |
+| `scaffold-system/sql` | 首次初始化脚本 | `V1__init_schema.sql` 建表，`V2__seed_data.sql` 初始化数据，`V3__system_resource_menu.sql` 补资源监测菜单，`V4__platform_tenant.sql` 补租户参数表与平台管理菜单（含存量库的 `sys_menu` 自增迁移）；`sql/verify/` 是双租户验收数据，**不自动导入** |
 | `docs` | 当前架构说明 | 后端架构、前后端接口约定和前端组件架构 |
 
 当前包含工作台和 11 个管理页面；建筑、工作流模块已移除。
@@ -72,7 +74,7 @@ export JWT_SECRET="$(openssl rand -hex 32)"
 
 使用 IDE 时将密钥配置到运行环境。未配置或不足 32 字节时后端启动失败；保留同一密钥可让重启前的有效 token 继续验签，更换密钥会使旧 token 失效。
 
-首次创建空的 `scaffold_system` 库后，按顺序导入三份 SQL；mysql 客户端须使用 `--default-character-set=utf8mb4`，并通过 `--init-command="SET time_zone='+08:00'"` 设置会话时区。也可在 IDE 运行 `scaffold-admin` 中的 `com.scaffold.admin.util.DbInit`，该工具使用同一组 `DB_*` 变量并按版本顺序初始化；参数 `fix` 会删除整个目标库，仅在核实库名、备份且明确同意重建时使用。
+首次创建空的 `scaffold_system` 库后，按顺序导入 `sql/` 顶层的四份 `V*__*.sql`（`sql/verify/` 子目录不在其中）；mysql 客户端须使用 `--default-character-set=utf8mb4`，并通过 `--init-command="SET time_zone='+08:00'"` 设置会话时区。也可在 IDE 运行 `scaffold-admin` 中的 `com.scaffold.admin.util.DbInit`，该工具使用同一组 `DB_*` 变量并按版本顺序初始化（自动发现顶层 `V*__*.sql`，不递归子目录）；参数 `fix` 会删除整个目标库，仅在核实库名、备份且明确同意重建时使用。
 
 ```bash
 # 在 scaffold-system 目录构建与启动后端

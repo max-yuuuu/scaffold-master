@@ -1,5 +1,6 @@
 package com.scaffold.system.mapper;
 
+import com.baomidou.mybatisplus.annotation.InterceptorIgnore;
 import com.scaffold.framework.datascope.DataScopeCriteria;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Delete;
@@ -100,14 +101,17 @@ public interface SystemManagementMapper {
             @Param("pageSize") int pageSize
     );
 
+    /** 数据权限解析入口：按全局主键取本人档案，跳过租户注入，保证切换租户的管理员仍解析到自己的范围 */
+    @InterceptorIgnore(tenantLine = "true")
     @Select("""
             SELECT u.id, u.dept_id AS deptId
             FROM sys_user u
-            WHERE u.username = #{username} AND u.deleted = 0 AND u.status = 1
-            LIMIT 1
+            WHERE u.id = #{userId} AND u.deleted = 0
             """)
-    Map<String, Object> selectUserProfileByUsername(@Param("username") String username);
+    Map<String, Object> selectUserProfileById(@Param("userId") Long userId);
 
+    /** 数据权限解析入口：角色范围按用户主键取，同上跳过租户注入 */
+    @InterceptorIgnore(tenantLine = "true")
     @Select("""
             SELECT r.id, r.data_scope AS dataScope
             FROM sys_user_role ur
@@ -657,13 +661,39 @@ public interface SystemManagementMapper {
     @Select("SELECT COUNT(*) FROM sys_user WHERE dept_id = #{deptId} AND deleted = 0")
     long countDeptUsers(@Param("deptId") Long deptId);
 
-    @Select("SELECT COALESCE(MAX(id), 0) + 1 FROM sys_menu")
-    Long nextMenuId();
+    /**
+     * 关联中间表（sys_user_role / sys_user_post / sys_role_menu）没有 tenant_id 列，租户拦截器覆盖不到，
+     * 写入前用这些查询确认目标记录归属当前租户：表在白名单内，条件由拦截器自动补上。
+     */
+    @Select("""
+            <script>
+            SELECT id FROM sys_role WHERE deleted = 0 AND id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+            </script>
+            """)
+    List<Long> selectRoleIdsInTenant(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT id FROM sys_post WHERE deleted = 0 AND id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+            </script>
+            """)
+    List<Long> selectPostIdsInTenant(@Param("ids") List<Long> ids);
+
+    @Select("""
+            <script>
+            SELECT id FROM sys_menu WHERE id IN
+            <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+            </script>
+            """)
+    List<Long> selectMenuIdsInTenant(@Param("ids") List<Long> ids);
 
     @Insert("""
-            INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, icon, path, component, permission, sort, visible, status, create_by, update_by)
-            VALUES (#{row.id}, #{row.parentId}, #{row.name}, #{row.type}, #{row.icon}, #{row.path}, #{row.component}, #{row.permission}, #{row.sort}, #{row.visible}, #{row.status}, #{operator}, #{operator})
+            INSERT INTO sys_menu (parent_id, menu_name, menu_type, icon, path, component, permission, sort, visible, status, create_by, update_by)
+            VALUES (#{row.parentId}, #{row.name}, #{row.type}, #{row.icon}, #{row.path}, #{row.component}, #{row.permission}, #{row.sort}, #{row.visible}, #{row.status}, #{operator}, #{operator})
             """)
+    @Options(useGeneratedKeys = true, keyProperty = "row.id")
     int insertMenu(@Param("row") Map<String, Object> row, @Param("operator") String operator);
 
     @Update("""

@@ -2,6 +2,7 @@ package com.scaffold.system.service;
 
 import com.scaffold.framework.datascope.DataScopeCriteria;
 import com.scaffold.framework.datascope.DataScopeResolver;
+import com.scaffold.framework.security.LoginUser;
 import com.scaffold.system.mapper.SystemManagementMapper;
 import org.springframework.stereotype.Service;
 
@@ -19,16 +20,16 @@ public class SystemDataScopeResolver implements DataScopeResolver {
     }
 
     @Override
-    public DataScopeCriteria resolve(String username) {
-        if (username == null || username.isBlank()) {
+    public DataScopeCriteria resolve(LoginUser user) {
+        if (user == null || user.userId() == null) {
             return DataScopeCriteria.selfOnly(null);
         }
-        Map<String, Object> user = mapper.selectUserProfileByUsername(username);
-        if (user == null || user.get("id") == null) {
+        Map<String, Object> profile = mapper.selectUserProfileById(user.userId());
+        if (profile == null || profile.get("id") == null) {
             return DataScopeCriteria.selfOnly(null);
         }
-        Long userId = numberAsLong(user.get("id"));
-        Long deptId = numberAsLong(user.get("deptId"));
+        Long userId = numberAsLong(profile.get("id"));
+        Long deptId = numberAsLong(profile.get("deptId"));
         List<Map<String, Object>> roles = mapper.selectActiveRoleScopes(userId);
         if (roles.stream().anyMatch(role -> "ALL".equals(role.get("dataScope")))) {
             return DataScopeCriteria.all();

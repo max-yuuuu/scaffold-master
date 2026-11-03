@@ -1,6 +1,8 @@
 package com.scaffold.system.service;
 
+import com.scaffold.framework.security.LoginUser;
 import com.scaffold.framework.security.PermissionResolver;
+import com.scaffold.system.domain.AuthUserRow;
 import com.scaffold.system.mapper.AuthMapper;
 import org.springframework.stereotype.Service;
 
@@ -16,14 +18,17 @@ public class SystemPermissionResolver implements PermissionResolver {
     }
 
     @Override
-    public boolean hasPermission(String username, String permission) {
-        var user = authMapper.selectUserByUsername(username);
-        if (user == null || user.getStatus() == null || user.getStatus() != 1) {
+    public boolean hasPermission(LoginUser user, String permission) {
+        if (user == null || user.userId() == null) {
             return false;
         }
-        if (authMapper.selectRoleCodes(user.getId()).contains(SUPER_ADMIN)) {
+        AuthUserRow account = authMapper.selectUserById(user.userId());
+        if (account == null || account.getStatus() == null || account.getStatus() != 1) {
+            return false;
+        }
+        if (authMapper.selectRoleCodes(account.getId()).contains(SUPER_ADMIN)) {
             return true;
         }
-        return authMapper.selectPermissions(user.getId()).contains(permission);
+        return authMapper.selectPermissions(account.getId()).contains(permission);
     }
 }

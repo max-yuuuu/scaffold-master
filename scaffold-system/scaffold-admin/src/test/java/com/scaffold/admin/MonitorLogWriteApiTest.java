@@ -67,7 +67,8 @@ class MonitorLogWriteApiTest {
                 MAP_TYPE
         );
         assertThat(clearOper.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_oper_log", Long.class)).isZero();
+        // 清空日志是按租户操作的：拦截器给 DELETE 补了 tenant_id，其它租户的日志不受影响
+        assertThat(countLogRowsOfCurrentTenant("sys_oper_log")).isZero();
 
         ResponseEntity<Map<String, Object>> clearLogin = restTemplate.exchange(
                 "/api/monitor/login-logs",
@@ -76,7 +77,12 @@ class MonitorLogWriteApiTest {
                 MAP_TYPE
         );
         assertThat(clearLogin.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sys_login_log", Long.class)).isZero();
+        assertThat(countLogRowsOfCurrentTenant("sys_login_log")).isZero();
+    }
+
+    /** 当前会话租户（种子 admin 属于 tenant_id = 1）的日志行数，其它租户的行不在清空范围内 */
+    private long countLogRowsOfCurrentTenant(String table) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = 1", Long.class);
     }
 
     @Test

@@ -32,6 +32,7 @@
         <module>scaffold-framework</module>
         <module>scaffold-system</module>
         <module>scaffold-generator</module>
+        <module>scaffold-lowcode</module>
         <module>scaffold-admin</module>
     </modules>
 
@@ -67,8 +68,19 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>com.scaffold</groupId>
+                <artifactId>scaffold-lowcode</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>com.baomidou</groupId>
                 <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+            <!-- 3.5.9 起 JSqlParser 从 extension 拆出，租户/分页等 SQL 解析拦截器依赖它 -->
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-jsqlparser</artifactId>
                 <version>${mybatis-plus.version}</version>
             </dependency>
             <dependency>

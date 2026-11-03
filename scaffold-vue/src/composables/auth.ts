@@ -1,6 +1,6 @@
 import { ref, type Component } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
-import { ApiError, authApi, authSession, type CurrentUser, type LoginRequest, type RouteItem } from '@/api'
+import { ApiError, authApi, authSession, type CurrentUser, type LoginRequest, type LoginResponse, type RegisterRequest, type RouteItem } from '@/api'
 import { setPermissions } from '@/directives/permission'
 import type { NavGroup, NavLeaf } from '@/data'
 import { clearDictCache } from './dict'
@@ -146,24 +146,68 @@ function remainingSeconds() {
   return Math.max(60, Math.round((authSession.expiresAt() - Date.now()) / 1000))
 }
 
+/** 拿到令牌后的统一开场：先落令牌与占位用户，再以服务端返回的当前用户为准 */
+async function openSession(login: LoginResponse, remember: boolean, seed: { username: string; nickname: string }, version: number) {
+  authSession.save(login, seed, remember)
+  const user = await authApi.me()
+  if (version !== sessionVersion.value) throw new Error('登录状态已变化，请重新登录')
+  authSession.save(login, user, remember)
+  currentUser.value = user
+  setPermissions(user.permissions ?? [])
+  authed.value = true
+  return user
+}
+
 export async function login(credentials: LoginRequest, remember: boolean) {
   clearSession()
   const version = sessionVersion.value
   try {
     const loginResponse = await authApi.login(credentials)
     if (version !== sessionVersion.value) throw new Error('登录状态已变化，请重新登录')
-    authSession.save(loginResponse, { username: credentials.username, nickname: credentials.username }, remember)
-    const user = await authApi.me()
-    if (version !== sessionVersion.value) throw new Error('登录状态已变化，请重新登录')
-    authSession.save(loginResponse, user, remember)
-    currentUser.value = user
-    setPermissions(user.permissions ?? [])
-    authed.value = true
-    return user
+    return await openSession(loginResponse, remember, { username: credentials.username, nickname: credentials.username }, version)
   } catch (error) {
     if (version === sessionVersion.value) clearSession()
     throw error
   }
+}
+
+/**
+ * 租户自助注册：后端建租户 + 管理员账号 + 菜单并直接回令牌，所以注册成功即等于登录成功。
+ * 顺带把租户编码记进 sessionStorage，下次回到登录页时预填。
+ */
+export async function registerTenant(credentials: RegisterRequest, remember: boolean) {
+  clearSession()
+  const version = sessionVersion.value
+  try {
+    const result = await authApi.register(credentials)
+    if (version !== sessionVersion.value) throw new Error('注册状态已变化，请重新提交')
+    rememberTenantCode(result.tenantCode)
+    return await openSession(result, remember, { username: credentials.adminUsername, nickname: credentials.adminUsername }, version)
+  } catch (error) {
+    if (version === sessionVersion.value) clearSession()
+    throw error
+  }
+}
+
+function rememberTenantCode(tenantCode: string) {
+  try { sessionStorage.setItem('scaffold.login.tenantCode', tenantCode) } catch { /* 存储不可用时忽略 */ }
+}
+
+/**
+ * 平台管理员切换会话租户（POST /api/auth/switch-tenant）。
+ * 后端吊销旧令牌并签发 tenantId 指向目标租户的新令牌；这里落新令牌并清空菜单、权限与用户缓存，
+ * 由调用方导航到 '/'，路由守卫按新会话重建路由 —— 与刷新页面走同一条已验证的路径。
+ */
+export async function switchTenant(tenantId: number | null) {
+  const login = await authApi.switchTenant({ tenantId })
+  authSession.save(login, currentUser.value ?? { username: '', nickname: '' }, authSession.isRemembered())
+  sessionVersion.value += 1
+  currentUser.value = null
+  navGroups.value = []
+  dynamicRoutes.value = []
+  componentPaths.value = {}
+  setPermissions([])
+  resetSessionRoutes?.()
 }
 
 export function clearSession() {

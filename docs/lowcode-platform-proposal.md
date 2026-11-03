@@ -242,7 +242,7 @@ CREATE TABLE lc_project (
     frontend_prefix VARCHAR(64) DEFAULT '' COMMENT '前端路由前缀',
     api_prefix VARCHAR(64) DEFAULT '/api' COMMENT '接口前缀',
     
-    -- 数据源
+    -- 数据源（PR 3a 实际建表时未落：这些列到 PR 5 生成 application.yml 才有读写方，届时以 ALTER 补）
     db_host VARCHAR(128) COMMENT '数据库地址',
     db_port INT DEFAULT 3306 COMMENT '端口',
     db_name VARCHAR(64) COMMENT '数据库名',
@@ -481,6 +481,27 @@ CREATE TABLE lc_merge_request_file (
 ) COMMENT '合并请求变更文件表';
 ```
 
+```sql
+-- PR 2 新增：租户级参数。读写条件由租户拦截器注入，接口不收 tenant_id 入参
+CREATE TABLE IF NOT EXISTS lc_tenant_config (
+    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '参数 ID',
+    tenant_id BIGINT NOT NULL DEFAULT 1 COMMENT '租户 ID（lc_tenant.id）',
+    config_key VARCHAR(128) NOT NULL COMMENT '参数键，如 project.gen_branch',
+    config_value VARCHAR(500) DEFAULT NULL COMMENT '参数值',
+    config_name VARCHAR(128) DEFAULT NULL COMMENT '参数名称（中文说明）',
+    builtin TINYINT NOT NULL DEFAULT 0 COMMENT '系统内置：1 内置不可删除，0 自定义',
+    remark VARCHAR(500) DEFAULT NULL COMMENT '备注',
+    create_by VARCHAR(64) DEFAULT NULL COMMENT '创建人',
+    update_by VARCHAR(64) DEFAULT NULL COMMENT '更新人',
+    create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_lc_tenant_config (tenant_id, config_key)
+) COMMENT '租户级参数';
+```
+
+内置两条，PR 3 建项目与 PR 4 发布读它作为该租户下所有项目的分支默认值：`project.main_branch`（生成项目主干，人工合并的落点）与 `project.gen_branch`（平台发布只推这条分支）。
+
 ### 2.3 多租户实现
 
 ```java
@@ -495,10 +516,21 @@ public class TenantContext {
     public static void clear() { TENANT_ID.remove(); PROJECT_ID.remove(); }
 }
 
-// scaffold-framework 新增
-// 1. TenantFilter: JWT 解析后设置 TenantContext（✅ PR 1 已落）
-// 2. TenantInterceptor: MyBatis 拦截器，自动注入 tenant_id（P0-B）
+// scaffold-framework 新增（✅ PR 2 已落）
+// 1. TenantFilter: JWT 解析后设置 TenantContext（PR 1）
+// 2. MybatisPlusConfig: MybatisPlusInterceptor + TenantLineInnerInterceptor
+// 3. ScaffoldTenantLineHandler: 决定哪些表被注入 tenant_id
 ```
+
+**注入范围是白名单，不是黑名单**（`ScaffoldTenantLineHandler.TENANT_TABLES`，PR 2 定）：只有登记过的表（11 张 `sys_*` + `lc_tenant_config`）会被自动补 `tenant_id`，其余一律不碰 —— 反向写法（"全部减去少数"）会给 `information_schema`、生成器配置表和无 `tenant_id` 的关联中间表加上不存在的列。名单遗漏的后果是泄露，所以 `ScaffoldTenantLineHandlerTest` 直接解析 `sql/V*.sql` 的 DDL 做反向校验：**凡是带 `tenant_id` 列的表必须在白名单里**，新增表忘记登记当场红。匿名请求（登录、验证码、健康检查）没有租户上下文，整体跳过注入。
+
+**`super_admin` 跨租户 = 会话内切换租户**（关闭原开放项 1）：`POST /api/auth/switch-tenant {tenantId}` 校验调用者角色与目标租户状态后，重签一张 `tenantId` 指向目标租户的 JWT 并**吊销旧令牌**，`tenantId` 为空回到自己的平台租户，切换动作写登录日志。管理员的身份、角色与数据范围仍按**本人**解析 —— 相关查询（`AuthMapper` 的账号/角色/权限、`SystemManagementMapper` 的档案与角色范围）标 `@InterceptorIgnore(tenantLine = "true")` 按全局主键定位，业务数据与菜单集仍按当前租户过滤。因此切换后能看到该租户的数据、看不到平台管理菜单，边界只有一条会话轨迹，审计清楚。
+
+**账号不是全局身份键**：`sys_user` 唯一键是 `(tenant_id, username)`，跨租户重名是常态。登录可选 `tenantCode`（`lc_tenant.tenant_code`）：填了按「账号 + 租户」精确定位，未填且命中多个租户时报「该账号存在于多个租户，请填写租户编码」，绝不取第一条。权限与数据范围解析的入参已从 `username` 改为 `LoginUser`（按 `userId`）。
+
+**拦截器管不到的写入靠服务层拦**：`sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` 没有 `tenant_id`，`SystemManagementService.ownedIds()` 在授权前按当前租户反查目标主键，发现外来 ID 直接拒绝并回滚整笔事务；菜单 `parentId` 同样校验归属。`lc_tenant_config` 的读写只作用于当前会话租户（接口不收 `tenant_id` 入参），跨租户改参数必须先切换 —— 这是切换口径在 API 形状上的体现。
+
+**一处踩坑**：`sys_menu.id` 原由应用侧 `MAX(id)+1` 分配，而 `MAX` 已被租户条件限制，两个租户会算出同一个 ID 撞全局主键；已改为数据库自增（V1 建表 + `useGeneratedKeys`，V4 带存量库 `ALTER`）。
 
 **动态数据源本期不做**。平台不连项目业务库：模型的字段定义存在平台库 `lc_field`，建表 SQL 作为生成产物推到项目仓库、由项目自己的迁移流程执行（§5.2）。因此 `AbstractRoutingDataSource` 按 `project_id` 切库这套不进本期范围；只有在"平台要在线读项目库做数据预览/报表"时才需要，那属 §7.2 远期能力。
 
@@ -1207,8 +1239,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | 阶段 | 周期 | 交付物 | 状态 |
 |------|------|--------|------|
 | **P0-A：多租户地基** | — | `lc_tenant` 建表、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / `LoginUser.tenantId` / JWT claim / 登录三段校验 | ✅ 已完成（`be2145d`） |
-| **P0-B：租户隔离收口** | 2 周 | MyBatis Plus `TenantLineInnerInterceptor` 自动过滤（先定 `super_admin` 跨租户旁路口径）、租户管理 UI、`lc_tenant_config` | 待做 |
-| **P1：项目 + 模型** | 3 周 | `lc_project`（含 §2.2 新增的仓库字段）、`lc_model` / `lc_field`、项目管理与模型设计 UI、仓库绑定与连通性检查 | 待做 |
+| **P0-B：租户隔离收口** | 2 周 | `TenantLineInnerInterceptor` 自动过滤（表白名单 + DDL 反向校验）、`super_admin` 切换租户旁路、登录 `tenantCode`、关联表写入归属校验、租户管理 UI、`lc_tenant_config` | ✅ 已完成（PR 2，2026-11-03；租户开通流程移入 P1） |
+| **P1：项目 + 模型** | 3 周 | `lc_project`（含 §2.2 新增的仓库字段）、`lc_model` / `lc_field`、项目管理与模型设计 UI、仓库绑定与连通性检查、租户开通流程的**手工新增分支**（PR 2 已交付自助注册即开通，平台管理员在租户管理里手工建租户时还不建账号） | 待做 |
 | **P1.5：组件抽包 `@scaffold/ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable 迁入；**解 28 处 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 git tag 并让宿主改依赖 | 待做，**P2/P3 的硬前置** |
 | **P2：可视化设计器** | 5 周 | 三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板；**第一期只覆盖列表页 + 表单弹窗两类模板**，看板/详情/流程后置 | 待做 |
 | **P3：代码生成升级** | 3 周 | FreeMarker 模板替换 `StringBuilder`、完整 CRUD 生成、A/B/C 文件分档与 C 档扩展点骨架、`renderFiles` 出参提为公共类型；**模板产物的 import 走 `@scaffold/ui`**；自定义接口只生成 `custom:{name}` 的 TODO handler 桩（§4.5） | 待做 |
@@ -1265,10 +1297,13 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | 模型定位 | `lc_model` / `lc_field` 是**生成器的输入（期望态）**，不是"模型管理"业务功能；判据见 §1.4 |
 | 接口生成 | 标准 CRUD 六端点由模型推导；自定义接口一律走 C 档扩展点；**flow / 流程编排 / 状态机元数据化本期不做**（§4.5） |
 | 页面与模型 | 一个页面一个主模型、一个模型多个页面；耦合只在 `field_code`；`DASHBOARD` 可不绑模型（§1.5） |
+| 租户隔离实现 | MyBatis-Plus `TenantLineInnerInterceptor` + **表白名单**（新增带 `tenant_id` 的表必须登记，单测按 `sql/V*.sql` 反向校验）；无 `tenant_id` 的关联中间表由服务层做归属校验（§2.3） |
+| `super_admin` 跨租户 | **会话内切换租户**：重签 JWT（`tenantId` 指向目标租户）并吊销旧令牌，身份与权限仍按本人角色解析；不提供无租户条件的旁路查询（§2.3） |
+| 身份键 | 账号只在租户内唯一，一律按 `userId` 解析权限与数据范围；登录可选 `tenantCode` 定位租户 |
 
 ### 10.2 真正的开放项
 
-1. **`super_admin` 跨租户旁路口径**（P0-B 的前置）：平台管理员要能看所有租户数据，是给一个不带 `tenant_id` 条件的专用查询通道，还是给"切换到租户"的会话动作？后者实现简单且审计清晰。
+1. ~~`super_admin` 跨租户旁路口径~~ **已定（PR 2）**：走"会话内切换租户"，见 §10.1 与 §2.3。留下的实现细节 —— 切换态下顶栏常驻「回到平台租户」，平台管理菜单不下发给租户。
 2. **生成物命名约定跟底座还是跟模板**（PR 5 的第一刀）：底座 `scaffold-system` 实际用 `{Entity}WriteRequest`、`PageQuery` + 逐个 `@RequestParam`、`R.success(...)`、单类 Service、`src/api/{module}.ts` 单文件、`views/{module}/Users.vue` 复数平铺；而本文档 §4.2 示例写的是 `{Entity}DTO` / `{Entity}Query` / `R.ok()` / interface + impl / `api/{m}/{r}.ts` / `views/{m}/{r}/index.vue`。两者必须择一：**(a) 生成物向底座看齐**（改动小，但每实体一个 Service 类与现有"一个模块一个大 Service"不同，仍需定义业务模块的粒度）或 **(b) 反过来把底座重构成分层结构**（干净，但要动已交付的 system 模块，与"固定代码不随发布变动"冲突）。定了才能写模板，也才能定 C 档扩展点放哪（`{Cls}Extension` 还是别的）。
 3. **C 档扩展点的文件约定**：后端一个扩展类是否够用、前端 `overrides/` 第一期要不要做。与上条绑定。
 4. **`design_json` 是否对齐 LCE 搭建协议**：对齐能白捡一份别人验证过的 schema 与文档，代价是字段冗余（本项目只需列表/表单两类）。倾向"借结构不借全协议"。
@@ -1282,8 +1317,9 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 
 | PR | 范围 | 验收标准 | 依赖 |
 |----|------|----------|------|
-| **PR 2**<br>P0-B | MyBatis Plus `TenantLineInnerInterceptor` 自动注入；`super_admin` 跨租户旁路口径落地；`lc_tenant_config`；租户管理 UI（列表/新增/停用） | 双租户种子数据下，A 租户令牌查 B 租户记录返回空；`super_admin` 按既定口径可见；单元测试覆盖拦截器与旁路 | PR 1 ✅ |
-| **PR 3**<br>P1 上 | `lc_project` / `lc_model` / `lc_field` 建表；后端 CRUD；项目管理与模型/字段配置 UI（复用 `ListPage` / `FormDialog` / `DataTable`） | 能建项目、建模型、配字段；字段类型 → Java 类型/列类型映射表有单测 | PR 2 |
+| **PR 2**<br>P0-B | `TenantLineInnerInterceptor` 自动注入；`super_admin` 切换租户旁路；登录 `tenantCode` 与按 `userId` 的身份解析；关联表写入归属校验；`lc_tenant_config`；租户管理 UI（列表/新增/编辑/启停/进入租户）；**租户自助注册**（登录页切换注册表单，提交即开通租户 + 管理员 + 菜单） | ✅ 已完成：双租户种子数据下 A 租户令牌查 B 租户记录为空、`super_admin` 切换后可见且身份权限不变、非管理员切换被拒、停用租户账号登录被拒、跨租户角色授权被拦、租户参数只在当前租户内读写（`TenantIsolationApiTest` 9 例 + 拦截器单测 5 例） | PR 1 ✅ |
+| **PR 3a**<br>P1 上 | ✅ 已完成：`lc_project` 建表（`db_*` / `deploy_*` 等无读写方的列留到 PR 5 以 ALTER 补）、`RepoUrlValidator` 协议白名单、项目 CRUD 与 `ListPage` 版式的项目管理页面、500 段「低代码」菜单，以及「补齐租户资产」接口（已有租户获得迁移新增的菜单 / 字典 / 参数） | 项目从新增到软删全链路；非法仓库地址与同分支被拒；跨租户同名编码各自可见且改删被拒（`ProjectApiTest` 3 例 + `RepoUrlValidatorTest` 4 例） | PR 2 ✅ |
+| **PR 3b / 3c**<br>P1 上 | `lc_model` / `lc_field` 建表与后端 CRUD；模型与字段配置 UI（复用 `ListPage` / `FormDialog` / `DataTable`）；租户开通流程的**手工新增分支**（自助注册路径已在 PR 2 交付：建租户 + 复制菜单树 + `tenant_admin` 角色 + 管理员账号 + 直接回令牌） | 能建模型、配字段；字段类型 → Java 类型/列类型映射表有单测；平台管理员手工新增的租户也能开通并登录 | PR 3a ✅ |
 | **PR 4**<br>P1 下 | JGit 接入（依赖只落 `scaffold-lowcode`）；`repo_url` 协议白名单校验 + `ls-remote` 连通性检查；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单（代码里的显式白/黑名单）+ `scaffold-business` 空壳预置**；空仓库首次初始化（§6.3） | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止 | PR 3 |
 | **PR 4B**<br>P1.5 | **抽 `@scaffold/ui`**：`packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi(app, {http, permission, dict})` 注入点；解 28 处 app 层 import；平台/演示专属组件划出包外；打 tag 发布，宿主与文档改依赖。**分两步提交**：先搬路径建 workspace（行为不变），再改注入点解耦 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）；148 处引用中不再有组件间 `@/` 互引；包被一个最小 demo app 以 git tag 依赖消费成功 | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@scaffold/ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |

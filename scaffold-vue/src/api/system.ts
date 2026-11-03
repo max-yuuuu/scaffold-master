@@ -359,7 +359,8 @@ export function createSystemApi(client: HttpClient) {
   }
 }
 
-function crudPage<Row, WriteBody>(client: HttpClient, path: string) {
+/** 标准分页 CRUD 客户端：list / create / update / remove，各模块按需再补导出与专用动作 */
+export function crudPage<Row, WriteBody>(client: HttpClient, path: string) {
   return {
     list: (query?: QueryParams) => client.get<PageResult<Row>>(path, query),
     create: (body: WriteBody) => client.post<IdResponse>(path, body),

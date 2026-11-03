@@ -20,7 +20,12 @@ final class TestAuthClient {
     }
 
     static String login(TestRestTemplate restTemplate, String username, String password) {
-        ResponseEntity<Map<String, Object>> response = loginResponse(restTemplate, username, password);
+        return login(restTemplate, username, password, null);
+    }
+
+    /** tenantCode 租户编码（lc_tenant.tenant_code）：账号跨租户重名时必须指定 */
+    static String login(TestRestTemplate restTemplate, String username, String password, String tenantCode) {
+        ResponseEntity<Map<String, Object>> response = loginResponse(restTemplate, username, password, tenantCode);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         Map<String, Object> data = dataOf(response.getBody());
@@ -29,6 +34,10 @@ final class TestAuthClient {
     }
 
     static ResponseEntity<Map<String, Object>> loginResponse(TestRestTemplate restTemplate, String username, String password) {
+        return loginResponse(restTemplate, username, password, null);
+    }
+
+    static ResponseEntity<Map<String, Object>> loginResponse(TestRestTemplate restTemplate, String username, String password, String tenantCode) {
         Map<String, Object> captcha = dataOf(restTemplate.exchange(
                 "/api/auth/captcha",
                 HttpMethod.GET,
@@ -43,14 +52,22 @@ final class TestAuthClient {
         return restTemplate.exchange(
                 "/api/auth/login",
                 HttpMethod.POST,
-                new HttpEntity<>(Map.of(
-                        "username", username,
-                        "password", password,
-                        "captcha", "",
-                        "captchaUuid", String.valueOf(captcha.getOrDefault("uuid", ""))
-                )),
+                new HttpEntity<>(loginBody(username, password, String.valueOf(captcha.getOrDefault("uuid", "")), tenantCode)),
                 MAP_TYPE
         );
+    }
+
+    /** captchaUuid 验证码 UUID；验证码开关关闭时 captcha 可为空串 */
+    static Map<String, Object> loginBody(String username, String password, String captchaUuid, String tenantCode) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("username", username);
+        body.put("password", password);
+        body.put("captcha", "");
+        body.put("captchaUuid", captchaUuid);
+        if (tenantCode != null) {
+            body.put("tenantCode", tenantCode);
+        }
+        return body;
     }
 
     @SuppressWarnings("unchecked")

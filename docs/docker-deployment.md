@@ -18,7 +18,7 @@
 ## 前置条件
 
 - Docker Engine（或 Docker Desktop）+ Docker Compose v2，磁盘约 2 GB。
-- 三份初始化 SQL 不写 `CHARSET` / `COLLATE`，建表结果继承数据库默认字符集：目标库必须是 utf8mb4（MySQL 5.7 默认可能是 latin1，会让中文直接乱码）。内置 `mysql` 服务已通过启动参数固定 `utf8mb4` / `utf8mb4_unicode_ci`；复用外部实例时先确认库字符集，必要时 `CREATE DATABASE ... CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`。
+- `sql/` 顶层的初始化 SQL 不写 `CHARSET` / `COLLATE`，建表结果继承数据库默认字符集：目标库必须是 utf8mb4（MySQL 5.7 默认可能是 latin1，会让中文直接乱码）。内置 `mysql` 服务已通过启动参数固定 `utf8mb4` / `utf8mb4_unicode_ci`；复用外部实例时先确认库字符集，必要时 `CREATE DATABASE ... CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`。
 - 生成 JWT 密钥：`openssl rand -hex 32`（UTF-8 至少 32 字节且不能全为空白）。
 
 ## 快速开始（内置 MySQL）
@@ -33,7 +33,7 @@ docker compose --profile mysql up -d --build
 
 数据持久化在命名卷中，卷名格式是 `<project>_<卷名>`，project 默认取所在目录名（在本目录下即 `scaffold-master_mysql-data`、`scaffold-master_redis-data`）。`down` 保留卷，`down -v` 会连数据一起删，不可恢复。
 
-内置 MySQL 仅首次创建卷时导入 `scaffold-system/sql` 下的 `V1`（建表）→ `V2`（种子数据）→ `V3`（资源监测菜单），按文件名排序执行；已有卷不会重跑。
+内置 MySQL 仅首次创建卷时导入 `scaffold-system/sql` **顶层**的 `V1`（建表）→ `V2`（种子数据）→ `V3`（资源监测菜单）→ `V4`（租户参数表与平台管理菜单），按文件名排序执行；`sql/verify/` 子目录不会被递归导入（双租户验收数据要手工执行）。已有卷不会重跑。
 
 `deploy/mysql-client.cnf` 是必需的：官方 mysql 镜像容器内 locale 为 `C`，导入 SQL 的客户端默认按 latin1 解析 UTF-8 字节，种子中文会被二次编码存库（页面显示成「å‘¨æ˜Žè¿œ」）。这份配置把 `[client]` 字符集固定为 utf8mb4，与 README 要求的 `--default-character-set=utf8mb4` 口径一致。
 
@@ -52,7 +52,7 @@ docker compose up -d --build
 
 `DB_HOST=host.docker.internal` 与 `DB_PORT` 必须成对设置：`DB_PORT` 是后端实际连接的端口，漏改时它会退回默认 3306，打到宿主机上另一个 MySQL 实例（表现为登录报「系统内部错」而不是连不上内置库）。内置 MySQL 的宿主机映射端口是另一个变量 `MYSQL_HOST_PORT`，走外部模式时两者要指到同一个数字。
 
-外部库不会被自动初始化：需先按 README 的口径导入三份 SQL（客户端带 `--default-character-set=utf8mb4`、会话 `SET time_zone='+08:00'`），或直接用 `scaffold-admin` 里的 `com.scaffold.admin.util.DbInit`（读同一组 `DB_*` 变量）。自动导入只在内置 `mysql` 服务首次建卷时发生。
+外部库不会被自动初始化：需先按 README 的口径导入 `sql/` 顶层的四份 SQL（客户端带 `--default-character-set=utf8mb4`、会话 `SET time_zone='+08:00'`），或直接用 `scaffold-admin` 里的 `com.scaffold.admin.util.DbInit`（读同一组 `DB_*` 变量）。自动导入只在内置 `mysql` 服务首次建卷时发生。**升级已有部署**时（例如 PR 2 的 `V4`：新增 `lc_tenant_config`、平台管理菜单，并把 `sys_menu.id` 改成自增），必须手工对目标库执行新增的 `V*.sql` —— 脚本按幂等口径写（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`，重复执行安全），不执行就会出现表缺失或菜单不显示。
 
 ## 环境变量
 

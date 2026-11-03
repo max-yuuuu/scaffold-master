@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import Icon from '@/components/Icon.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import Avatar from '@/components/ui/Avatar.vue'
-import { currentUser } from '@/composables/auth'
+import { currentUser, switchTenant } from '@/composables/auth'
+import { pushToast, toastError } from '@/composables/toast'
 import { overlayEnter, overlayLeave } from '@/composables/motion'
 
 const emit = defineEmits<{
@@ -16,6 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const router = useRouter()
 const chip = ref<HTMLElement | null>(null)
 const pop = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
@@ -24,6 +26,24 @@ const pos = ref({ top: 0, right: 0 })
 const group = computed(() => route.meta.group as string | undefined)
 const title = computed(() => route.meta.title as string | undefined)
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
+
+/** 平台管理员切换到别的租户查看数据时，顶栏要一直显示「正在看哪个租户」并提供回退入口 */
+const tenantName = computed(() => currentUser.value?.tenantName ?? '')
+const isSwitched = computed(() => {
+  const user = currentUser.value
+  return !!user && user.homeTenantId !== undefined && user.tenantId !== user.homeTenantId
+})
+
+async function backToPlatformTenant() {
+  closeMenu()
+  try {
+    await switchTenant(null)
+    pushToast('已回到平台租户')
+    await router.replace('/')
+  } catch (error) {
+    toastError(error, '回到平台租户失败')
+  }
+}
 
 async function openMenu() {
   const rect = chip.value?.getBoundingClientRect()
@@ -95,7 +115,7 @@ onBeforeUnmount(() => closeMenu())
       <Avatar :name="currentUser?.nickname" :size="32" />
       <span class="user-meta">
         <span class="user-name" style="display: block">{{ currentUser?.nickname }}</span>
-        <span class="user-role" style="display: block">{{ currentUser?.deptName || currentUser?.username }}</span>
+        <span class="user-role" style="display: block">{{ isSwitched && tenantName ? tenantName : (currentUser?.deptName || currentUser?.username) }}</span>
       </span>
       <Icon name="chevronDown" :size="14" style="color: var(--ink-soft)" />
     </button>
@@ -106,7 +126,9 @@ onBeforeUnmount(() => closeMenu())
           <div class="menu-head">
             <div style="font-weight: 680">{{ currentUser?.nickname }}</div>
             <div class="soft" style="font-size: 12px">@{{ currentUser?.username }}<template v-if="currentUser?.deptName"> · {{ currentUser.deptName }}</template></div>
+            <div v-if="tenantName" class="soft" style="font-size: 12px">租户：{{ tenantName }}<template v-if="isSwitched">（已切换）</template></div>
           </div>
+          <button v-if="isSwitched" type="button" class="menu-item" role="menuitem" @click="backToPlatformTenant()"><Icon name="home" :size="16" />回到平台租户</button>
           <button type="button" class="menu-item" role="menuitem" @click="pick('password')"><Icon name="key" :size="16" />修改密码</button>
           <button type="button" class="menu-item" role="menuitem" @click="pick('appearance')"><Icon name="contrast" :size="16" />外观设置</button>
           <button type="button" class="menu-item is-danger" role="menuitem" @click="pick('logout')"><Icon name="logout" :size="16" />退出登录</button>

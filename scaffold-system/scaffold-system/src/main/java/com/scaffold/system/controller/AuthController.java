@@ -6,6 +6,7 @@ import com.scaffold.framework.audit.OperLog;
 import com.scaffold.framework.security.CaptchaService;
 import com.scaffold.system.domain.dto.ChangePasswordRequest;
 import com.scaffold.system.domain.dto.LoginRequest;
+import com.scaffold.system.domain.dto.SwitchTenantRequest;
 import com.scaffold.system.domain.vo.CurrentUserResponse;
 import com.scaffold.system.domain.vo.LoginResponse;
 import com.scaffold.system.service.AuthService;
@@ -48,6 +49,12 @@ public class AuthController {
     public R<Void> logout() {
         authService.logout();
         return R.success(null);
+    }
+
+    @PostMapping("/switch-tenant")
+    @OperLog(module = "登录认证", action = "切换租户")
+    public R<LoginResponse> switchTenant(@RequestBody SwitchTenantRequest request) {
+        return R.success(authService.switchTenant(request.getTenantId()));
     }
 
     @GetMapping("/me")

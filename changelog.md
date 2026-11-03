@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-11-04（PR 3a：lc_project 建表、项目管理页面与「补齐租户资产」）
+
+按方案 §10.3 开 PR 3（P1 上）。本单元先做项目侧：建表、后端 CRUD、仓库地址白名单、项目管理页面，以及一个 PR 2 遗留问题的收口 —— 已有租户拿不到迁移新增的租户可见菜单。
+
+- **`lc_project`（V5）**：项目 = 租户名下的一个 Git 仓库。**没有照抄方案 §2.2 的全部列** —— `db_*`（生成 `application.yml` 用的连接配置）、`deploy_*`（远期部署形态）、`backend_module` / `api_prefix` / `frontend_prefix`（生成期常量）本期没有任何读写方，建了就是让表单多一排填了没用的字段，等 PR 5 有真实需要时以 ALTER 补。落了 `repo_url` / `main_branch` / `gen_branch` / `workspace_path` / `base_scaffold_sha` / `last_commit_sha` / `sync_status`（单一生命周期状态机，方案已把原 init_status 与 sync_status 合并）与三个时间戳。表已登记进租户拦截器白名单，DDL 反向校验单测自动守住。
+- **仓库地址是安全边界**：`RepoUrlValidator`（`com.scaffold.lowcode.repo`）只放行 `https://host/path` 与 `git@host:path`，拒 `file://` / `ext::` / `ssh://` / 裸路径 / 内嵌账号口令，也拒 `http://`（方案 §九「用户输入进入 Git 操作造成注入或越权仓库」那条风险的落点 —— PR 4 的 JGit 直接拿这个值建 remote）。4 个单测覆盖放行与拒绝形态。
+- **项目 CRUD**：`/api/lowcode/projects`（列表 / options / 导出 / 新增 / 编辑 / 启停 / 软删），权限码 `lowcode:project:list/add/edit/remove`。**编码租户内唯一**（唯一键 `(tenant_id, project_code)`，两个租户可以有同名项目）；**主干分支与发布分支不许相同** —— 同一条分支既被人工写又被平台推，合并请求就没有意义。`options` 只回精简字段给后续模型/页面模块选项目。
+- **新菜单段 500「低代码」**（项目管理，`/lowcode/project` → `views/lowcode/projects.vue`）。与 400 段「平台管理」的区分是口径性的：**`platform:` 前缀 = 平台运营专属（不下发给租户），`lowcode:` 前缀 = 租户自己的开发功能**。注册开通复制菜单时按 `path LIKE '/platform%' OR permission LIKE 'platform:%'` 排除平台段，按语义判断不写死 ID。
+- **「补齐租户资产」补上了 PR 2 的一个真实缺口**：平台用迁移脚本新增租户可见菜单后，**已有租户不会自动获得**（V5 的 500 段就只进了平台租户）。新增 `POST /api/platform/tenants/{id}/assets/sync` 与租户管理里的行操作按钮：按平台模板补齐缺少的菜单 / 字典类型 / 字典数据 / 内置参数，并把业务菜单授给该租户的内置管理员角色。菜单没有跨租户唯一键，用**身份键**判断该不该补：优先 `permission`，其次 `path`，最后 `menu_type + menu_name`；`sys_dict_data` 也没有唯一键，只能按 `(dict_type, dict_value)` 反查去重，否则补一次多一份。幂等，重复执行 `menuAdded = 0`。
+- **顺带修掉注册的一个真缺陷**（自查发现，不是用户报的）：注册只复制了菜单，**字典与内置参数没带** —— 实测新租户 `sys_dict_type` 0 条、`sys_config` 0 条，表现为状态下拉全空、新增用户取不到初始密码。开通逻辑抽成 `TenantProvisionService`（菜单 / 字典 / 参数 / 内置管理员角色），注册与补齐共用。
+- **前端**：`projects.vue` 按 `ListPage` 版式实现（查询 / 重置 / 分页 / 导出 / 行操作齐全），分支列用两个 Tag 加箭头表达「发布分支 → 主干」的方向，长仓库地址走 `.cell-sub` + 截断不新造样式。
+- 验证：后端 91 个测试全绿（`ProjectApiTest` 3 例：新增→编辑→停用→软删全链路、非法仓库与分支被拒、跨租户同名编码各自可见且改删被拒；`RepoUrlValidatorTest` 4 例；`TenantRegisterApiTest` 加了字典/参数随开通落地与补齐幂等的断言）；前端 `vue-tsc` + `vite build` 通过；浏览器实测界面新增 `ui-demo` 项目 → 列表渲染正确 → 删除生效，租户管理点「补齐租户资产」给 `demo` 租户补到「菜单 5 项、字典 3 类 / 7 条、参数 3 条」。
+- **未做（PR 3b/3c）**：`lc_model` / `lc_field` 与字段类型映射、模型与字段配置页面；平台管理员手工新增租户时的开通分支；仓库连通性检查（`ls-remote`）与初始化快照推送属 PR 4 的 JGit 范围。
+
+#### 2026-11-03（PR 2 · P0-B：租户隔离收口 —— SQL 拦截器、切换租户旁路、租户管理与租户参数）
+
+按方案 §10.3 的 PR 2 范围开工，把「租户只是加了列」推进到「租户是运行时真的在生效的隔离边界」。后端 80 个测试全绿（25 单测 + 55 集成，含新增 9 个租户隔离用例），前端 `vue-tsc` + `vite build` + 21 个单测通过，并在本地实机跑通登录 → 租户管理 → 进入租户 → 回到平台租户的完整链路。
+
+**新增模块**：`scaffold-system/scaffold-lowcode`（`com.scaffold.lowcode.*`）—— 平台业务从这一个模块长出来，生成项目的初始化快照按 §6.4 剔除它。
+
+- **租户 SQL 拦截器（`scaffold-framework`）**：`MybatisPlusConfig` 注册 `MybatisPlusInterceptor` + `TenantLineInnerInterceptor`，`ScaffoldTenantLineHandler` 决定注入范围。**采用白名单而非黑名单**：只有 `ScaffoldTenantLineHandler.TENANT_TABLES` 里登记的 12 张表（11 张 `sys_*` + `lc_tenant_config`）会被注入 `tenant_id`，其余（`lc_tenant`、四张关联中间表、`gen_table*`、`information_schema`）一律不碰 —— 反过来写会让公共查询凭空背上不存在的列。白名单遗漏是泄露风险，所以配了一条**反向校验单测**：`ScaffoldTenantLineHandlerTest.白名单覆盖建表脚本里所有带租户列的表` 直接解析 `sql/V*.sql` 的 DDL，凡是带 `tenant_id` 列的表必须在白名单里，反之不能在里面；新增表忘记登记会当场红。匿名请求（登录、验证码、健康检查）没有租户上下文，整体跳过注入。
+- **`super_admin` 跨租户旁路口径落定**（关掉方案 §10.2 开放项 1）：走**会话内切换租户**，不走「不带租户条件的专用查询通道」。`POST /api/auth/switch-tenant {tenantId}` 校验调用者是 `super_admin`、目标租户启用后，重签一张 `tenantId` 指向目标租户的 JWT 并**吊销旧令牌**，`tenantId` 传空回到自己的平台租户；切换事件写 `sys_login_log`（「切换到租户 acme」/「回到平台租户」）。管理员的业务权限与数据范围仍按**自己的角色**解析，所以能看见目标租户数据却不会丢权限，平台管理菜单也不会跟着下发给租户 —— 边界干净，审计只有一条会话轨迹。
+- **身份与授权解析改按用户 ID，不再按账号**：账号唯一键是 `(tenant_id, username)`，跨租户重名是常态，用账号当身份键会取错人。`PermissionResolver` / `DataScopeResolver` 的入参从 `String username` 改为 `LoginUser`，实现里走 `selectUserById` / `selectUserProfileById`；`AuthMapper` 的角色、权限、账号定位查询标 `@InterceptorIgnore(tenantLine = "true")`（都按全局主键定位，切换租户后仍要解析到自己），而 `selectAllPermissions` / `selectAllRouteMenus` 两个全表查询**保留注入**（菜单集按当前租户取）。登录支持可选 `tenantCode`（`lc_tenant.tenant_code`）：填了按「账号 + 租户」精确定位，没填且命中多个租户时报「该账号存在于多个租户，请填写租户编码」，绝不取第一条；前端登录页加了对应输入框并记住最后一次。
+- **关联中间表的写入校验**（PR 2 范围内唯一拦得住的跨租户写入口）：`sys_user_role` / `sys_user_post` / `sys_role_menu` / `sys_role_dept` 没有 `tenant_id`，拦截器管不到写入。`SystemManagementService.ownedIds()` 在写入前按当前租户反查目标主键（表本身在白名单内，条件自动注入），发现外来 ID 直接报「所选角色不属于当前租户」并回滚整笔事务；菜单的 `parentId` 同样校验归属，且 `updateMenu` 补了「上级菜单不能是自身」。
+- **`sys_menu.id` 改为数据库自增**：原实现是应用侧 `MAX(id)+1`，而 `MAX` 已被租户条件限制 —— 两个租户会算出同一个 ID 撞全局主键。V1 建表与 `insertMenu` 一起改（去掉显式 id、`useGeneratedKeys` 回读），V4 带存量库的 `ALTER`。
+- **`lc_tenant_config` + 租户管理**：新表按 `(tenant_id, config_key)` 唯一，存平台按租户区分的默认值，先落 `project.main_branch` / `project.gen_branch` 两条内置参数（PR 3 建项目、PR 4 发布读它）。`LcTenantController`（`/api/platform/tenants`，权限码 `platform:tenant:list/add/edit`）提供列表（含账号数）、导出、新增、编辑、启停；平台租户禁止停用。`LcTenantConfigController`（`/api/platform/tenant-configs`，`platform:config:list/edit`）**只作用于当前会话租户**：接口不收 `tenant_id` 入参，读写条件全靠拦截器注入 —— 这是「跨租户必须先切换」口径在 API 形状上的体现，普通租户角色拿不到这两个权限码。
+- **日志清理语义明确**：`DELETE /api/monitor/oper-logs|login-logs` 的清空现在只清当前租户（拦截器给 `DELETE` 补了条件），`MonitorLogWriteApiTest` 的断言相应改为按 `tenant_id = 1` 统计。
+- **前端**：新增 `api/platform.ts`（`platformApi.tenants` / `tenantConfigs`，复用 `system.ts` 的 `crudPage`，该 helper 已导出）；`views/lowcode/tenants.vue`（列表 / 新增 / 编辑 / 启停 / 「进入该租户」，当前租户行标 Tag 且不显示进入按钮）、`views/lowcode/tenant-configs.vue`（当前租户参数，内置项不可删）；`composables/auth.ts` 新增 `switchTenant()` —— 落新令牌、清菜单与权限、`resetSessionRoutes()`，然后由调用方 `router.replace('/')` 让路由守卫按新会话重建，与刷新页面走同一条路径；顶栏用户菜单在切换态显示「租户：xxx（已切换）」与「回到平台租户」。两个新页面按 `views/<component>.vue` 自动解析规则命名（kebab-case），不需要往 `COMPONENT_ALIAS` 里加条目。
+- **验收数据**：新增 `sql/verify/V9__dual_tenant_demo.sql`（租户 2 `acme` + 自己的部门 / 角色 / 菜单 / 字典 / 参数 / 账号 `acmeadmin`）。放在 `sql/verify/` 子目录里，mysql 镜像的 `docker-entrypoint-initdb.d` 不递归子目录，因此不会被默认导入，生产库也不要执行。`TenantIsolationApiTest` 9 个用例覆盖：每租户只查得到自己的账号 / 字典 / 参数、切换后可见且身份权限不变（`/auth/me` 新增 `tenantId` / `tenantCode` / `tenantName` / `homeTenantId`）、非 `super_admin` 不能切换、停用租户的账号登录被拒且启用后恢复、跨租户角色授权被拦、租户参数只在当前租户内读写、重名账号必须带租户编码。
+- **顺手的复用**：导出用的 CSV 拼装从 `SystemManagementService` 私有方法提到 `scaffold-common` 的 `CsvUtils`（平台侧也要导出，按 AGENTS.md 不重复实现）；`PageQuery` 补 `offset()`，与既有 `normalizedPageNum/Size` 同一套归一化规则。
+- **未交付（明确记在 §10.3 PR 3）**：租户开通流程 —— 新租户的管理员账号、角色与菜单初始化。当前「新增租户」只建租户与默认参数，进去是空菜单；验收数据里的 acme 租户是手工 SQL 灌出来的。
+
+### 验收后修订（用户指出「租户参数页面 UI 没有按照规范」）
+
+- **`views/lowcode/tenant-configs.vue` 重做成标准列表页**。原实现手搓了 `PageHeader + Panel + SectionLabel + DataTable`，违反 DESIGN.md「列表使用 `ListPage` 与 `useListPage`」，也缺了规范要求的查询 / 重置 / 分页 / 导出。改后与岗位管理等页面结构一致（DOM 指纹逐项对齐：页头说明、搜索区、重置/查询、表格卡标题、刷新与导出、行、分页）。
+- **配套把后端接口改成分页**：`GET /api/platform/tenant-configs` 返回 `PageResult` 并支持 `keyword`（命中参数键 / 名称 / 备注），新增 `GET /api/platform/tenant-configs/export` 出 CSV；`TenantConfigRow.builtin` 由后端归一化成 boolean，与 `sys_config` 的返回形状一致。
+- **顺带修掉一个租户隔离漏洞（真问题，不是风格问题）**：`LcTenantConfigMapper` 的关键词条件写成平铺 `WHERE kw IS NULL OR kw='' OR a LIKE .. OR b LIKE ..`，而拦截器补的是「原 WHERE **AND** tenant_id = ?」—— SQL 里 `AND` 优先级高于 `OR`，注入条件只绑到了最后一个 OR 分支，带关键词查询时**另一个租户的行会漏出来**（直查验收库：错误写法 3 行、加括号 1 行）。现在 OR 组整体加括号，并补了回归用例 `关键词查询也不能绕过租户过滤`（`project.main_branch` 两个租户各一条，带 keyword 必须只回 1 条）。底座既有 Mapper 的同类条件本来就是带括号写法，是我新写的模块没照做。
+- **导出下发形态收敛**：CSV 的 `ResponseEntity` 组装从各 Controller 的私有 `csv()` 提到 `scaffold-framework/web/CsvResponse.attachment(filename, content)`，与 `CsvUtils` 配套，消掉 system / lowcode 三处重复。
+- **表单空值口径**：`tenants.vue` 的到期日期与 `tenant-configs.vue` 的备注为空时提交 `undefined` 而不是空串（DESIGN.md 明确要求空值不写进后端）。
+- 复验：后端 81 个测试全绿（新增关键词越权用例），前端 `vue-tsc` + `vite build` 通过，浏览器实测搜索 `main_branch` 只回 1 条、导出 200 `text/csv`。
+
+## 2026-11-04（PR 2 追加：租户自助注册 —— 登录页切换注册表单，提交即开通）
+
+用户补需求：「还需要租户注册页面，保持和登录页一致，就切换一下注册表单」。注册天然要把之前推到 PR 3 的**租户开通流程**一起做掉，否则注册完进去是空菜单。两个口径由用户选定：**注册立即开通**（不是待审核）、**新租户管理员拿全部业务菜单**（不是只给工作台）。
+
+- **`POST /api/auth/register`（匿名 + 验证码）**：一个事务里建租户 → 复制平台租户的业务菜单树 → 建内置 `tenant_admin` 角色（`data_scope = ALL`）并全量授权 → 建管理员账号并绑角色 → 直接回登录令牌，注册成功即等于登录成功，前端不用再走一次登录。任一步失败整体回滚，不留半个租户。
+- **菜单模板复制**：`LcProvisionMapper.selectTemplateMenus` 取平台租户菜单并按 `id` 升序（父级先于子级）逐条插入，用 `oldId → newId` 映射重建 `parent_id`；排除口径按语义写而不是硬编码 ID —— `NOT (path LIKE '/platform%' OR permission LIKE 'platform:%')`，所以新租户拿不到「平台管理」段。
+- **注册要求管理员账号全局唯一**（比 `sys_user` 的 `(tenant_id, username)` 唯一键更严）：否则别人注册一个同名 `admin`，平台管理员下次登录就会撞上「该账号存在于多个租户，请填写租户编码」。这条是产品口径，不是数据库约束，写在 `TenantRegistrationService` 与文档里。
+- **匿名写入的口径**：注册时没有租户上下文，拦截器不会注入 `tenant_id`，所以 `LcProvisionMapper` 每条语句都显式带 `tenant_id` 并标 `@InterceptorIgnore`；`LcTenantService.seedDefaultConfigs` 的 `operator` 改成入参（原来内部取 `SecurityUtils.getUsername()`，匿名调用直接抛 401 —— 这就是第一版注册测试全红的原因）。
+- **前端**：登录页改为**同一张卡切换表单**（`mode = login | register`），版式、验证码、成功动画、进入逻辑全部共用；注册态四个字段（租户编码 / 租户名称 / 管理员账号 / 管理员密码）带与后端一致的 pattern 校验，底部一个 text 按钮在两种模式间切换，副标题与提交文案随模式变。`composables/auth.ts` 把「拿到令牌后的开场」抽成 `openSession()`，`login` 与 `registerTenant` 共用；注册成功顺带把租户编码写进 `sessionStorage` 预填。
+- **注册也进登录日志**（`msg = 注册开通租户`），平台管理员在「登录日志」能看到租户是自己注册进来的。
+- 验证：`TenantRegisterApiTest` 3 例（注册即开通并直接进入、拿不到平台管理菜单且默认参数已建、重复编码/重复账号/弱密码被拒），用例结束按 `tenant_id` 清理不残留租户；后端 84 个测试全绿，前端 `vue-tsc` + `vite build` 通过；浏览器实测注册 `demo` / `demoadmin` → 直接落到工作台，侧栏 12 个业务菜单、无平台管理，`/auth/me` 返回 `tenantCode=demo`、`roles=[tenant_admin]`、35 个权限码且不含 `platform:*`。
+- **注意**：注册接口默认公开，任何能访问到前端的人都能开出租户（靠验证码 + 编码/账号唯一性挡）。单主机自用没问题，对外暴露前要先决定是否需要审核开关或白名单。
+
 ## 2026-11-03（低代码方案四次修订：模型定位为生成器输入、补模型↔页面契约、明确接口生成边界）
 
 用户连续追问「后端模型怎么定义」「模型建完怎么和页面交互」「接口相关的生成怎么搞，不用设计 flow 流吗」，暴露方案里三处只画了表、没定语义的地方。纯文档变更，**未动代码**。

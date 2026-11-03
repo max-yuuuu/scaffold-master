@@ -31,4 +31,9 @@ public record PageQuery(Integer pageNum, Integer pageSize, String sortField, Str
         }
         return "desc";
     }
+
+    /** LIMIT 起始偏移，与 normalizedPageNum / normalizedPageSize 保持同一套归一化规则 */
+    public int offset() {
+        return (normalizedPageNum() - 1) * normalizedPageSize();
+    }
 }

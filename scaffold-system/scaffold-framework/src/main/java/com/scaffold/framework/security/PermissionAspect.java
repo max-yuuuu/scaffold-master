@@ -21,8 +21,8 @@ public class PermissionAspect {
     @Around("@annotation(requiresPermission)")
     public Object checkPermission(ProceedingJoinPoint joinPoint, RequiresPermission requiresPermission) throws Throwable {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        String username = authentication == null ? null : String.valueOf(authentication.getPrincipal());
-        if (username == null || !permissionResolver.hasPermission(username, requiresPermission.value())) {
+        LoginUser user = authentication == null ? null : authentication.getDetails() instanceof LoginUser loginUser ? loginUser : null;
+        if (user == null || user.userId() == null || !permissionResolver.hasPermission(user, requiresPermission.value())) {
             throw new AccessDeniedException("没有访问权限");
         }
         return joinPoint.proceed();
