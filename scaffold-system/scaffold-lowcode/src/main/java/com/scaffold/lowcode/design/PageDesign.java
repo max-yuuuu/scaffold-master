@@ -198,20 +198,69 @@ public final class PageDesign {
         }
 
         Set<String> refs = new LinkedHashSet<>();
+        Walk walk = new Walk();
         validateProps(root, ComponentCatalog.of(ComponentCatalog.PAGE_CONTAINER).props());
         for (DesignNode block : root.children()) {
             validateProps(block, block.entry().props());
+            if (ComponentCatalog.FORM.equals(block.type())) {
+                walk.hasForm = true;
+            }
             if (ComponentCatalog.TABLE.equals(block.type())) {
                 validateTable(block, ctx, refs);
                 continue;
             }
-            validateChildren(block, ctx, refs);
+            validateChildren(block, ctx, refs, walk);
         }
+        requireFormForWriteActions(walk);
+        requireFormCoversDemandingFields(walk, ctx);
         return new PageDesign(version, pageType, modelRef, root, List.copyOf(refs));
     }
 
+    /** 走一遍设计顺带收集的三件事：表单里摆了哪些字段、出现了哪些写动作、有没有表单弹窗 */
+    private static final class Walk {
+        private final Set<String> formFields = new LinkedHashSet<>();
+        private final Set<String> writeActions = new LinkedHashSet<>();
+        private boolean hasForm;
+    }
+
+    /**
+     * 有新增或编辑按钮就必须有弹窗：按钮点开是一台空对话框，人在上面填不到任何东西，
+     * 但页面看着是「能新增」的 —— 这种假接口比缺按钮更难被发现。
+     */
+    private static void requireFormForWriteActions(Walk walk) {
+        if (walk.hasForm || walk.writeActions.isEmpty()) {
+            return;
+        }
+        throw new BusinessException("动作 " + String.join("、", walk.writeActions)
+                + " 要求页面画了 FormContainer：没有弹窗，新增与编辑按钮点开是空的。"
+                + "只做只读台账就把这些按钮删掉");
+    }
+
+    /**
+     * 画了弹窗就要收齐「必须由人给值」的列。
+     *
+     * <p>表单不收这一格，生成的 INSERT 就没有这一列；列又是 NOT NULL 且没默认值，
+     * 新增点下去是运行期 500 —— 页面上一眼看不出问题，只有数据库知道。判据与建表语句同源
+     * （{@link DesignContext.Field#demanding()}），两处不同口径这条规则自己就会打架。
+     */
+    private static void requireFormCoversDemandingFields(Walk walk, DesignContext ctx) {
+        if (!walk.hasForm) {
+            return;
+        }
+        List<DesignContext.Field> missing = ctx.demandingFields().stream()
+                .filter(field -> !walk.formFields.contains(field.code()))
+                .toList();
+        if (missing.isEmpty()) {
+            return;
+        }
+        String names = missing.stream().map(field -> field.code() + "（" + field.name() + "）").toList().toString();
+        throw new BusinessException("这些列必须由人给值，必须出现在表单里：" + names
+                + " —— 它们 NOT NULL 又没有默认值，表单不收就等于新增时少一列，点保存是运行期 500。"
+                + "要么摆进表单，要么回模型里给它默认值或允许为空");
+    }
+
     /** 区块里的子组件：种类要对、属性要对，绑的字段必须是模型真实字段 */
-    private static void validateChildren(DesignNode block, DesignContext ctx, Set<String> refs) {
+    private static void validateChildren(DesignNode block, DesignContext ctx, Set<String> refs, Walk walk) {
         List<String> allowed = allowedIn(block.type());
         Set<String> seen = new LinkedHashSet<>();
         for (DesignNode item : block.children()) {
@@ -224,7 +273,7 @@ public final class PageDesign {
             }
             validateProps(item, entry.props());
             if (entry.kind() == ComponentCatalog.Kind.BUTTON) {
-                validateButton(item);
+                validateButton(item, walk);
                 continue;
             }
             DesignContext.Field field = requireField(item, ctx);
@@ -239,12 +288,13 @@ public final class PageDesign {
                 validateQuery(item, field);
             } else {
                 validateWritable(item, field);
+                walk.formFields.add(field.code());
             }
             refs.add(field.code());
         }
     }
 
-    private static void validateButton(DesignNode node) {
+    private static void validateButton(DesignNode node, Walk walk) {
         if (node.text("label") == null) {
             throw error(node.path(), "按钮必须给出 label：页面上是一个没有字的按钮，人不知道点下去做什么");
         }
@@ -264,6 +314,9 @@ public final class PageDesign {
         if (!ComponentCatalog.actions().contains(action)) {
             throw error(node.path(), "未知的动作 " + action + "。第一期内置动作：" + actions()
                     + "；权限点由动作推导，不需要也不能自己编一个");
+        }
+        if ("create".equals(action) || "edit".equals(action)) {
+            walk.writeActions.add(action);
         }
     }
 

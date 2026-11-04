@@ -21,9 +21,13 @@ public record DesignContext(String modelRef, List<Field> fields) {
      * @param autoKey 主键且自增：值由数据库给，进表单等于让人猜下一个 id（5G 的真机缺陷）
      * @param writable 模型侧允许写入（{@code is_insert} 或 {@code is_edit}）：都不允许的字段进了表单，
      *                 生成的 INSERT / UPDATE 里没有这一列，人在页面上填完就静默丢掉
+     * @param demanding 这一列的值必须由人给。判据与生成建表语句的 {@code GenerationInput.ddlNull} 对齐
+     *                  （主键、必填、不可空三者之一就写 NOT NULL）：两处口径不一样的话，
+     *                  设计说「这列不用填」而 DDL 说不填不给过，页面新增就是运行期 500
      */
     public record Field(String code, String name, String javaType, String formType, String dictType,
-                        boolean primary, boolean autoKey, boolean writable) {
+                        boolean primary, boolean autoKey, boolean writable, boolean nullable,
+                        boolean required, boolean hasDefault) {
 
         public boolean hasDict() {
             return dictType != null && !dictType.isBlank();
@@ -39,6 +43,10 @@ public record DesignContext(String modelRef, List<Field> fields) {
         public boolean dateLike() {
             return "LocalDate".equals(javaType) || "LocalDateTime".equals(javaType);
         }
+
+        public boolean demanding() {
+            return writable && !autoKey && !hasDefault && (primary || required || !nullable);
+        }
     }
 
     public static DesignContext of(String modelRef, List<Map<String, Object>> fieldRows) {
@@ -52,9 +60,18 @@ public record DesignContext(String modelRef, List<Field> fields) {
                     text(row.get("dictType")),
                     truth(row.get("isPrimary")),
                     truth(row.get("isPrimary")) && truth(row.get("isAutoIncrement")),
-                    truth(row.get("isInsert")) || truth(row.get("isEdit"))));
+                    truth(row.get("isInsert")) || truth(row.get("isEdit")),
+                    // 列没查出来时按库里的默认「可空」：lc_field.is_nullable 默认 1
+                    row.containsKey("isNullable") ? truth(row.get("isNullable")) : true,
+                    truth(row.get("isRequired")),
+                    text(row.get("defaultValue")) != null));
         }
         return new DesignContext(modelRef, List.copyOf(fields));
+    }
+
+    /** 必须由人给值的列（表单漏了它们，新增就写不进库） */
+    public List<Field> demandingFields() {
+        return fields.stream().filter(Field::demanding).toList();
     }
 
     public Field find(String code) {

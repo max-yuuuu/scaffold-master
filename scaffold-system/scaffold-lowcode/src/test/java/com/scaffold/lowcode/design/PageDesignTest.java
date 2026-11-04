@@ -78,15 +78,17 @@ class PageDesignTest {
     }
 
     @Test
-    void 查询区工具栏与行操作都可以整块不画() {
+    void 查询区与工具栏都可以整块不画() {
         // 只画一张表和一台弹窗：页面能看能改，没有查询条件、没有批量按钮
         PageDesign only = PageDesign.parse(page(TABLE, FORM), context());
         assertThat(only.blocks()).hasSize(2);
         assertThat(only.search()).isEmpty();
         assertThat(only.toolbar()).isEmpty();
         assertThat(only.rowActions()).isEmpty();
-        // 表单不画就是只读台账：生成物里不该有新增按钮，也不该有一台空弹窗
-        PageDesign readonly = PageDesign.parse(page(SEARCH, TOOLBAR, TABLE, ROW_ACTIONS), context());
+        // 只读台账：不摆表单就没有新增与编辑，页面照样成立
+        PageDesign readonly = PageDesign.parse(page(SEARCH,
+                toolbar(control("Button", "label=导出", "action=export")), TABLE,
+                rowActions(control("Button", "label=刷新", "action=refresh"))), context());
         assertThat(readonly.form()).isEmpty();
         assertThat(readonly.referencedFields()).containsExactly("orderNo", "status", "amount", "deliveryDate");
     }
@@ -356,6 +358,42 @@ class PageDesignTest {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("节点数");
     }
 
+    @Test
+    void 画了表单弹窗就必须收齐数据库要求必须有值的列() {
+        // 模型里 status 是 NOT NULL 且没有默认值：表单没摆这一格，生成的 INSERT 就没有这一列，
+        // 新增点下去是运行期 500 —— 而这种错在页面上一眼看不到，只有数据库知道
+        String missing = page(TABLE, form(
+                control("TextInput", "label=订单编号", "field=orderNo"),
+                control("NumberInput", "label=订单金额", "field=amount")));
+        DesignContext strict = context(Map.of("status", 0));
+        assertThatThrownBy(() -> PageDesign.parse(missing, strict))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("status")
+                .hasMessageContaining("必须出现在表单里");
+        // 补上那一格就过了
+        assertThatCode(() -> PageDesign.parse(page(TABLE, form(
+                control("TextInput", "label=订单编号", "field=orderNo"),
+                control("NumberInput", "label=订单金额", "field=amount"),
+                control("NumberInput", "label=状态", "field=status"))), strict)).doesNotThrowAnyException();
+        // 有默认值的列不要求摆进表单（创建时间这类由数据库自己给）
+        assertThatCode(() -> PageDesign.parse(missing, context(Map.of("status", 0, "amount", 0, "orderNo", 0),
+                Map.of("status", "0")))).doesNotThrowAnyException();
+        // 一个字段都不摆 = 只读台账，这条规则不适用：没有新增按钮就没有 INSERT
+        assertThatCode(() -> PageDesign.parse(page(SEARCH, TABLE), context(Map.of("status", 0))))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void 有新增或编辑按钮就必须画表单弹窗() {
+        assertThatThrownBy(() -> PageDesign.parse(page(SEARCH, TOOLBAR, TABLE), context()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("create")
+                .hasMessageContaining("FormContainer");
+        // 只读页面（没有写动作）可以只有表格
+        assertThatCode(() -> PageDesign.parse(page(SEARCH, TABLE, rowActions(
+                control("Button", "label=刷新", "action=refresh"))), context())).doesNotThrowAnyException();
+    }
+
     /* ── 夹具：小构造器拼 JSON，用例只写自己那一条差异 ── */
 
     private static String page(String... blocks) {
@@ -428,20 +466,30 @@ class PageDesignTest {
 
     /** 模型侧的事实（字段编码、类型、字典与可写性）。设计校验只认它，不认设计自己的声明 */
     private static DesignContext context() {
+        return context(Map.of());
+    }
+
+    /** 只覆盖与断言有关的那几列的可空性，其余按库里的默认（可空）*/
+    private static DesignContext context(Map<String, Integer> nullableOverrides) {
+        return context(nullableOverrides, Map.of());
+    }
+
+    private static DesignContext context(Map<String, Integer> nullableOverrides, Map<String, String> defaults) {
         List<Map<String, Object>> rows = List.of(
-                field("id", "主键", "Long", null, true, false, false),
-                field("orderNo", "订单编号", "String", null, false, true, true),
-                field("amount", "订单金额", "BigDecimal", null, false, true, true),
-                field("status", "状态", "Integer", "order_status", false, true, true),
-                field("deliveryDate", "交货日期", "LocalDate", null, false, true, true),
-                field("remark", "备注", "String", null, false, true, true),
-                field("createTime", "创建时间", "LocalDateTime", null, false, false, false));
+                field("id", "主键", "Long", null, true, false, false, nullableOverrides, defaults),
+                field("orderNo", "订单编号", "String", null, false, true, true, nullableOverrides, defaults),
+                field("amount", "订单金额", "BigDecimal", null, false, true, true, nullableOverrides, defaults),
+                field("status", "状态", "Integer", "order_status", false, true, true, nullableOverrides, defaults),
+                field("deliveryDate", "交货日期", "LocalDate", null, false, true, true, nullableOverrides, defaults),
+                field("remark", "备注", "String", null, false, true, true, nullableOverrides, defaults),
+                field("createTime", "创建时间", "LocalDateTime", null, false, false, false, nullableOverrides, defaults));
         return DesignContext.of("sales_order", rows);
     }
 
     /** lc_field 行的形状：Mapper 查出来就是这个样子，测试照着造 */
     private static Map<String, Object> field(String code, String name, String javaType, String dictType,
-                                             boolean primary, boolean insert, boolean edit) {
+                                             boolean primary, boolean insert, boolean edit,
+                                             Map<String, Integer> nullableOverrides, Map<String, String> defaults) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("fieldCode", code);
         row.put("fieldName", name);
@@ -451,6 +499,8 @@ class PageDesignTest {
         row.put("isAutoIncrement", primary ? 1 : 0);
         row.put("isInsert", insert ? 1 : 0);
         row.put("isEdit", edit ? 1 : 0);
+        row.put("isNullable", nullableOverrides.getOrDefault(code, 1));
+        row.put("defaultValue", defaults.get(code));
         return row;
     }
 }
