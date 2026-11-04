@@ -35,7 +35,8 @@ public class ScaffoldTenantLineHandler implements TenantLineHandler {
             "lc_tenant_config",
             "lc_project",
             "lc_model",
-            "lc_field"
+            "lc_field",
+            "lc_page"
     );
 
     private static final String TENANT_COLUMN = "tenant_id";

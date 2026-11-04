@@ -13,6 +13,8 @@ import com.scaffold.lowcode.model.SqlIdentifiers;
 import com.scaffold.lowcode.model.domain.FieldWriteRequest;
 import com.scaffold.lowcode.model.mapper.LcFieldMapper;
 import com.scaffold.lowcode.model.mapper.LcModelMapper;
+import com.scaffold.lowcode.page.PageReferences;
+import com.scaffold.lowcode.page.mapper.LcPageMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,11 +32,14 @@ public class LcFieldService {
 
     private final LcFieldMapper fieldMapper;
     private final LcModelMapper modelMapper;
+    private final LcPageMapper pageMapper;
     private final ObjectMapper objectMapper;
 
-    public LcFieldService(LcFieldMapper fieldMapper, LcModelMapper modelMapper, ObjectMapper objectMapper) {
+    public LcFieldService(LcFieldMapper fieldMapper, LcModelMapper modelMapper, LcPageMapper pageMapper,
+                          ObjectMapper objectMapper) {
         this.fieldMapper = fieldMapper;
         this.modelMapper = modelMapper;
+        this.pageMapper = pageMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -82,8 +87,17 @@ public class LcFieldService {
 
     @Transactional
     public void delete(Long id) {
-        requireField(id);
-        // PR 6 起这里要按 lc_page.ref_fields 反查拦截：删字段会打断已在设计器里引用它的页面
+        Map<String, Object> field = requireField(id);
+        long modelId = numberAsLong(field.get("modelId"));
+        // 删字段会打断正在用它的页面，所以入口就拦（方案 §1.5）：按 lc_page.ref_fields 反查，
+        // 而不是等发布时模板报错才发现 —— 那时人已经在跟交付项目的构建日志较劲了
+        List<Map<String, Object>> hit = PageReferences.using(pageMapper.selectPagesOfModel(modelId),
+                String.valueOf(field.get("fieldCode")));
+        if (!hit.isEmpty()) {
+            throw new BusinessException("字段 " + field.get("fieldCode") + " 还被 " + hit.size()
+                    + " 个页面在用：" + PageReferences.names(hit)
+                    + "。请先在设计里删掉这一格或换绑别的字段，再来删字段");
+        }
         fieldMapper.deleteField(id);
     }
 

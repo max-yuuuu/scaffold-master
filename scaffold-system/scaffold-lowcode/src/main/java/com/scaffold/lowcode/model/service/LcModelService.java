@@ -9,6 +9,8 @@ import com.scaffold.lowcode.model.SqlIdentifiers;
 import com.scaffold.lowcode.model.domain.ModelWriteRequest;
 import com.scaffold.lowcode.model.mapper.LcFieldMapper;
 import com.scaffold.lowcode.model.mapper.LcModelMapper;
+import com.scaffold.lowcode.page.PageReferences;
+import com.scaffold.lowcode.page.mapper.LcPageMapper;
 import com.scaffold.lowcode.project.mapper.LcProjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,11 +29,14 @@ public class LcModelService {
     private final LcModelMapper modelMapper;
     private final LcFieldMapper fieldMapper;
     private final LcProjectMapper projectMapper;
+    private final LcPageMapper pageMapper;
 
-    public LcModelService(LcModelMapper modelMapper, LcFieldMapper fieldMapper, LcProjectMapper projectMapper) {
+    public LcModelService(LcModelMapper modelMapper, LcFieldMapper fieldMapper, LcProjectMapper projectMapper,
+                          LcPageMapper pageMapper) {
         this.modelMapper = modelMapper;
         this.fieldMapper = fieldMapper;
         this.projectMapper = projectMapper;
+        this.pageMapper = pageMapper;
     }
 
     public PageResult<Map<String, Object>> models(PageQuery query, Long projectId, String keyword, Integer status) {
@@ -124,12 +129,19 @@ public class LcModelService {
     }
 
     /**
-     * 删除模型：软删模型，字段直接删掉（字段是模型的内部结构，不是独立资产）。
-     * PR 6 有了 lc_page.ref_fields 之后，这里还要拦「仍有页面引用该模型的字段」。
+     * 删除模型：先拦「还有页面在用」，再软删模型并删掉它的字段（字段是模型的内部结构，不是独立资产）。
+     *
+     * <p>这一拦是 §1.5 的反向引用检查：页面设计里的 {@code field} 全部指向这个模型的字段，
+     * 模型下线后那些设计就取不到列了。软删页面才算删掉，停用的页面照样拦 —— 停用只是不进发布。
      */
     @Transactional
     public void delete(Long id) {
         detail(id);
+        List<Map<String, Object>> pages = pageMapper.selectPagesOfModel(id);
+        if (!pages.isEmpty()) {
+            throw new BusinessException("模型还有 " + pages.size() + " 个页面在用：" + PageReferences.names(pages)
+                    + "。请先删除页面再下线模型");
+        }
         modelMapper.deleteFieldsOfModel(id);
         if (modelMapper.softDeleteModel(id, operator()) == 0) {
             throw new BusinessException("模型不存在或已删除");
