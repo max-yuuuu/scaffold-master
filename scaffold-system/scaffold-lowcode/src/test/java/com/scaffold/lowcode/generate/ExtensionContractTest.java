@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.simpleFields;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -23,7 +22,7 @@ class ExtensionContractTest {
 
     @Test
     void 骨架是C档形状且不写着被覆盖() {
-        Map<String, Object> root = GenerationInput.of(project(), model(true, true), richFields());
+        Map<String, Object> root = GenerationInput.of(model(true, true), richFields());
         String code = renderer.render("backend/Extension.java.ftl", root);
 
         assertThat(code).startsWith("package com.scaffold.business.order.service;");
@@ -35,7 +34,7 @@ class ExtensionContractTest {
 
     @Test
     void Service调用的每个钩子骨架里都有对应声明() {
-        Map<String, Object> root = GenerationInput.of(project(), model(true, true), richFields());
+        Map<String, Object> root = GenerationInput.of(model(true, true), richFields());
         String service = renderer.render("backend/Service.java.ftl", root);
         String extension = renderer.render("backend/Extension.java.ftl", root);
 
@@ -60,7 +59,7 @@ class ExtensionContractTest {
     @Test
     void Service构造器把扩展点当成依赖() {
         String service = renderer.render("backend/Service.java.ftl",
-                GenerationInput.of(project(), model(true, true), richFields()));
+                GenerationInput.of(model(true, true), richFields()));
 
         assertThat(service).contains("private final OrderExtension extension;")
                 .contains("public OrderService(OrderMapper mapper, OrderExtension extension) {")
@@ -73,7 +72,7 @@ class ExtensionContractTest {
     void 导出与列表走同一个行钩子() {
         // 骨架里 afterRows 的说明写了「列表与导出」，两条路都真的调用才算话没白写
         String service = renderer.render("backend/Service.java.ftl",
-                GenerationInput.of(project(), model(false, false), simpleFields()));
+                GenerationInput.of(model(false, false), simpleFields()));
         assertThat(service.lines().filter(line -> line.contains("extension.afterRows(rows)")).count())
                 .isEqualTo(2);
     }

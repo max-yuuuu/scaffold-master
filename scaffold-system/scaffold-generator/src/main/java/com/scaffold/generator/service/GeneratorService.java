@@ -4,29 +4,40 @@ import com.scaffold.common.domain.PageQuery;
 import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.generator.mapper.GeneratorMapper;
+import com.scaffold.lowcode.generate.GeneratedFile;
+import com.scaffold.lowcode.generate.GeneratedFileZip;
+import com.scaffold.lowcode.generate.ModelCodeGenerator;
+import com.scaffold.lowcode.model.FieldType;
+import com.scaffold.lowcode.model.Naming;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
+import java.util.Map;
 
+/**
+ * 「导入库里已有的表 → 预览 / 下载代码」这条老链路（方案 §4.4）。
+ *
+ * <p>PR 5F 起它不再自己拼字符串：把 {@code gen_table} / {@code gen_table_column} 适配成模型形状，
+ * 交给与低代码链路同一个 {@link ModelCodeGenerator}，zip 只是换了个出口。
+ * 两条链路共用一套模板，才不会各自漂一套生成口径。
+ *
+ * <p>本模块只负责「给人手工取产物」；推到项目仓库那条在 {@code lowcode/workspace}（PR 7 接发布链路）。
+ */
 @Service
 public class GeneratorService {
 
     private final GeneratorMapper mapper;
+    private final ModelCodeGenerator generator;
 
-    public GeneratorService(GeneratorMapper mapper) {
+    public GeneratorService(GeneratorMapper mapper, ModelCodeGenerator generator) {
         this.mapper = mapper;
+        this.generator = generator;
     }
 
     public PageResult<Map<String, Object>> tables(PageQuery query, String keyword) {
@@ -35,6 +46,7 @@ public class GeneratorService {
                 mapper.countTables(keyword), page.pageNum(), page.pageSize());
     }
 
+    /** 页面上的配置视图：存下来的开关原样回给前端，生成时的事实（主键、长度、可空）另从库里现查 */
     public List<Map<String, Object>> columns(Long tableId) {
         ensureTable(tableId);
         return booleanRows(mapper.selectColumns(tableId), "insert", "edit", "list", "query", "required");
@@ -73,19 +85,19 @@ public class GeneratorService {
 
     public Map<String, Object> preview(Long tableId) {
         Map<String, Object> table = ensureTable(tableId);
-        String className = String.valueOf(table.get("className"));
-        String activeFile = className + "Controller.java";
+        String activeFile = table.get("className") + "Controller.java";
         List<Map<String, Object>> files = new ArrayList<>();
         String activeCode = "";
-        for (Map.Entry<String, String> entry : renderFiles(table, mapper.selectColumns(tableId)).entrySet()) {
-            String path = entry.getKey();
-            String name = path.substring(path.lastIndexOf('/') + 1);
-            Map<String, Object> file = new LinkedHashMap<>();
-            file.put("name", name);
-            file.put("path", path);
-            file.put("code", entry.getValue());
-            files.add(file);
-            if (name.equals(activeFile)) activeCode = entry.getValue();
+        for (GeneratedFile file : renderFiles(table)) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("name", fileName(file.path()));
+            item.put("path", file.path());
+            item.put("tier", file.tier().name());
+            item.put("code", file.content());
+            files.add(item);
+            if (file.path().endsWith("/" + activeFile)) {
+                activeCode = file.content();
+            }
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("files", files);
@@ -115,22 +127,79 @@ public class GeneratorService {
     }
 
     public byte[] download(Long tableId) {
-        Map<String, Object> table = ensureTable(tableId);
-        List<Map<String, Object>> columns = mapper.selectColumns(tableId);
-        Map<String, String> files = renderFiles(table, columns);
-        try {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
-                for (Map.Entry<String, String> file : files.entrySet()) {
-                    zip.putNextEntry(new ZipEntry(file.getKey()));
-                    zip.write(file.getValue().getBytes(StandardCharsets.UTF_8));
-                    zip.closeEntry();
-                }
-            }
-            return out.toByteArray();
-        } catch (IOException error) {
-            throw new BusinessException("代码压缩包生成失败");
+        return GeneratedFileZip.pack(renderFiles(ensureTable(tableId)));
+    }
+
+    /**
+     * 一次生成的全部产物。库里读不到的表要当场喊出来 —— 表被删了还在生成，
+     * 产物里就是一份指向不存在表的代码，要到运行期才看得出来。
+     */
+    private List<GeneratedFile> renderFiles(Map<String, Object> table) {
+        String tableName = String.valueOf(table.get("tableName"));
+        List<Map<String, Object>> dbColumns = mapper.selectDatabaseColumns(tableName);
+        if (dbColumns.isEmpty()) {
+            throw new BusinessException("数据库表 " + tableName + " 不存在或已被删除，请重新导入");
         }
+        Map<String, Object> model = ImportedTableInput.model(table, dbColumns);
+        List<Map<String, Object>> fields = ImportedTableInput.fields(table, mapper.selectColumns(numberAsLong(table.get("id"))), dbColumns);
+        return generator.renderFiles(model, fields);
+    }
+
+    private Map<String, Object> tableRow(Map<String, Object> dbTable) {
+        String tableName = String.valueOf(dbTable.get("tableName"));
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("tableName", tableName);
+        row.put("tableComment", dbTable.get("tableComment"));
+        row.put("className", Naming.pascal(tableName));
+        row.put("module", moduleName(tableName));
+        row.put("businessName", businessName(tableName));
+        return row;
+    }
+
+    /**
+     * 导入时存下的列配置。类型事实不在这里算第二次：Java 类型、默认控件、默认查询方式都问
+     * {@link FieldType}（方案 §2.2 之二：映射只有一份）。
+     */
+    private Map<String, Object> columnRow(Long tableId, Map<String, Object> column) {
+        String columnName = String.valueOf(column.get("columnName"));
+        FieldType type = FieldType.ofColumn(String.valueOf(column.get("dataType")));
+        boolean primary = "PRI".equalsIgnoreCase(String.valueOf(column.get("columnKey")));
+        boolean autoIncrement = String.valueOf(column.get("extra")).toLowerCase(Locale.ROOT).contains("auto_increment");
+        boolean writable = !primary && ImportedTableInput.isWritable(columnName);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("tableId", tableId);
+        row.put("columnName", columnName);
+        row.put("javaField", Naming.camel(columnName));
+        row.put("javaType", type.javaType(autoIncrement));
+        row.put("jdbcType", String.valueOf(column.get("dataType")).toLowerCase(Locale.ROOT));
+        row.put("columnComment", column.get("columnComment"));
+        row.put("insert", writable ? 1 : 0);
+        row.put("edit", writable ? 1 : 0);
+        row.put("list", ImportedTableInput.isHidden(columnName) ? 0 : 1);
+        row.put("query", queryField(columnName) && !ImportedTableInput.isHidden(columnName) ? 1 : 0);
+        row.put("queryType", type.defaultQueryType().operator());
+        row.put("formType", type.defaultFormType().code());
+        row.put("required", "NO".equals(String.valueOf(column.get("nullable"))) && !primary ? 1 : 0);
+        row.put("sort", column.get("sort"));
+        return row;
+    }
+
+    /** 模块段取表名前缀，与底座既有习惯一致（sys_* 归 system，demo_product 归 demo） */
+    private String moduleName(String tableName) {
+        int split = tableName.indexOf('_');
+        String module = split > 0 ? tableName.substring(0, split) : "system";
+        return "sys".equals(module) ? "system" : Naming.snake(module);
+    }
+
+    private String businessName(String tableName) {
+        int split = tableName.indexOf('_');
+        return Naming.camel(split > 0 ? tableName.substring(split + 1) : tableName);
+    }
+
+    /** 老链路没有配置界面去逐个勾查询条件，导入时按列名猜几个高频的：名称、编码、状态、类型 */
+    private boolean queryField(String columnName) {
+        String lower = columnName.toLowerCase(Locale.ROOT);
+        return lower.contains("name") || lower.contains("code") || lower.contains("status") || lower.contains("type");
     }
 
     private Map<String, Object> ensureTable(Long tableId) {
@@ -141,174 +210,8 @@ public class GeneratorService {
         return table;
     }
 
-    private Map<String, Object> tableRow(Map<String, Object> dbTable) {
-        String tableName = String.valueOf(dbTable.get("tableName"));
-        String businessName = businessName(tableName);
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("tableName", tableName);
-        row.put("tableComment", dbTable.get("tableComment"));
-        row.put("className", upperCamel(tableName));
-        row.put("module", moduleName(tableName));
-        row.put("businessName", businessName);
-        return row;
-    }
-
-    private Map<String, Object> columnRow(Long tableId, Map<String, Object> column) {
-        String columnName = String.valueOf(column.get("columnName"));
-        String dataType = String.valueOf(column.get("dataType")).toLowerCase(Locale.ROOT);
-        boolean primaryLike = "id".equals(columnName);
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("tableId", tableId);
-        row.put("columnName", columnName);
-        row.put("javaField", lowerCamel(columnName));
-        row.put("javaType", javaType(dataType));
-        row.put("jdbcType", dataType);
-        row.put("columnComment", column.get("columnComment"));
-        row.put("insert", primaryLike ? 0 : 1);
-        row.put("edit", primaryLike ? 0 : 1);
-        row.put("list", primaryLike ? 0 : 1);
-        row.put("query", queryField(columnName) ? 1 : 0);
-        row.put("queryType", queryField(columnName) ? "LIKE" : "=");
-        row.put("formType", formType(dataType));
-        row.put("required", "NO".equals(column.get("nullable")) && !primaryLike ? 1 : 0);
-        row.put("sort", column.get("sort"));
-        return row;
-    }
-
-    private Map<String, String> renderFiles(Map<String, Object> table, List<Map<String, Object>> columns) {
-        String tableName = String.valueOf(table.get("tableName"));
-        String className = String.valueOf(table.get("className"));
-        String module = String.valueOf(table.get("module"));
-        String resource = decapitalize(className);
-        Map<String, String> files = new LinkedHashMap<>();
-        files.put("backend/src/main/java/com/scaffold/%s/domain/%s.java".formatted(module, className), entityCode(module, className, columns));
-        files.put("backend/src/main/java/com/scaffold/%s/mapper/%sMapper.java".formatted(module, className), mapperCode(module, className));
-        files.put("backend/src/main/java/com/scaffold/%s/service/%sService.java".formatted(module, className), serviceCode(module, className));
-        files.put("backend/src/main/java/com/scaffold/%s/controller/%sController.java".formatted(module, className), controllerCode(module, className, resource));
-        files.put("frontend/src/api/%s/%s.ts".formatted(module, resource), apiCode(module, resource));
-        files.put("frontend/src/views/%s/%s/index.vue".formatted(module, resource), viewCode(tableName, className, columns));
-        files.put("sql/%s_menu.sql".formatted(tableName), menuSql(tableName, className, module, resource));
-        return files;
-    }
-
-    private String entityCode(String module, String className, List<Map<String, Object>> columns) {
-        StringBuilder fields = new StringBuilder();
-        boolean needsBigDecimal = false;
-        boolean needsLocalDateTime = false;
-        for (Map<String, Object> column : columns) {
-            String javaType = String.valueOf(column.get("javaType"));
-            needsBigDecimal = needsBigDecimal || "BigDecimal".equals(javaType);
-            needsLocalDateTime = needsLocalDateTime || "LocalDateTime".equals(javaType);
-            fields.append("    /** ").append(nullAsEmpty(column.get("comment"))).append(" */\n")
-                    .append("    private ").append(javaType).append(" ").append(column.get("javaField")).append(";\n\n");
-        }
-        String imports = "";
-        if (needsBigDecimal) {
-            imports += "import java.math.BigDecimal;\n";
-        }
-        if (needsLocalDateTime) {
-            imports += "import java.time.LocalDateTime;\n";
-        }
-        if (!imports.isBlank()) {
-            imports += "\n";
-        }
-        return """
-                package com.scaffold.%s.domain;
-
-                %s
-                public class %s {
-                %s}
-                """.formatted(module, imports, className, fields);
-    }
-
-    private String mapperCode(String module, String className) {
-        return """
-                package com.scaffold.%s.mapper;
-
-                import org.apache.ibatis.annotations.Mapper;
-
-                @Mapper
-                public interface %sMapper {
-                }
-                """.formatted(module, className);
-    }
-
-    private String serviceCode(String module, String className) {
-        return """
-                package com.scaffold.%s.service;
-
-                import org.springframework.stereotype.Service;
-
-                @Service
-                public class %sService {
-                }
-                """.formatted(module, className);
-    }
-
-    private String controllerCode(String module, String className, String resource) {
-        return """
-                package com.scaffold.%s.controller;
-
-                import org.springframework.web.bind.annotation.RequestMapping;
-                import org.springframework.web.bind.annotation.RestController;
-
-                @RestController
-                @RequestMapping("/api/%s/%s")
-                public class %sController {
-                }
-                """.formatted(module, module, resource, className);
-    }
-
-    private String apiCode(String module, String resource) {
-        return """
-                import { httpClient } from '@/api/http'
-
-                export const %sApi = {
-                  list: (query?: Record<string, unknown>) => httpClient.get('/%s/%s', query as any),
-                }
-                """.formatted(resource, module, resource);
-    }
-
-    private String viewCode(String tableName, String className, List<Map<String, Object>> columns) {
-        String firstListField = columns.stream()
-                .filter(column -> enabled(column.get("list")))
-                .map(column -> String.valueOf(column.get("javaField")))
-                .findFirst()
-                .orElse("id");
-        return """
-                <script setup lang="ts">
-                const tableName = '%s'
-                const className = '%s'
-                const primaryField = '%s'
-                </script>
-
-                <template>
-                  <div>
-                    <h1>{{ className }}</h1>
-                    <p>{{ tableName }} · {{ primaryField }}</p>
-                  </div>
-                </template>
-                """.formatted(tableName, className, firstListField);
-    }
-
-    private String menuSql(String tableName, String className, String module, String resource) {
-        return """
-                -- %s 菜单权限
-                INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, component, permission, sort, visible, status, create_by, update_by)
-                SELECT COALESCE(MAX(id), 0) + 1, 0, '%s管理', 'menu', '/%s/%s', '%s/%s/index', '%s:%s:list', 1, 1, 1, 'system', 'system'
-                FROM sys_menu;
-                """.formatted(tableName, className, module, resource, module, resource, module, resource);
-    }
-
-    private boolean enabled(Object value) {
-        if (value instanceof Number number) {
-            return number.intValue() == 1;
-        }
-        return Boolean.TRUE.equals(value);
-    }
-
-    private String nullAsEmpty(Object value) {
-        return value == null ? "" : String.valueOf(value);
+    private String fileName(String path) {
+        return path.substring(path.lastIndexOf('/') + 1);
     }
 
     private List<Map<String, Object>> booleanRows(List<Map<String, Object>> rows, String... keys) {
@@ -336,72 +239,6 @@ public class GeneratorService {
 
     private String asString(Object value) {
         return value == null ? null : String.valueOf(value);
-    }
-
-    private String decapitalize(String value) {
-        if (value == null || value.isBlank()) {
-            return value;
-        }
-        return Character.toLowerCase(value.charAt(0)) + value.substring(1);
-    }
-
-    private String moduleName(String tableName) {
-        int split = tableName.indexOf('_');
-        String module = split > 0 ? tableName.substring(0, split) : "system";
-        return "sys".equals(module) ? "system" : module;
-    }
-
-    private String businessName(String tableName) {
-        int split = tableName.indexOf('_');
-        String raw = split > 0 ? tableName.substring(split + 1) : tableName;
-        return lowerCamel(raw);
-    }
-
-    private String upperCamel(String value) {
-        String lower = lowerCamel(value);
-        return lower == null || lower.isBlank() ? lower : Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
-    }
-
-    private String lowerCamel(String value) {
-        if (value == null || value.isBlank()) {
-            return value;
-        }
-        StringBuilder builder = new StringBuilder();
-        for (String part : value.toLowerCase(Locale.ROOT).split("_")) {
-            if (part.isBlank()) {
-                continue;
-            }
-            if (builder.isEmpty()) {
-                builder.append(part);
-            } else {
-                builder.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
-            }
-        }
-        return builder.toString();
-    }
-
-    private String javaType(String dataType) {
-        return switch (dataType) {
-            case "bigint" -> "Long";
-            case "int", "integer", "smallint", "tinyint" -> "Integer";
-            case "decimal", "numeric" -> "BigDecimal";
-            case "datetime", "timestamp", "date", "time" -> "LocalDateTime";
-            default -> "String";
-        };
-    }
-
-    private String formType(String dataType) {
-        return switch (dataType) {
-            case "text", "longtext", "mediumtext" -> "文本域";
-            case "int", "integer", "smallint", "tinyint", "bigint", "decimal", "numeric" -> "数字框";
-            case "datetime", "timestamp", "date", "time" -> "日期框";
-            default -> "文本框";
-        };
-    }
-
-    private boolean queryField(String columnName) {
-        String lower = columnName.toLowerCase(Locale.ROOT);
-        return lower.contains("name") || lower.contains("code") || lower.contains("status") || lower.contains("type");
     }
 
     private Long numberAsLong(Object value) {

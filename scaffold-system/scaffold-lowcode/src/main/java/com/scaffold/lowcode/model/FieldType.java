@@ -22,6 +22,14 @@ public enum FieldType {
     TEXT("多行文本", "String", "text", null, null, null, FormType.TEXTAREA),
     /** 整数；作为自增主键时升级为 bigint / Long（底座主键一律 BIGINT） */
     INTEGER("整数", "Integer", "int", null, null, null, FormType.NUMBER),
+    /**
+     * 长整数（BIGINT）。
+     *
+     * <p>PR 5F 补的一格：库里已有的 {@code bigint} 列（外部 ID、雪花号、以分计的金额）导入时不该被降级成
+     * {@code int}，而 {@link #INTEGER} 只在自增主键这一种情况下才升级成 Long —— 非自增的 bigint 列
+     * 原来没有对应的类型可选，两条链路只能各算各的。
+     */
+    LONG("长整数", "Long", "bigint", null, null, null, FormType.NUMBER),
     /** 小数，默认 decimal(18,2)；金额、比例一类 */
     DECIMAL("小数", "BigDecimal", "decimal", null, 18, 2, FormType.NUMBER),
     /** 日期，只有年月日 */
@@ -138,5 +146,43 @@ public enum FieldType {
         } catch (IllegalArgumentException ex) {
             throw new IllegalArgumentException("不支持的字段类型: " + code);
         }
+    }
+
+    /**
+     * 「库里已有的列类型 → 字段类型」的反向映射（PR 5F）。
+     *
+     * <p>老代码生成页导入已有表时原来自己有一套 {@code javaType(dataType)}，把 {@code date} 也算成
+     * {@code LocalDateTime}，与这里的正向表对不上 —— 同一个 {@code date} 列在两条链路上得到两种 Java 类型。
+     * 反向映射放在本枚举里，是为了让两条链路共用同一份事实源；方案 §2.2 之二 已把这条列为 PR 5 的连带项。
+     *
+     * <p>认不出来的列类型（{@code time} / {@code year} / {@code bit} / 空间与二进制类型）落到 {@link #STRING}：
+     * 老链路的表已经存在，生成的建表语句只是给人看的参考，不会因为多这一格就改到真实表；
+     * 真要精确表达，回到模型里显式选类型。
+     */
+    public static FieldType ofColumn(String dataType) {
+        String type = dataType == null ? "" : dataType.trim().toLowerCase(Locale.ROOT);
+        return switch (type) {
+            case "bigint" -> LONG;
+            case "int", "integer", "mediumint", "smallint", "tinyint" -> INTEGER;
+            case "decimal", "numeric", "float", "double", "real" -> DECIMAL;
+            case "date" -> DATE;
+            case "datetime", "timestamp" -> DATETIME;
+            case "text", "tinytext", "mediumtext", "longtext", "json" -> TEXT;
+            default -> STRING;
+        };
+    }
+
+    /**
+     * 库里已有的列该用哪个查询方式（PR 5F）。
+     *
+     * <p>原来老链路不管列是什么类型，命中名字就一律 {@code LIKE}，于是给 {@code int} 状态列生成出
+     * {@code LIKE CONCAT('%', ?, '%')} —— 索引用不上，读出来也不是人期望的等值匹配。
+     * 模糊匹配只留给文本列。
+     */
+    public QueryType defaultQueryType() {
+        return switch (this) {
+            case STRING, TEXT -> QueryType.LIKE;
+            default -> QueryType.EQ;
+        };
     }
 }

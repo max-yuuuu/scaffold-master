@@ -26,13 +26,11 @@ public class ModelCodeGenerator {
     }
 
     /**
-     * @param project {@code lc_project} 的一行
-     * @param model   {@code lc_model} 的一行
-     * @param fields  该模型的 {@code lc_field}，按 {@code sort_order} 排好
+     * @param model  {@code lc_model} 的一行，或任何能给出同名字段的来源（老代码生成页用的是 {@code gen_table}）
+     * @param fields 该模型的字段，按 {@code sort_order} 排好
      */
-    public List<GeneratedFile> renderFiles(Map<String, Object> project, Map<String, Object> model,
-                                           List<Map<String, Object>> fields) {
-        Map<String, Object> root = GenerationInput.of(project, model, fields);
+    public List<GeneratedFile> renderFiles(Map<String, Object> model, List<Map<String, Object>> fields) {
+        Map<String, Object> root = GenerationInput.of(model, fields);
         rejectUnsupportedSwitches(root);
 
         String module = string(root.get("module"));

@@ -66,12 +66,24 @@ public interface GeneratorMapper {
             """)
     Map<String, Object> selectDatabaseTable(@Param("tableName") String tableName);
 
+    /**
+     * 库里一张表的列事实。
+     *
+     * <p>{@code columnKey} / {@code extra} / {@code nullable} 这三样是 PR 5F 加的：
+     * 主键与自增以前靠「列名叫 id」猜，而生成物的 INSERT 要跳过自增主键、行定位要认真键，
+     * 猜错就是生成一份跑不通的代码。长度与精度同理 —— 建表语句要写得出 {@code varchar(64)}。
+     */
     @Select("""
             SELECT column_name AS columnName,
                    data_type AS dataType,
                    column_type AS columnType,
                    column_comment AS columnComment,
                    is_nullable AS nullable,
+                   column_key AS columnKey,
+                   extra AS extra,
+                   character_maximum_length AS columnLength,
+                   numeric_precision AS columnPrecision,
+                   numeric_scale AS columnScale,
                    ordinal_position AS sort
             FROM information_schema.columns
             WHERE table_schema = DATABASE()

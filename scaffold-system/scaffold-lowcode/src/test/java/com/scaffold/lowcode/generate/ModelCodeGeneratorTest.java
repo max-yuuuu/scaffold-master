@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,7 +25,7 @@ class ModelCodeGeneratorTest {
 
     @Test
     void 一个模型出十一份产物只有一份是C档() {
-        List<GeneratedFile> files = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
 
         assertThat(files).extracting(GeneratedFile::path).containsExactly(
                 "scaffold-system/scaffold-business/src/main/java/com/scaffold/business/order/domain/Order.java",
@@ -56,7 +55,7 @@ class ModelCodeGeneratorTest {
         model.put("moduleName", "order_item");
         model.put("tableName", "biz_order_item");
 
-        List<GeneratedFile> files = generator.renderFiles(project(), model, richFields());
+        List<GeneratedFile> files = generator.renderFiles(model, richFields());
 
         assertThat(files).extracting(GeneratedFile::path).allSatisfy(path -> {
             assertThat(path).matches("^(scaffold-system/scaffold-business/src/main/java/com/scaffold/business/order_item/"
@@ -70,8 +69,8 @@ class ModelCodeGeneratorTest {
     @Test
     void 同一份模型两次生成逐字节一致() {
         // 发布 diff 的可读性建立在这条上：内容不稳定，每次合并请求都是整文件重写
-        List<GeneratedFile> first = generator.renderFiles(project(), model(true, true), richFields());
-        List<GeneratedFile> second = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> first = generator.renderFiles(model(true, true), richFields());
+        List<GeneratedFile> second = generator.renderFiles(model(true, true), richFields());
 
         assertThat(second).isEqualTo(first);
     }
@@ -80,14 +79,14 @@ class ModelCodeGeneratorTest {
     void 没实现的模型开关在生成前就拦掉() {
         Map<String, Object> tree = new LinkedHashMap<>(model(true, true));
         tree.put("isTree", 1);
-        assertThatThrownBy(() -> generator.renderFiles(project(), tree, richFields()))
+        assertThatThrownBy(() -> generator.renderFiles(tree, richFields()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("勾了树表")
                 .hasMessageContaining("C 档扩展点");
 
         Map<String, Object> scope = new LinkedHashMap<>(model(true, true));
         scope.put("enableDataScope", 1);
-        assertThatThrownBy(() -> generator.renderFiles(project(), scope, richFields()))
+        assertThatThrownBy(() -> generator.renderFiles(scope, richFields()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("勾了数据权限");
     }
@@ -95,7 +94,7 @@ class ModelCodeGeneratorTest {
     @Test
     void 产物的档位是从路径反推出来的而不是模板自述() {
         // GeneratedFile.of 是唯一入口：模板把路径拼错就当场拒绝，错不到磁盘上
-        List<String> paths = new ArrayList<>(generator.renderFiles(project(), model(true, true), richFields())
+        List<String> paths = new ArrayList<>(generator.renderFiles(model(true, true), richFields())
                 .stream().map(GeneratedFile::path).toList());
         paths.add("scaffold-vue/src/main.ts");
 

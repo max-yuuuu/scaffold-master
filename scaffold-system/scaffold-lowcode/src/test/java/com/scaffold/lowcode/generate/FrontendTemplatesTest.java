@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.quotedRemarkFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.simpleFields;
@@ -141,7 +140,7 @@ class FrontendTemplatesTest {
 
     @Test
     void 说明里的引号在TS字面量里被转义() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true, true), quotedRemarkFields());
+        Map<String, Object> model = GenerationInput.of(model(true, true), quotedRemarkFields());
         String api = renderer.render("frontend/Api.ts.ftl", model);
         String page = renderer.render("frontend/ListView.vue.ftl", model);
         assertThat(api).doesNotContain("COMMENT");
@@ -150,7 +149,7 @@ class FrontendTemplatesTest {
 
     @Test
     void 两份前端产物各自两次渲染逐字节一致() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true, true), richFields());
+        Map<String, Object> model = GenerationInput.of(model(true, true), richFields());
         for (String template : List.of("frontend/Api.ts.ftl", "frontend/ListView.vue.ftl")) {
             assertThat(renderer.render(template, model)).as(template).isEqualTo(renderer.render(template, model));
         }
@@ -158,12 +157,12 @@ class FrontendTemplatesTest {
 
     private String api(boolean audit, boolean logicDelete) {
         return renderer.render("frontend/Api.ts.ftl",
-                GenerationInput.of(project(), model(audit, logicDelete), richFields()));
+                GenerationInput.of(model(audit, logicDelete), richFields()));
     }
 
     private String view(boolean audit, boolean logicDelete) {
         String rendered = renderer.render("frontend/ListView.vue.ftl",
-                GenerationInput.of(project(), model(audit, logicDelete), audit ? richFields() : simpleFields()));
+                GenerationInput.of(model(audit, logicDelete), audit ? richFields() : simpleFields()));
         return rendered.replace("\r", "");
     }
 }

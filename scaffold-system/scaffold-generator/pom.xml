@@ -18,9 +18,20 @@
             <groupId>com.scaffold</groupId>
             <artifactId>scaffold-framework</artifactId>
         </dependency>
+        <!-- PR 5F：模板与派生层住在 scaffold-lowcode，老代码生成页改吃同一套生成器（方案 §4.4「只换 sink」）。
+             方向只有 generator → lowcode，lowcode 不反向依赖本模块。 -->
+        <dependency>
+            <groupId>com.scaffold</groupId>
+            <artifactId>scaffold-lowcode</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>

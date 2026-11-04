@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.simpleFields;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,15 +43,15 @@ class GeneratedCodeCompilesTest {
 
     @Test
     void 订单全套七个java文件编得过() throws Exception {
-        compile(generator.renderFiles(project(), model(true, true), richFields()));
+        compile(generator.renderFiles(model(true, true), richFields()));
     }
 
     @Test
     void 开关的四种组合都编得过() throws Exception {
         // 审计与逻辑删除各自开关：INSERT / UPDATE / DELETE 三条语句的形状都不同，每种都得能编译
-        compile(generator.renderFiles(project(), model(false, false), simpleFields()));
-        compile(generator.renderFiles(project(), model(true, false), richFields()));
-        compile(generator.renderFiles(project(), model(false, true), richFields()));
+        compile(generator.renderFiles(model(false, false), simpleFields()));
+        compile(generator.renderFiles(model(true, false), richFields()));
+        compile(generator.renderFiles(model(false, true), richFields()));
     }
 
     private void compile(List<GeneratedFile> files) throws Exception {

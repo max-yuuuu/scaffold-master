@@ -530,7 +530,8 @@ CREATE TABLE IF NOT EXISTS lc_tenant_config (
 | FILE | String | varchar(512) | UPLOAD | 存路径或 URL |
 | REF | Long | bigint | REF | 必须指向同项目模型；指向自身合法（树表 parent_id） |
 
-> **PR 5 的连带项**：`GeneratorService.javaType()` 是「导入已有表 → Java 类型」的反向映射，目前把 `date` 也算成 `LocalDateTime`。模板改造时必须与上表对齐，否则同一个 `date` 列在两条链路上得到不同答案。
+> ~~**PR 5 的连带项**：`GeneratorService.javaType()` 是「导入已有表 → Java 类型」的反向映射，目前把 `date` 也算成 `LocalDateTime`。模板改造时必须与上表对齐，否则同一个 `date` 列在两条链路上得到不同答案。~~
+> **已落地（2026-11-04，PR 5F）**：反向映射挪进 `FieldType.ofColumn(dataType)`，老代码生成页不再自己算第二份；为它补了 `LONG`（`bigint` 非自增列原来无类型可选）与 `FormType.code()`。同一个 `date` 列现在两条链路都是 `LocalDate`。老链路另有一条新约束：**主键、自增、可空、长度、精度一律现查 `information_schema`**（过去靠「列名叫 id」猜），库里已经没有的表直接拒绝生成而不是产出一份指向空表的代码。
 
 ### 2.3 多租户实现
 
@@ -972,7 +973,7 @@ scaffold-system/         # 后端 Maven 聚合
 └── scaffold-admin       # 启动入口，聚合新模块
 ```
 
-**复用的接缝**：`GeneratorService.renderFiles()` 已返回 `Map<文件路径, 文件内容>`，而 `download()` 只是把这份 Map 打成 zip 字节（[scaffold-generator/.../GeneratorService.java:117](../scaffold-system/scaffold-generator/src/main/java/com/scaffold/generator/service/GeneratorService.java#L117)）。Git 发布是**换一条 sink**（同一份 Map 落盘 + 提交 + 推送），生成逻辑不动。本期把该返回值提为公共出参类型，两条 sink 并存：`zip 下载`（保留给手工取产物）与 `推送到仓库`。
+**复用的接缝（PR 5E–5F 已落地）**：生成逻辑只有一个出口 —— `ModelCodeGenerator.renderFiles(模型行, 字段行)` 返回 `List<GeneratedFile>`（公共出参类型，路径 + 内容 + 由路径反推的档位）。两条 sink 并存：`GeneratedFileZip` 打成 zip 给人手工取产物（老 `/tool/generator` 页的 `preview` / `download` 走这条），`GeneratedFileWriter` 按档位落进工作区（B 覆盖、C 存在即跳过），落盘后提交推送由 PR 7 接走。老 `GeneratorService` 不再拼字符串，它只做「读 `gen_table` / `gen_table_column` + 现查 `information_schema`」，由 `ImportedTableInput` 适配成同一份模型形状 —— 两条链路共用一套模板，才不会各自漂一套生成口径。依赖方向是 `scaffold-generator` → `scaffold-lowcode`（模板与派生层住在 lowcode），反向不依赖。
 
 **Git 能力放哪**：`scaffold-lowcode` 内部 `publish` 包，不沉到 `scaffold-framework`——只有低代码业务用得到，放框架层会让普通后台项目背上 JGit 依赖。JGit 依赖（`org.eclipse.jgit` + `org.eclipse.jgit.ssh.apache`）只声明在 `scaffold-lowcode`。
 
@@ -1396,7 +1397,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 4B**<br>P1.5 | **抽 `@yuanda-lowcode-ai/scaffold-ui`**：`packages/scaffold-ui` + npm workspaces（根 `package.json`、锁文件上移到根）；组件 + 16 composable + 工具 + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi({http, permission, dict})` 注入点；解包内对 `@/api`、`@/directives/permission`、宿主 `auth.ts`、`import.meta.env` 的全部引用；平台专属件（`GeneratorPipeline`、外壳 `components/layout/**`、`NeuralNet`、品牌 `data/index.ts`）划在包外；前端镜像构建上下文上移到仓库根；裁剪清单补第三层手段 `deliverySubstitutions()`（精确整行块替换 + `{SCAFFOLD_UI_VERSION}`），交付项目按 npm 依赖拿物料、不再拷源码。**分两步提交**这一条实际没能成立：物料文件被就地改了两轮（先相对化、后注入点），拆不出两个各自可构建的提交，最终合成一次提交，changelog 里分步记录 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）✅；包内 `@/` 引用为 0、`import.meta` 为 0 ✅；交付快照 177 文件用 `file:` tarball 装依赖后 `vue-tsc` + `vite build` 通过 ✅；包被一个最小 demo app 以 **npm registry 版本号**依赖消费 ⬜（组织与 token 已就绪，差正式 `npm publish --access public`） | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@yuanda-lowcode-ai/scaffold-ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
 | ↳ 5A–5E | ✅ 已完成（2026-11-04，分片进度与踩坑见 `changelog.md`）：5A 渲染骨架 + 实体（`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`，否则 MyBatis 的 `#{}` 被引擎吃掉）；5B 后端 CRUD 五套 + `SqlIdentifiers` 保留字拦截 + 生成前守卫；5C 建表与菜单种子（真机在一个临时库里各跑两遍验幂等）；5D 前端接口与列表页（产物塞进宿主跑 `vue-tsc` + `vite build` 验）；**5E 分档落成代码** —— `GeneratedPaths` 持路径表并按路径白名单反推档位、`ModelCodeGenerator.renderFiles()` 出 `List<GeneratedFile>`、`{Cls}Extension` 七钩子骨架与 B 档调用点、`GeneratedFileZip` / `GeneratedFileWriter` 两条 sink、`is_tree` / `enable_data_scope` 明确拒绝 | 常驻测试 `GeneratedCodeCompilesTest` 把 7 个 java 产物按交付路径落盘后真起 javac（审计×逻辑删除四种组合）；`ExtensionContractTest` 扫渲染结果核对钩子契约；后端 202 例全绿 | — |
-| ↳ 5F–5G | ⬜ 待做：5F 老 `GeneratorService` 改吃同一套模板（连带把 `javaType()` 与 `FieldType` 对齐，`date` 不再算成 `LocalDateTime`，见 §2.2 之二）；5G 端到端真机验证 + 把 §4.1/4.2/4.3 的草稿示例重写为定稿形状 | zip 下载行为不回退（老 `preview` / `download` 两个入口继续可用）；一个真实项目从建模到发布跑通 | — |
+| ↳ 5F | ✅ 已完成（2026-11-04）：老 `GeneratorService` 的 StringBuilder 全删，改由 `ImportedTableInput` 把 `gen_table` / `gen_table_column` 适配成模型形状后吃同一套模板；`javaType()` / `formType()` 并入 `FieldType.ofColumn`（连带补 `FieldType.LONG` 与 `FormType.code()`），`date` 两条链路都是 `LocalDate`；主键 / 自增 / 可空 / 长度 / 精度改为现查 `information_schema`（不再靠列名叫 `id` 猜），表已不存在时拒绝生成；审计四列齐且类型对才交给模板、`deleted` → 逻辑删除、`tenant_id` 只读不进列表；`LIKE` 只给文本列 | zip 下载与预览两个入口都在且**产物是交付形状**：`GeneratorImportApiTest` 4 例（含 zip 内 7 个 java 真起 javac、菜单 SQL 在真库执行后回滚）+ `ImportedTableInputTest` 6 例 + `FieldTypeTest` 反推表 2 例；后端 212 例全绿 | 5E |
+| ↳ 5G | ⬜ 待做：端到端真机验证（建项目 → 建模 → 生成 → 发布 → 合并 → 干净机器 `docker compose up`）+ 把 §4.1/4.2 的草稿示例重写为定稿形状 | 一个真实项目从建模到发布跑通；§4.2 示例与实际产物一致 | 5F |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；**发布前 C 档引用体检**（扫扩展代码对已删字段的引用，默认阻断，可显式放行） | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上；删掉字段后带着旧引用的扩展代码发布不出去 | PR 6 |
 | **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |

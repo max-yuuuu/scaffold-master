@@ -15,7 +15,6 @@ import static com.scaffold.lowcode.generate.GeneratedFileWriter.Action.CREATED;
 import static com.scaffold.lowcode.generate.GeneratedFileWriter.Action.OVERWRITTEN;
 import static com.scaffold.lowcode.generate.GeneratedFileWriter.Action.SKIPPED;
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -35,7 +34,7 @@ class GeneratedFileWriterTest {
 
     @Test
     void 首次发布每个产物都新建() throws IOException {
-        List<GeneratedFile> files = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
         List<Written> results = GeneratedFileWriter.write(workspace, files);
 
         assertThat(results).allSatisfy(result -> assertThat(result.action()).isEqualTo(CREATED));
@@ -53,7 +52,7 @@ class GeneratedFileWriterTest {
 
     @Test
     void 第二次发布B档覆盖C档保留人工内容() throws IOException {
-        List<GeneratedFile> files = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
         GeneratedFileWriter.write(workspace, files);
 
         Path extension = workspace.resolve(GeneratedPaths.extension("order", "Order"));

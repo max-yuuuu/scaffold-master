@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-04（PR 5F：老代码生成页改吃同一套模板，TDD 第一趟）
+
+`scaffold-generator` 那套 StringBuilder 全删了：`gen_table` / `gen_table_column` 先由 `ImportedTableInput` 适配成模型形状，再交给与低代码链路同一个 `ModelCodeGenerator`，zip 只是换了个出口（`GeneratedFileZip`）。方案 §4.4 说的「生成逻辑不动，只换 sink」到这里才真的成立。
+
+- **这是新规矩（`AGENTS.md`「测试与验收」）下的第一个任务，先写红再实现**：先落 4 条 e2e，跑出 3 条红 —— ① 产物路径是想象出来的 `backend/src/main/java/...` 与 `frontend/src/views/...`，不是交付项目的真实目录；② java 文件只有 4 个（缺 `Row` / `WriteRequest` / `Extension`）；③ `date` 列的实体属性是 `LocalDateTime`。第 4 条（列表与导入）本来就是绿的。然后才动实现把它们转绿。
+- **类型口径回到一份事实源**（方案 §2.2 之二那条连带项落地）：删掉 `GeneratorService.javaType()` / `formType()`，改为 `FieldType.ofColumn(dataType)` 反推。为此给 `FieldType` 补了 `LONG` 一格 —— 库里非自增的 `bigint` 列（外部 ID、以分计的金额）原来没有对应类型可选：`INTEGER` 只在自增主键时升级成 Long，于是老链路只能自己另算一份，两条链路对同一个 `date` / `bigint` 列给出不同答案。`FormType` 顺带补 `code()` 与 `FieldType` / `QueryType` 同口径。
+- **事实从库里现查，配置仍留在库里**：`selectDatabaseColumns` 补 `column_key` / `extra` / `is_nullable` / 长度 / 精度 / 标度。主键与自增过去靠「列名叫 id」猜，猜错就生成出定位不到记录、INSERT 顶掉 `AUTO_INCREMENT` 的代码。反过来，进不进表单、进不进列表、查询方式这些**配置**仍读 `gen_table_column`（页面上存过的优先），存的控件名是改造前的中文时退回该类型的默认控件，而不是一律降成输入框。物理表已经不在了（IT 库里就有一条这样的 `it_purchase_order` 夹具行）时 preview 直接 400 说明原因 —— 出一份指向不存在表的代码没有意义，这条由 `PortalModulesApiTest` 钉住。
+- **底座公共列怎么处置**：审计四列齐且类型对得上 → `enableAuditField=1` 并且不再作为字段出现（否则实体里会出现两个 `createTime`）；只齐一部分（日志表、第三方建的表）→ 当普通列但**不给写**；有 `deleted` 整型列 → `enableLogicDelete=1`；`tenant_id` 只读且不进列表 —— 表单里给人一个挑租户的下拉，等于给一次越权的机会。
+- **数字列不再 LIKE**：`FieldType.defaultQueryType()` 只给文本列模糊匹配。老链路命中列名带 status / type 就一律 `LIKE`，生成出 `t.status LIKE CONCAT('%', ?, '%')` —— 索引用不上，读出来也不是人期望的等值结果。
+- **接口与命名跟着换成定稿口径**：产物落点 `scaffold-system/scaffold-business/src/main/java/com/scaffold/business/{module}/...`、`scaffold-vue/src/api/{module}/{resource}.ts`、`scaffold-vue/src/views/{module}/{Cls}.vue`、`scaffold-system/sql/pages/{表}_table.sql` 与 `_menu.sql`；接口路径单数下划线（`/api/demo/product`），权限点 `demo:product:list` 一套四个。`GeneratorPipeline.vue` 的 `FORM_LABEL` 改按枚举名取标签（存进库的值变了）。
+- 依赖方向：`scaffold-generator` → `scaffold-lowcode`（模板与派生层住在 lowcode，方案 §4.4），反向不依赖，无环。本模块 pom 顺带补上 `spring-boot-starter-test`（它以前没有测试目录）。
+- 验证：**先红后绿**，`GeneratorImportApiTest` 4 例（清单与导入、交付形状清单、类型口径与公共列、zip 里 7 个 java 真起 javac + 菜单 SQL 在真库里跑通并回滚，建一张 `demo_product` 现删）、`ImportedTableInputTest` 6 例（公共列判定、事实现查、配置优先级）、`FieldTypeTest` +2 例（`ofColumn` 反推表、LIKE 只给文本列）。后端 **212 例**全绿（common 8 + framework 17 + lowcode 96 + generator 6 + admin 85），前端 `vue-tsc` 通过；IT 库跑完无残留（`demo_product` 与 `gen_table` 里的测试行都清掉了）。
+- **已知边界（没在本次改）**：① 老链路没存唯一索引信息，`isUnique` 一律 false，所以生成的建表语句不带 `UNIQUE KEY`、Service 不生成查重 —— 要唯一性判定就走低代码链路的模型；② 导入 `sys_file` 这类多租户表时 `tenant_id` 只是普通只读列，交付项目的租户拦截器认的是 A 档硬编码白名单，生成代码不会自动补这个列（§5.2「一个项目一个库」口径下的既有限制）；③ `gen_table_column` 里改造前导入的旧行，其 `java_type` 快照仍是旧口径 —— 生成时不读它（现查库），只有页面的映射图按存值画，重新导入一次就一致了。
+
 ## 2026-11-04（PR 5E：A/B/C 分档落成代码、C 档扩展点骨架、两条 sink）
 
 模板链到这里收成一个出口：`ModelCodeGenerator.renderFiles(项目行, 模型行, 字段行)` → `List<GeneratedFile>`，两条 sink 吃同一份产物（方案 §4.4「生成逻辑不动，只换 sink」）。
