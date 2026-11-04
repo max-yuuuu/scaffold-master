@@ -14,7 +14,8 @@
 - 平台就长在本仓库：低代码能力新增 `scaffold-lowcode` 模块承载，scaffold 同时是元搭底座与生成项目的模板来源。
 - **平台不托管项目运行时**：它是研发期工具。发布 = 生成代码 + 提交 + 推送到租户登记的 Git 仓库**生成分支**；进主干由人在平台内发起「合并请求」，选源/目标分支、看文件 diff、确认才合并，平台不自动合并、永不 force-push。
 - 权限码前缀分两类：`platform:` 是平台运营专属（租户管理、租户参数，不下发给租户），`lowcode:` 是租户自己的开发功能（项目、模型、页面），随菜单模板复制到每个租户。平台新增租户可见菜单后，已有租户要在租户管理点「补齐资产」。
-- 租户自助注册即开通：`POST /api/auth/register`（匿名 + 验证码）建租户、管理员账号、内置 `tenant_admin` 角色与该租户的菜单树，并直接回登录令牌；管理员账号要求全局唯一。注意该接口默认公开，对外暴露前先决定是否加审核开关。
+- 租户自助注册即开通：`POST /api/auth/register`（匿名 + 验证码）建租户、管理员账号、该租户的菜单树与两个内置角色（`tenant_admin` 全权限、`tenant_member` 只读：能看页面与列表，不含任何写操作按钮），并直接回登录令牌；管理员账号要求全局唯一。注意该接口默认公开，对外暴露前先决定是否加审核开关。
+- 租户与平台的权限边界由 `framework/security/PlatformBoundary` 单点判定：保留角色码（`super_admin` 只归平台租户，`tenant_admin` / `tenant_member` 归开通流程）与平台菜单段（`/platform` 路径、`platform:` 权限码）不能在租户里手工占用；`super_admin` 的放行要求账号归属平台租户，所以租户内自建同名角色拿不到平台接口、也切不了租户。
 - 多租户数据隔离：平台元数据与 `sys_*` 同库，`lc_` 前缀 + `tenant_id` 字段隔离；业务库随生成项目自带，平台不连（建表 SQL 推仓库由项目自己迁移）。运行时由 MyBatis-Plus `TenantLineInnerInterceptor` 按**表白名单**自动注入 `tenant_id`（PR 2 已落，新增带 `tenant_id` 的表必须同步登记，单测反向校验）；`super_admin` 看别的租户走会话内「切换租户」重签 JWT，不提供无租户条件的旁路查询。
 - Git 凭据走主机级 SSH 密钥，数据库只存 `repo_url` 与分支名；Git 操作全部用 JGit，不经 shell。
 - 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。生成物按所有权分三档：A 固定（初始化后平台不碰）、B 纯生成（每次覆盖、约定人工不改）、C 扩展点（生成一次骨架后平台不碰，业务逻辑写这里）。原 `CUSTOM-START/END` 文本级合并机制取消。

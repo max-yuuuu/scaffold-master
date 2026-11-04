@@ -57,16 +57,16 @@ public interface LcProvisionMapper {
     @Options(useGeneratedKeys = true, keyProperty = "row.id")
     int insertMenu(@Param("row") Map<String, Object> row, @Param("operator") String operator);
 
-    /** 内置管理员角色：data_scope 固定 ALL，新租户开箱可用 */
+    /** 内置角色（管理员 / 只读成员）：data_scope 固定 ALL，新租户开箱可用 */
     @InterceptorIgnore(tenantLine = "true")
     @Insert("""
             INSERT INTO sys_role (tenant_id, role_name, role_code, data_scope, sort, status, builtin, remark, create_by, update_by)
             VALUES (#{row.tenantId}, #{row.roleName}, #{row.roleCode}, 'ALL', 1, 1, 1, #{row.remark}, #{operator}, #{operator})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "row.id")
-    int insertAdminRole(@Param("row") Map<String, Object> row, @Param("operator") String operator);
+    int insertBuiltinRole(@Param("row") Map<String, Object> row, @Param("operator") String operator);
 
-    /** 目标租户的内置管理员角色 ID，没有则返回 null */
+    /** 目标租户指定编码的内置角色 ID，没有则返回 null */
     @InterceptorIgnore(tenantLine = "true")
     @Select("SELECT id FROM sys_role WHERE tenant_id = #{tenantId} AND role_code = #{roleCode} AND deleted = 0 LIMIT 1")
     Long selectRoleIdByCode(@Param("tenantId") long tenantId, @Param("roleCode") String roleCode);

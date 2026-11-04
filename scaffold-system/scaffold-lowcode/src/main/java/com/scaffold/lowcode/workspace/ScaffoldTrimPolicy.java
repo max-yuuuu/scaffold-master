@@ -57,6 +57,7 @@ public final class ScaffoldTrimPolicy {
             // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantIsolationApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantRegisterApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantRoleCaliberApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ModelApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectWorkspaceApiTest.java",

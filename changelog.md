@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-04（租户权限边界收口 + 内置只读成员角色）
+
+起因是「新注册租户拥有全部权限」这条验收：核对下来功能已经齐（建租户 + 复制业务菜单树 + 内置管理员角色全量授权 + 建管理员 + 直接回令牌），但**全权限的 `tenant_admin` 本身就是一条通向平台的旁路**，顺手把它验了出来。
+
+- **越权路径是先跑出红、再修的**，三条都在 `TenantRoleCaliberApiTest` 里留了钉子：
+  - ① `createRole` 的角色码唯一性由租户拦截器注入条件，只在**本租户**内查 → 租户管理员可以在自己租户里建一个 `role_code = super_admin` 的角色绑给自己，而 `SystemPermissionResolver` 原先只看角色码就给全量放行。红跑出来的实证是这个人能 `GET /api/platform/tenants` 拿到**全部租户**（`lc_tenant` 是平台表，不带 `tenant_id`）。
+  - ② `createMenu` / `updateMenu` 的 `permission` 与 `path` 是自由文本 → 造一条 `permission = platform:tenant:list` 的菜单授给自己的角色，同样进得去平台接口；平台侧的守卫只有 `@RequiresPermission`，没有第二道租户判定。
+  - ③ `/api/auth/switch-tenant` 原先也只看角色码 → 伪超管能直接把令牌切进任意租户。
+- **口径落在 `framework/security/PlatformBoundary` 一个类里**，避免四处各判一遍：保留角色码（`super_admin` 只归平台租户；`tenant_admin` / `tenant_member` 归开通流程内置，任何租户都不能手工占用）、平台菜单段（`/platform` 路径段与 `platform:` 权限码前缀，与 `LcProvisionMapper` 复制模板时的排除条件同一口径），以及 `isSuperAdmin(账号归属租户, 角色码)` —— 角色码是 `super_admin` **且账号归属平台租户**才算超管。放行判定的四处（`SystemPermissionResolver.hasPermission`、`AuthService.currentUser` / `routes` / `switchTenant`）全部换成这一条，平台管理员带着超管身份切进租户看数据的既有用法不受影响。保留码校验排在唯一性判定之前，否则租户里已存在的内置角色会把原因盖成「角色编码已存在」。
+- **新租户自带两个内置角色**：`tenant_admin`（全部业务菜单，含写操作按钮）与新增的 `tenant_member`「租户成员」（只授 `menu_type <> 'btn'` 的目录与页面节点，即 `:list` 能拿、一个写按钮都拿不到；`data_scope = ALL`、`builtin = 1`）。给新租户预置只读角色的理由是注册者进门第一件事就是建用户，而用户必须挂一个角色 —— 只有一个全权限角色等于逼人把权限给满。注册开通、平台手工新增租户带管理员、「补齐租户资产」三条链路共用同一套 `TenantProvisionService`，**存量租户要在租户管理点一次「补齐租户资产」才会多出这个只读角色**（用例里专门验了这条：删掉成员角色再补齐，能原样补回来，重复补齐不翻倍）。
+- **交付快照的裁剪清单跟着补一项**：`TenantRoleCaliberApiTest` 引用了 `/api/platform`，被 `ScaffoldSnapshotPlanner.validate` 当场拦下（「裁剪清单遗漏」），加进 `ScaffoldTrimPolicy` 的平台侧验收用例黑名单 —— 这条校验是有效的，不是摆设。`Roles.vue` 里内置角色那一格原来固定显示「全部权限」，现在有了只读内置角色，文案改成「内置授权」（提示改为权限由平台开通流程维护）。
+- 验证：**先红后绿**。`PlatformBoundaryTest` 25 条参数化断言（保留码只挡该挡的、`/platforms/keep` 这类业务路径不误伤、超管判定要同时满足码与归属）；`TenantRoleCaliberApiTest` 8 条 e2e 在实现前跑出 5 红 + 2 错（红的原因正是待实现的那件事：伪超管读平台接口是 200、`super_admin` 角色能手工建、菜单能挂 `platform:` 码、注册出来的租户没有 `tenant_member`），实现后 8 条全绿。第 8 条是补的口径钉子：**角色是租户私有物料**，`sys_role` 在租户拦截器白名单里，超管停在平台租户时角色管理页只看得到平台自己的 6 个种子角色，看不到也分配不了各租户的 `tenant_admin` / `tenant_member`（对称地，平台那几个角色租户里也看不到）；要管就走租户管理的「进入该租户」（`/api/auth/switch-tenant`，顶栏会显示「已切换」），切进去之后能看见内置角色也能给人挂上，但拿着别租户的 roleId 在平台租户里授权仍然 400。后端全量 `mvn test` **244 例**（common 8 + framework 42 + lowcode 96 + generator 6 + admin 92）BUILD SUCCESS，含既有 `TenantRegisterApiTest` 3 例、`TenantIsolationApiTest` 11 例、`AuthApiTest` 8 例、`ScaffoldSnapshotPlannerTest` 10 例；前端 `npm run build`（`vue-tsc` + `vite build`）与 `npm run test:unit` 通过。e2e 用 IT 库（`DB_PORT=3316`、`REDIS_PORT=6380`），用例注册的租户按 `tenant_id` 全部清理，库里不残留。本次没有改前端行为，只有 `Roles.vue` 那一处文案，未在浏览器里人工点验。
+- **已知边界（没在本次改）**：① `sys_role_menu` 只保证「授权对象是本租户菜单」，租户内的角色分配仍然全能 —— 只读角色给的是默认档位，租户管理员照样能新建一个更宽的角色；② 保留角色码判定在 Java 侧是大小写敏感的，与 `selectRoleCodes(...).contains(...)` 同一口径，MySQL 的 `utf8mb4` 排序规则却不区分大小写，所以库里进不了一个只在大写形式上撞名的角色，但它也不会因此获得超管身份（判定看的是 Java 侧的精确匹配）；③ 平台菜单段的排除在 SQL 侧仍写作 `path LIKE '/platform%'`，比 Java 侧的段判定宽（会连 `/platformx` 一起排除），对复制模板这条路没有实际影响，口径统一留待平台菜单表结构调整时一起做。
+
+
 ## 2026-11-04（PR 5F：老代码生成页改吃同一套模板，TDD 第一趟）
 
 `scaffold-generator` 那套 StringBuilder 全删了：`gen_table` / `gen_table_column` 先由 `ImportedTableInput` 适配成模型形状，再交给与低代码链路同一个 `ModelCodeGenerator`，zip 只是换了个出口（`GeneratedFileZip`）。方案 §4.4 说的「生成逻辑不动，只换 sink」到这里才真的成立。

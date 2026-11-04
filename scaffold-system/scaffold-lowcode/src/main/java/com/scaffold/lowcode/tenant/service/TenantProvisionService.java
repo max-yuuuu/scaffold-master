@@ -2,6 +2,7 @@ package com.scaffold.lowcode.tenant.service;
 
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.common.tenant.TenantContext;
+import com.scaffold.framework.security.PlatformBoundary;
 import com.scaffold.lowcode.tenant.mapper.LcProvisionMapper;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -16,7 +17,12 @@ import java.util.Set;
 
 /**
  * 租户资产开通：把平台租户（tenant_id = 1）的业务菜单、字典与内置参数复制给某个租户，
- * 并保证其内置管理员角色存在且拿到全部业务菜单。
+ * 并保证其两个内置角色存在且拿到对应授权：
+ * <ul>
+ *   <li><code>tenant_admin</code> 租户管理员 —— 本租户全部业务菜单，含写操作按钮；</li>
+ *   <li><code>tenant_member</code> 租户成员 —— 只有页面与目录（即可查看的列表），不含任何按钮，
+ *       新租户建普通用户时不必再从零手搓一个角色。</li>
+ * </ul>
  *
  * <p>两个调用方共用这套逻辑：
  * <ul>
@@ -31,8 +37,8 @@ import java.util.Set;
 @Service
 public class TenantProvisionService {
 
-    public static final String ADMIN_ROLE_CODE = "tenant_admin";
     private static final String ADMIN_ROLE_NAME = "租户管理员";
+    private static final String MEMBER_ROLE_NAME = "租户成员";
     private static final long TEMPLATE_TENANT_ID = TenantContext.PLATFORM_TENANT_ID;
 
     private final LcProvisionMapper mapper;
@@ -44,9 +50,10 @@ public class TenantProvisionService {
     }
 
     /**
-     * 补齐菜单 / 字典 / 内置参数，并把全部业务菜单授给该租户的内置管理员角色。
+     * 补齐菜单 / 字典 / 内置参数，并把业务菜单授给该租户的内置角色：
+     * 管理员拿全量，成员只拿页面与目录（只读）。
      *
-     * @return 各项新增数量，供接口回显
+     * @return 各项新增数量与两个内置角色 ID，供接口回显
      */
     @Transactional
     public Map<String, Object> syncAssets(long tenantId, String operator) {
@@ -55,7 +62,9 @@ public class TenantProvisionService {
         int dictData = mapper.copyDictData(tenantId, TEMPLATE_TENANT_ID, operator);
         int configs = mapper.copyConfigs(tenantId, TEMPLATE_TENANT_ID, operator);
         long roleId = ensureAdminRole(tenantId, operator);
+        long memberRoleId = ensureMemberRole(tenantId, operator);
         grantMenus(roleId, menus.menuIds());
+        grantMenus(memberRoleId, menus.readMenuIds());
         Map<String, Object> summary = new LinkedHashMap<>();
         summary.put("tenantId", tenantId);
         summary.put("menuAdded", menus.added());
@@ -63,21 +72,33 @@ public class TenantProvisionService {
         summary.put("dictDataAdded", dictData);
         summary.put("configAdded", configs);
         summary.put("roleId", roleId);
+        summary.put("memberRoleId", memberRoleId);
         return summary;
     }
 
     /** 新租户的内置管理员角色（已存在则复用） */
     public long ensureAdminRole(long tenantId, String operator) {
-        Long existing = mapper.selectRoleIdByCode(tenantId, ADMIN_ROLE_CODE);
+        return ensureBuiltinRole(tenantId, PlatformBoundary.TENANT_ADMIN_ROLE_CODE, ADMIN_ROLE_NAME,
+                "租户内置管理员，拥有本租户全部业务菜单", operator);
+    }
+
+    /** 新租户的内置只读成员角色（已存在则复用） */
+    public long ensureMemberRole(long tenantId, String operator) {
+        return ensureBuiltinRole(tenantId, PlatformBoundary.TENANT_MEMBER_ROLE_CODE, MEMBER_ROLE_NAME,
+                "租户内置只读角色，可查看本租户全部业务页面，不含任何写操作按钮", operator);
+    }
+
+    private long ensureBuiltinRole(long tenantId, String roleCode, String roleName, String remark, String operator) {
+        Long existing = mapper.selectRoleIdByCode(tenantId, roleCode);
         if (existing != null) {
             return existing;
         }
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("tenantId", tenantId);
-        row.put("roleName", ADMIN_ROLE_NAME);
-        row.put("roleCode", ADMIN_ROLE_CODE);
-        row.put("remark", "租户内置管理员，拥有本租户全部业务菜单");
-        mapper.insertAdminRole(row, operator);
+        row.put("roleName", roleName);
+        row.put("roleCode", roleCode);
+        row.put("remark", remark);
+        mapper.insertBuiltinRole(row, operator);
         return numberAsLong(row.get("id"));
     }
 
@@ -120,14 +141,19 @@ public class TenantProvisionService {
         // 模板按 id 升序，父级一定先于子级处理，因此 parentMap 里总能查到父级的新 ID
         Map<Long, Long> parentMap = new LinkedHashMap<>();
         List<Long> menuIds = new ArrayList<>();
+        List<Long> readMenuIds = new ArrayList<>();
         int added = 0;
         for (Map<String, Object> template : templates) {
             long templateId = numberAsLong(template.get("id"));
             long templateParent = numberAsLong(template.get("parentId"));
+            boolean writeButton = "btn".equals(text(template.get("menuType")));
             Long existingId = existingByKey.get(identityKey(template));
             if (existingId != null) {
                 parentMap.put(templateId, existingId);
                 menuIds.add(existingId);
+                if (!writeButton) {
+                    readMenuIds.add(existingId);
+                }
                 continue;
             }
             Map<String, Object> row = new LinkedHashMap<>();
@@ -146,9 +172,12 @@ public class TenantProvisionService {
             long newId = numberAsLong(row.get("id"));
             parentMap.put(templateId, newId);
             menuIds.add(newId);
+            if (!writeButton) {
+                readMenuIds.add(newId);
+            }
             added++;
         }
-        return new MenuCopyResult(menuIds, added);
+        return new MenuCopyResult(menuIds, readMenuIds, added);
     }
 
     private void grantMenus(long roleId, List<Long> menuIds) {
@@ -182,7 +211,7 @@ public class TenantProvisionService {
         return Long.parseLong(String.valueOf(value));
     }
 
-    /** 该租户当前持有的业务菜单 ID 与本次新增条数 */
-    private record MenuCopyResult(List<Long> menuIds, int added) {
+    /** 该租户当前持有的业务菜单 ID、其中可只读的页面节点 ID 与本次新增条数 */
+    private record MenuCopyResult(List<Long> menuIds, List<Long> readMenuIds, int added) {
     }
 }
