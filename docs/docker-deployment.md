@@ -11,7 +11,7 @@
 | `docker-compose.yml` | 服务编排；MySQL 在 `mysql` profile 中，默认不启动 |
 | `.env.example` | 环境变量模板，复制为 `.env` 后修改（`.env` 已被 git 忽略） |
 | `deploy/mysql-client.cnf` | 内置 MySQL 导入初始化 SQL 时的客户端字符集配置 |
-| `scaffold-system/Dockerfile` | 后端镜像：Maven 多阶段构建 → `eclipse-temurin:17-jre` 运行 |
+| `scaffold-system/Dockerfile` | 后端镜像：Maven 多阶段构建 → `eclipse-temurin:17-jre` 运行。`mvn package` 那一步挂了 BuildKit 的依赖缓存（`--mount=type=cache,target=/root/.m2`）：上下文是整份源码，没有挂载时改一行业务代码就要把几百个依赖重下一遍（本机实测第一次构建约 14 分钟全在下载依赖，挂上之后同一趟 4.7 秒）。交付项目拿的是同一份 Dockerfile，需要 Docker Desktop / BuildKit；老引擎（`DOCKER_BUILDKIT=0`）不认这个语法，要改回普通 `RUN mvn -B -DskipTests package` |
 | `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 构建 → `nginx:1.27-alpine` 托管。平台自身的构建上下文是仓库根（npm workspaces 要把根清单与 `packages/scaffold-ui` 一起交给构建，compose 里写作 `context: .` + `dockerfile: scaffold-vue/Dockerfile`）；交付项目的上下文是 `scaffold-vue` 目录，组件与主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui` |
 | `.dockerignore`（仓库根）与 `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`target`、`.git`、`lowcode-workspace` 等。Docker 只读「上下文根」的那一份，所以两份各管一边 |
 | `package.json` / `package-lock.json`（仓库根） | 平台侧 npm workspaces 声明（`packages/*` + `scaffold-vue`）与锁文件；`@yuanda-lowcode-ai/scaffold-ui` 的物料源码在 `packages/scaffold-ui`，镜像内 `npm ci` 会把它软链进 `node_modules`。这两份清单属平台，不进交付项目 |
@@ -60,7 +60,7 @@ docker compose up -d --build
 `DB_HOST=host.docker.internal` 与 `DB_PORT` 必须成对设置：`DB_PORT` 是后端实际连接的端口，漏改时它会退回默认 3306，打到宿主机上另一个 MySQL 实例（表现为登录报「系统内部错」而不是连不上内置库）。内置 MySQL 的宿主机映射端口是另一个变量 `MYSQL_HOST_PORT`，走外部模式时两者要指到同一个数字。
 
 外部库不会被自动初始化：需先按 README 的口径导入 `sql/` 顶层的三份 SQL（交付项目只用 `V1`–`V3`；平台自身再加 `V4`–`V7`）（客户端带 `--default-character-set=utf8mb4`、会话 `SET time_zone='+08:00'`），或直接用 `scaffold-admin` 里的 `com.scaffold.admin.util.DbInit`（读同一组 `DB_*` 变量）。自动导入只在内置 `mysql` 服务首次建卷时发生。**升级已有部署**时（例如 PR 2 的 `V4`：新增 `lc_tenant_config`、平台管理菜单，并把 `sys_menu.id` 改成自增），必须手工对目标库执行新增的 `V*.sql` —— 脚本按幂等口径写（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`，重复执行安全），不执行就会出现表缺失或菜单不显示。
-低代码发布生成的建表与菜单脚本落在 `sql/generated/`（子目录，`docker-entrypoint-initdb.d` 不递归，所以永不自动执行），同样按上面的口径手工执行，**客户端一定要带 `--default-character-set=utf8mb4`**：不带时容器内 locale 为 `C`，客户端按 latin1 解析 UTF-8 字节，中文列注释与菜单名会被二次编码存进库（页面显示成「è®¢å•ä¸»è¡¨」），与下一段 `deploy/mysql-client.cnf` 的由来是同一个坑。脚本本身可重复执行（建表用 `IF NOT EXISTS`，菜单按 `permission` 判重）。
+低代码发布生成的建表与菜单脚本落在 `scaffold-system/sql/pages/`（`{表名}_table.sql` 与 `{表名}_menu.sql`，子目录，`docker-entrypoint-initdb.d` 不递归，所以永不自动执行），同样按上面的口径手工执行，**客户端一定要带 `--default-character-set=utf8mb4`**：不带时容器内 locale 为 `C`，客户端按 latin1 解析 UTF-8 字节，中文列注释与菜单名会被二次编码存进库（页面显示成「è®¢å•ä¸»è¡¨」），与下一段 `deploy/mysql-client.cnf` 的由来是同一个坑。脚本本身可重复执行（建表用 `IF NOT EXISTS`，菜单按 `permission` 判重）。
 
 ## 环境变量
 

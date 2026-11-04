@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-04（PR 5G：端到端真机验证，一次跑撞出六处接缝缺陷）
+
+方案 §10.3 那条 5G 写的是「建项目 → 建模 → 生成 → 发布 → 合并 → 干净机器 `docker compose up`」。发布与合并是 PR 7 / PR 8 的范围，还没实现，所以这一步的实际形状是：**链路里已有的段全用真东西**（真实交付快照、真实模型接口、真实工作区提交、真实 GitHub 仓库的 clone、真实容器），只有「发布」那一跳由一次性脚本人肉顶上，跑完删除 —— 这趟演练的目的本来就是把接缝上的错找出来，顺便把 PR 7 要补什么钉清楚。
+
+- **常驻的端到端用例**：`DeliveryGenerationApiTest`（`scaffold-admin`，5 例）。建项目与初始化走真接口，交付快照由 PR 4 那份裁剪清单落进临时工作区，模型与字段也走公共接口配（**列表接口的出参就是生成器的入参形状**，所以它同时钉住「设计器里配的东西能被生成器原样吃到」），然后 `renderFiles` → `GeneratedFileWriter.write` 落进那份真实工作区。断言全挑单段测试看不见的接缝：`scaffold-business` 的 pom 还在且被父 pom 聚合（模块被裁剪清单误删时，产物只是一堆不参与构建的源文件）、页面里 `@/api/...` 指向的文件确实存在、菜单的 `component` 能解析到 `scaffold-vue/src/views/...`、权限点在菜单与 Controller 上逐字相同、物料包的具名导出与版本号对得上、二次发布时 B 档覆盖而 C 档保住人工加的方法。`ProjectWorkspaceApiTest` 里的假远端提成公用的 `StubGitGateway`（两处都要「能 clone、能提交、能推」的桩，真 JGit 语义仍在 `JGitGatewayTest` 对着本机裸仓库验）。
+- **撞出来的六处，按严重程度排**（每一处都是「编得过、单测全绿、真机才炸」）：
+  1. **小数列的输入框把金额抹成整数**（数据错，且不报任何错）。`NumberInput` 不传 `precision` 时按 `step`（默认 1）推断小数位，于是 `decimal(18,2)` 的列输入 1234.5 提交上去就是 1235；查询区区间两端同样被取整，查出来的集合也不对。修在派生层：字段模型带出 `numberPrecision`（取列的标度），表单与查询区两处 `<NumberInput>` 都带上 `:precision`。库里的证据留着一行：`SO-UI-0100 = 1235.00`（修复前建的）与 `SO-DEC-1 = 1234.50`（修复后建的）。
+  2. **自增主键进了新增表单**。字段接口把「可录入 / 可编辑 / 必填」默认全开，主键也不例外，于是页面要求人填主键，`WriteRequest` 还带一个改不动的 `id`；更硬的是模板的类型里另外硬编码了一行 `id?: number`，同一个名字声明两遍（一条 `number | undefined`、一条 `number | null`），交付项目 `npm run build` 在 `vue-tsc` 阶段报 TS2300 / TS2717 / TS2322，**前端镜像根本构建不出来**。三处一起改：`LcFieldService` 存自增主键时压掉那三格（设计器里显示的就是真值，不留「勾了但没生效」）、`GenerationInput` 组 `formFields` 时排除 `primary && autoIncrement`（老链路的存量配置可能还勾着）、「哪一行在编辑」改由独立的 `editing` ref 记着（自增主键不在表单里，业务编号主键新建那条也填了值，两种情况都不能拿表单的值当判据）。改这条时又踩一个小坑：`editing` 在 `<script setup>` 里要写 `editing.value`、在 `<template>` 里必须写 `editing`（SFC 编译器只在模板上下文自动解包 ref），写反了单测看不出来 —— 产物只是字符串 —— 交付项目 `vue-tsc` 报 TS18047 / TS2551，是第二轮构建抓到的。
+  3. **`@Options(keyProperty = "id")` 回写不了自增号**。这个方法挂审计列时还多收一个 `operator`，MyBatis 多参数时要求属性名点出参数名（底座自己写的是 `keyProperty = "row.id"`），真机点第一次「新增」抛 `ExecutorException` → 500。这条过去被 `CrudTemplatesTest` 按模板原话钉死了 —— 模板与测试一起错，形状断言与 javac 都无感知。
+  4. **列表与导出没有审计列**。页面在审计开关打开时多出「创建时间」列，`Row` 也声明了这四个字段，但 `selectRows` 只选勾选进列表的字段，CSV 也按同一份拼列 —— 真机上那一列每行都是「—」，导出文件里干脆没有这一列。补 `selectRows` 与 `CsvUtils.csv` 的审计段。
+  5. **CSV 里的时间带 `T`**。`CsvUtils.cell` 直接 `String.valueOf`，同一个值在页面上是 `2026-11-04 20:46:05`、在导出文件里是 ISO 的 `2026-11-04T20:46:05`。统一在 `CsvUtils` 里收（`LocalDateTime` / `LocalDate` 按 `@JsonFormat` 那两种规范串写），新配 `CsvUtilsTest` 2 例。
+  6. **`.vue` 里接口引用的路径与文件落点分家**。页面写 `@/api/{module}/{resourceName}`（驼峰）而文件是 `{resourceSlug}.ts`（蛇形），单字词夹具（`order`）看不出来，两个词以上就断。修模板用 `resourceSlug`，并把「import 的目标必须真实存在」写进上面那条 e2e。
+- **两处口径当场定死**（写进方案 §4.5）：① **只支持数字主键** —— 五个入口的定位参数是 `@PathVariable Long id`，字符串主键编得过但调不通，`GenerationInput` 进模板前就抛错说明怎么办（业务编号做成唯一列 + 另加数字主键）；② **列类型的完整写法只拼一次** —— `lc_field.column_type` 存的已经是 `varchar(64)`（`FieldType` 算好的），老链路给的是 `information_schema` 的裸 `DATA_TYPE` + 长度列，`GenerationInput` 按长度再拼一次就成了 `VARCHAR(64)(64)`，人在目标库执行第一次就是语法错误；已经带括号就原样收下。
+- **交付链的两处 A 档改动**（要等底座升级下发给存量项目，属 PR 8 范围）：① `scaffold-system/Dockerfile` 的 `mvn package` 加 `--mount=type=cache,target=/root/.m2` —— 干净机器上第一次构建后端镜像光下载 Maven 依赖就 14 分钟（交付项目的 Dockerfile 没有依赖层，改一行业务代码就重下一遍），加挂载后同一趟构建 **4.7 秒**；② `CsvUtils` 的时间规范串。这两处不在页面发布权限内（B/C 档），项目侧要等一次底座升级才拿得到。
+- **真机验证记录**：空目录 `git clone` 交付仓库的 `platform-generated` → 写 `.env`（`WEB_PORT=8099`、`MYSQL_HOST_PORT=3327`，本机 3306/3316 都被占着）→ `docker compose --profile mysql up -d --build` 四个服务全 healthy，内置 MySQL 首次建卷自动导入 V1–V3 → 手工执行生成的 `sales_order_table.sql` 与 `sales_order_menu.sql`（客户端带 `--default-character-set=utf8mb4`，中文注释入库正常；**两遍执行结果一致**，菜单仍是 4 条、授权仍是 4 条，`SHOW CREATE TABLE` 与模板给的一致）→ 浏览器登录 → 侧栏出现「销售订单主表」→ 页面按 `ListPage` 版式渲染（查询区四个条件、八个列、导出 / 刷新 / 分页都在）→ 新增弹窗里没有主键格，填 `1234.5` 落库仍是 `1234.5` → 列表「创建时间」有值 → 修改 / 唯一列查重（400「订单编号已存在」）/ 必填校验（400「订单编号不能为空」）/ 导出 CSV（表头带「创建时间」）/ 删除后详情 400「销售订单不存在或已删除」而库里 `deleted=1` 行还在，全部走通。
+- 测试规模：后端 **227 例**全绿（common 10 + framework 17 + lowcode 103 + generator 6 + admin 91）；新增或改写的用例是 `DeliveryGenerationApiTest` 5、`CsvUtilsTest` 2、`FrontendTemplatesTest` +3（自增主键、业务主键、小数精度）、`CrudTemplatesTest` +1（审计列，另把导出那条的期望改成带「创建时间」）、`SqlTemplatesTest` +1（列类型已是完整写法）、`ModelCodeGeneratorTest` +2（引用落点、非数字主键拒绝）、`ModelApiTest` +1（自增主键的写入位被压掉）。
+- **没在这一步做的**：① 发布入口（`lc_publish_log`、哈希对比 no-op、C 档引用体检）仍是 PR 7；② 底座升级下发上面那两处 A 档改动是 PR 8；③ **交付项目的登录页与侧栏仍写着「元搭低代码平台」** —— 品牌配置 `scaffold-vue/src/data/index.ts` 是 A 档，初始化时没按项目名改写过，该由谁改、什么时候改是 PR 7/8 的一个待决项（`ProjectMarker` 里已经存了 `projectName`）；④ 前端 `overrides/` 的加载机制仍未定（§10.2 开放项 3）。
+
+
+
 ## 2026-11-04（租户权限边界收口 + 内置只读成员角色）
 
 起因是「新注册租户拥有全部权限」这条验收：核对下来功能已经齐（建租户 + 复制业务菜单树 + 内置管理员角色全量授权 + 建管理员 + 直接回令牌），但**全权限的 `tenant_admin` 本身就是一条通向平台的旁路**，顺手把它验了出来。
@@ -13,6 +33,7 @@
 - **交付快照的裁剪清单跟着补一项**：`TenantRoleCaliberApiTest` 引用了 `/api/platform`，被 `ScaffoldSnapshotPlanner.validate` 当场拦下（「裁剪清单遗漏」），加进 `ScaffoldTrimPolicy` 的平台侧验收用例黑名单 —— 这条校验是有效的，不是摆设。`Roles.vue` 里内置角色那一格原来固定显示「全部权限」，现在有了只读内置角色，文案改成「内置授权」（提示改为权限由平台开通流程维护）。
 - 验证：**先红后绿**。`PlatformBoundaryTest` 25 条参数化断言（保留码只挡该挡的、`/platforms/keep` 这类业务路径不误伤、超管判定要同时满足码与归属）；`TenantRoleCaliberApiTest` 8 条 e2e 在实现前跑出 5 红 + 2 错（红的原因正是待实现的那件事：伪超管读平台接口是 200、`super_admin` 角色能手工建、菜单能挂 `platform:` 码、注册出来的租户没有 `tenant_member`），实现后 8 条全绿。第 8 条是补的口径钉子：**角色是租户私有物料**，`sys_role` 在租户拦截器白名单里，超管停在平台租户时角色管理页只看得到平台自己的 6 个种子角色，看不到也分配不了各租户的 `tenant_admin` / `tenant_member`（对称地，平台那几个角色租户里也看不到）；要管就走租户管理的「进入该租户」（`/api/auth/switch-tenant`，顶栏会显示「已切换」），切进去之后能看见内置角色也能给人挂上，但拿着别租户的 roleId 在平台租户里授权仍然 400。后端全量 `mvn test` **244 例**（common 8 + framework 42 + lowcode 96 + generator 6 + admin 92）BUILD SUCCESS，含既有 `TenantRegisterApiTest` 3 例、`TenantIsolationApiTest` 11 例、`AuthApiTest` 8 例、`ScaffoldSnapshotPlannerTest` 10 例；前端 `npm run build`（`vue-tsc` + `vite build`）与 `npm run test:unit` 通过。e2e 用 IT 库（`DB_PORT=3316`、`REDIS_PORT=6380`），用例注册的租户按 `tenant_id` 全部清理，库里不残留。本次没有改前端行为，只有 `Roles.vue` 那一处文案，未在浏览器里人工点验。
 - **已知边界（没在本次改）**：① `sys_role_menu` 只保证「授权对象是本租户菜单」，租户内的角色分配仍然全能 —— 只读角色给的是默认档位，租户管理员照样能新建一个更宽的角色；② 保留角色码判定在 Java 侧是大小写敏感的，与 `selectRoleCodes(...).contains(...)` 同一口径，MySQL 的 `utf8mb4` 排序规则却不区分大小写，所以库里进不了一个只在大写形式上撞名的角色，但它也不会因此获得超管身份（判定看的是 Java 侧的精确匹配）；③ 平台菜单段的排除在 SQL 侧仍写作 `path LIKE '/platform%'`，比 Java 侧的段判定宽（会连 `/platformx` 一起排除），对复制模板这条路没有实际影响，口径统一留待平台菜单表结构调整时一起做。
+
 
 
 ## 2026-11-04（PR 5F：老代码生成页改吃同一套模板，TDD 第一趟）
