@@ -102,7 +102,62 @@ export const PALETTE: Array<{ group: string, items: Array<{ type: string, label:
   },
 ]
 
-const ACTIONS = ['create', 'edit', 'delete', 'export', 'refresh']
+/**
+ * 每个组件在属性面板里能改哪几格，与后端 ComponentCatalog 的属性白名单同一份。
+ *
+ * 面板只渲染这里列出的属性：多出来的一格（比如给 DictSelect 再填一个字典）在页面上完全能用，
+ * 但生成器不认 —— 那才是真的难查。类型、字典、小数位这些不在这里，模型给。
+ */
+export const PROPS: Record<string, string[]> = {
+  PageContainer: ['title', 'desc'],
+  SearchForm: ['columns', 'gap'],
+  Toolbar: [],
+  DataTable: ['pagination', 'pageSize'],
+  RowActions: ['priority'],
+  FormContainer: ['columns'],
+  TextInput: ['label', 'field', 'required', 'placeholder', 'queryType'],
+  Textarea: ['label', 'field', 'required', 'placeholder'],
+  NumberInput: ['label', 'field', 'required', 'placeholder', 'queryType'],
+  DateInput: ['label', 'field', 'required', 'queryType'],
+  DateRangePicker: ['label', 'field', 'queryType'],
+  Select: ['label', 'field', 'required', 'placeholder', 'queryType'],
+  DictSelect: ['label', 'field', 'required', 'placeholder', 'queryType'],
+  Button: ['label', 'action', 'variant', 'danger'],
+}
+
+/** 属性面板的中文标签；不在表里的属性按名字原样显示（新增属性时先补这里再放面板出来） */
+export const PROP_LABELS: Record<string, string> = {
+  title: '页面标题',
+  desc: '页面说明',
+  columns: '每行列数',
+  gap: '间距',
+  pagination: '分页',
+  pageSize: '每页条数',
+  priority: '直出按钮数',
+  label: '标签',
+  field: '绑定字段',
+  required: '必填',
+  placeholder: '占位提示',
+  queryType: '查询方式',
+  action: '动作',
+  variant: '样式',
+  danger: '危险操作',
+}
+
+export function propsOf(type: string): string[] {
+  return PROPS[type] ?? []
+}
+
+export const ACTIONS = ['create', 'edit', 'delete', 'export', 'refresh']
+
+/** 动作 → 中文，与后端 ComponentCatalog.permissionSuffix 一一对应：权限点不在这里出现第二次 */
+export const ACTION_LABELS: Record<string, string> = {
+  create: '新增',
+  edit: '编辑',
+  delete: '删除',
+  export: '导出',
+  refresh: '刷新',
+}
 
 export interface Designer {
   readonly root: UINode
@@ -114,6 +169,8 @@ export interface Designer {
   select(key: string | null): void
   childrenOf(type: string): UINode[]
   find(key: string): UINode | null
+  /** 属性面板要按「这一格在哪个容器里」决定给不给改（required 在查询区没意义），所以要能问爹 */
+  parentOf(key: string): UINode | null
   insert(target: string, spec: { type: string, props?: Record<string, unknown> }, index?: number): string
   move(key: string, target: string, index?: number): void
   remove(key: string): void
@@ -343,6 +400,9 @@ export function createDesigner(seed?: DesignJson): Designer {
     },
     find(key) {
       return search(root, key)?.node ?? null
+    },
+    parentOf(key) {
+      return search(root, key)?.parent ?? null
     },
     insert(target, spec, index) {
       const container = blockOf(target)

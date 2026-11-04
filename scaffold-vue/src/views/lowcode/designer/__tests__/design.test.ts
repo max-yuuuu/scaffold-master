@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createDesigner, initFromModel, type ModelField } from '../design.ts'
+import { createDesigner, initFromModel, propsOf, PROPS, BLOCKS, type ModelField } from '../design.ts'
 
 /**
  * 设计器状态层（PR 6C）。
@@ -108,6 +108,9 @@ test('删容器连带子节点，撤销能整块还原', () => {
   assert.equal(store.childrenOf('SearchForm').length, 2)
   assert.equal(store.childrenOf('SearchForm')[0].props.field, 'orderNo')
   assert.equal(store.childrenOf('FormContainer').length, formBefore)
+  // 属性面板按父容器决定给不给改，所以父节点要问得到
+  assert.equal(store.parentOf(store.childrenOf('SearchForm')[0].key)?.type, 'SearchForm')
+  assert.equal(store.parentOf(store.root.key), null)
 })
 
 test('撤销重做是一进一出，新操作清空重做栈', () => {
@@ -129,6 +132,19 @@ test('撤销重做是一进一出，新操作清空重做栈', () => {
 
   store.insert('PageContainer', { type: 'Toolbar', props: {} })
   assert.equal(store.canRedo, false, '新操作之后重做栈要清空，否则会跳回一个已经不在那条历史上的形状')
+})
+
+test('属性面板只渲染这个组件支持的那几格', () => {
+  assert.deepEqual(propsOf('PageContainer'), ['title', 'desc'])
+  assert.deepEqual(propsOf('DictSelect'), ['label', 'field', 'required', 'placeholder', 'queryType'])
+  // 按钮没有「绑定字段」这一说，字典下拉没有「小数位」这一说
+  assert.equal(propsOf('Button').includes('field'), false)
+  assert.equal(propsOf('NumberInput').includes('precision'), false)
+  // 每个组件都在表里，面板遇到没登记的类型会退化成「一格都不给改」，那是最难查的失败
+  ;[...BLOCKS, 'PageContainer', ...Object.keys(PROPS)].forEach(type => {
+    assert.ok(Object.prototype.hasOwnProperty.call(PROPS, type), `${type} 没登记属性清单`)
+  })
+  assert.deepEqual(propsOf('Toolbar'), [])
 })
 
 test('改属性只动那一格，空属性序列化时省略', () => {
