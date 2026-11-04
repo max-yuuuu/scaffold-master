@@ -101,6 +101,21 @@ public interface LcModelMapper {
             """)
     Map<String, Object> selectModelBrief(@Param("id") Long id);
 
+    /**
+     * 按「项目 + 模型编码」取模型。
+     *
+     * <p>页面绑模型走编码而不是 id（方案 §1.5：页面与模型的耦合只发生在 field_code 这个符号上，
+     * 而 design_json 里写的就是 {@code modelRef} 编码）；反查必须限定在同一项目内，
+     * 否则同租户别的项目的同名模型会被串进来。
+     */
+    @Select("""
+            SELECT id, project_id AS projectId, model_code AS modelCode, model_name AS modelName,
+                   table_name AS tableName, class_name AS className, module_name AS moduleName, status
+            FROM lc_model
+            WHERE project_id = #{projectId} AND model_code = #{modelCode} AND deleted = 0
+            """)
+    Map<String, Object> selectModelBriefByCode(@Param("projectId") Long projectId, @Param("modelCode") String modelCode);
+
     /** REF 字段选目标模型用的精简列表（同项目内） */
     @Select("""
             SELECT id, model_code AS modelCode, model_name AS modelName, table_name AS tableName, class_name AS className

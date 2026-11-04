@@ -1,6 +1,8 @@
 package com.scaffold.lowcode.generate;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.design.DesignNode;
+import com.scaffold.lowcode.design.PageTarget;
 import com.scaffold.lowcode.model.FieldType;
 import com.scaffold.lowcode.model.Naming;
 import com.scaffold.lowcode.model.QueryType;
@@ -30,6 +32,14 @@ public final class GenerationInput {
     }
 
     public static Map<String, Object> of(Map<String, Object> model, List<Map<String, Object>> fields) {
+        return of(model, fields, null);
+    }
+
+    /**
+     * @param target 页面目标；{@code null} 表示没有设计（zip 下载与老代码生成页），
+     *               此时页面形状回到模型上的 {@code is_list} / {@code is_query} / {@code is_insert} 三个勾选
+     */
+    public static Map<String, Object> of(Map<String, Object> model, List<Map<String, Object>> fields, PageTarget target) {
         String modelCode = text(model.get("modelCode"));
         String className = blankToNull(text(model.get("className")));
         if (className == null) {
@@ -106,15 +116,6 @@ public final class GenerationInput {
                     + keyJavaType + " 类型，本期生成器只支持数字主键（Long / Integer）。"
                     + "请把业务编号做成唯一列并另加一个数字主键，那样按编号查询照样生成得出来");
         }
-        // 这两条不是洁癖：字段全关时生成的 INSERT / UPDATE 会是缺列的残缺语句，
-        // 推出去要到运行期才炸，当场拦掉更省事
-        if (insertFields.isEmpty()) {
-            throw new BusinessException("模型 " + modelName + " 没有任何「可录入」字段，生成不出新增语句");
-        }
-        if (updateFields.isEmpty()) {
-            throw new BusinessException("模型 " + modelName + " 没有任何「可编辑」字段，生成不出修改语句");
-        }
-
         // 列表行 = 主键 + 勾选进列表的字段（主键恒在：行操作、编辑、删除都要靠它）
         List<Map<String, Object>> rowFields = new ArrayList<>();
         for (Map<String, Object> item : fieldModels) {
@@ -122,6 +123,34 @@ public final class GenerationInput {
                 rowFields.add(item);
             }
         }
+        List<Map<String, Object>> tableColumns = rowFields;
+
+        // 有设计时，页面的形由设计说：查询区、列、表单各按设计里的成员与顺序，
+        // 类型与约束仍来自上面按模型算好的那些字段（方案 §1.5 ②「页面是形、模型是料」）
+        if (target != null) {
+            Map<String, Map<String, Object>> byCode = indexByCode(fieldModels);
+            queryFields = designQueryFields(target.design().search(), byCode);
+            formFields = designFormFields(target.design().form(), byCode);
+            insertFields = writableSubset(formFields, true);
+            updateFields = writableSubset(formFields, false);
+            uniqueFields = uniqueSubset(formFields);
+            tableColumns = designColumns(target.design().columns(), byCode);
+            rowFields = withPrimary(primary, tableColumns);
+            listFields = tableColumns;
+        } else {
+            normalizeColumns(rowFields);
+        }
+        // 这两条不是洁癖：字段全空时生成的 INSERT / UPDATE 会是缺列的残缺语句，
+        // 推出去要到运行期才炸，当场拦掉更省事。带设计时算的是设计筛完的那两份
+        if (insertFields.isEmpty()) {
+            throw new BusinessException("模型 " + modelName + " 没有任何「可录入」字段，生成不出新增语句"
+                    + (target == null ? "" : "（页面的表单弹窗里也要至少摆一格可录入的字段）"));
+        }
+        if (updateFields.isEmpty()) {
+            throw new BusinessException("模型 " + modelName + " 没有任何「可编辑」字段，生成不出修改语句"
+                    + (target == null ? "" : "（页面的表单弹窗里也要至少摆一格可编辑的字段）"));
+        }
+
         List<Map<String, Object>> queryConditions = queryConditions(queryFields);
         List<Map<String, Object>> queryParams = flattenParams(queryConditions);
 
@@ -150,6 +179,7 @@ public final class GenerationInput {
         root.put("updateFields", updateFields);
         root.put("uniqueFields", uniqueFields);
         root.put("rowFields", rowFields);
+        root.put("tableColumns", tableColumns);
         root.put("queryConditions", queryConditions);
         root.put("queryParams", queryParams);
         // Controller 要不要 import @DateTimeFormat：日期类查询参数得按规范串绑定
@@ -163,18 +193,29 @@ public final class GenerationInput {
         root.put("tableComment", sqlText(blankToDefault(text(model.get("modelDesc")), modelName)));
         // 菜单：component 就是前端路由解析的路径（composables/auth.ts 里 ../views/{component}.vue）
         root.put("menuComponent", module + "/" + className);
-        root.put("menuPath", apiPath);
+        root.put("menuPath", target == null || target.routePath() == null ? apiPath : target.routePath());
+        root.put("menuName", target == null ? blankToDefault(text(model.get("modelDesc")), modelName) : target.pageName());
+        root.put("menuIcon", target == null || blankToNull(target.menuIcon()) == null ? "grid" : target.menuIcon());
+        root.put("menuSort", target == null || target.menuSort() == null ? 1 : target.menuSort());
         root.put("resourceSlug", resourceSlug);
-        // 菜单授权那条 IN 列表：页面权限点 + 三个按钮，逐个加好引号，模板里不再拼字符串
+        // 菜单里的按钮权限点跟着页面真摆了哪些动作走：设计里没有删除，就不种一个没人用的 :remove
+        List<Map<String, Object>> menuButtons = menuButtonsOf(target);
         List<String> menuSuffixes = new ArrayList<>();
         menuSuffixes.add("list");
-        for (Map<String, Object> button : MENU_BUTTONS) {
+        for (Map<String, Object> button : menuButtons) {
             menuSuffixes.add(String.valueOf(button.get("suffix")));
         }
         root.put("menuPermissionList", menuSuffixes.stream()
                 .map(suffix -> "'" + permissionPrefix + ":" + suffix + "'")
                 .collect(Collectors.joining(", ")));
-        root.put("menuButtons", MENU_BUTTONS);
+        root.put("menuButtons", menuButtons);
+        // 页面顶部与按钮：形状由设计给，没有设计就回到 PR 5 那三件固定动作
+        root.put("pageTitle", target == null ? blankToDefault(text(model.get("modelDesc")), modelName) + "管理" : target.design().title());
+        root.put("pageDesc", target == null || target.design().description() == null
+                ? "本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。" : target.design().description());
+        root.put("toolbarButtons", pageButtons(target, "Toolbar", modelName, permissionPrefix));
+        root.put("rowButtons", pageButtons(target, "RowActions", modelName, permissionPrefix));
+        root.put("hasExport", target == null || hasExport(target));
         // 前端产物用：接口对象名、导出文件名、页面要 import 的物料组件
         root.put("apiVar", Naming.camel(className) + "Api");
         root.put("exportName", blankToDefault(text(model.get("modelDesc")), modelName) + ".csv");
@@ -187,6 +228,109 @@ public final class GenerationInput {
         root.put("rowImports", audit ? withAudit(importsOf(rowFields)) : importsOf(rowFields));
         root.put("writeImports", importsOf(formFields));
         return root;
+    }
+
+    /** 页面里出现导出动作：ListPage 表头的导出按钮只在接了 exporter 时才出现 */
+    private static boolean hasExport(PageTarget target) {
+        return actionsOf(target, "Toolbar").contains("export") || actionsOf(target, "RowActions").contains("export");
+    }
+
+    /**
+     * 菜单要种的按钮权限点。
+     *
+     * <p>名字固定用「新增/编辑/删除」而不是设计里 person 写的按钮文案：这一行是权限点的名字，
+     * 跟项目里其它模块的菜单同一读法，也跟着底座的 {@code system:post:*} 口径。
+     */
+    private static List<Map<String, Object>> menuButtonsOf(PageTarget target) {
+        if (target == null) {
+            return MENU_BUTTONS;
+        }
+        List<String> actions = new ArrayList<>(actionsOf(target, "Toolbar"));
+        actionsOf(target, "RowActions").stream().filter(actions::contains).forEach(actions::add);
+        List<Map<String, Object>> buttons = new ArrayList<>();
+        int sort = 1;
+        for (String suffix : List.of("add", "edit", "remove")) {
+            boolean present = actions.stream().anyMatch(action -> suffixOf(action).equals(suffix));
+            if (present) {
+                buttons.add(Map.of("action", MENU_BUTTON_NAMES.get(suffix), "suffix", suffix, "sort", sort++));
+            }
+        }
+        return buttons;
+    }
+
+    private static final Map<String, String> MENU_BUTTON_NAMES = Map.of("add", "新增", "edit", "编辑", "remove", "删除");
+
+    /** 按钮上出现过的动作（去重、按出现顺序） */
+    private static List<String> actionsOf(PageTarget target, String blockType) {
+        List<String> actions = new ArrayList<>();
+        for (DesignNode node : target.design().childrenOf(blockType)) {
+            String action = node.text("action");
+            if (action != null && !actions.contains(action)) {
+                actions.add(action);
+            }
+        }
+        return actions;
+    }
+
+    /**
+     * 生成页面上的按钮。
+     *
+     * <p>动作决定接线（点下去调哪个方法、要哪个权限点），设计只决定文案与样式：
+     * 让人手写权限串就会出现「菜单里权限点齐着、页面上按钮永远灰」。
+     * {@code export} 不产出按钮 —— 导出是 ListPage 表头的固定能力，页面上再放一个是两个入口。
+     */
+    private static List<Map<String, Object>> pageButtons(PageTarget target, String blockType, String modelName, String prefix) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (target == null) {
+            if ("Toolbar".equals(blockType)) {
+                out.add(button("create", "新增" + modelName, "primary", false, prefix));
+            } else {
+                out.add(button("edit", "编辑", null, false, prefix));
+                out.add(button("delete", "删除", null, true, prefix));
+            }
+            return out;
+        }
+        for (DesignNode node : target.design().childrenOf(blockType)) {
+            String action = node.text("action");
+            if (action == null || "export".equals(action)) {
+                continue;
+            }
+            Map<String, Object> item = button(action, node.text("label", actionName(action)), node.text("variant", null),
+                    node.flag("danger", false), prefix);
+            out.add(item);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> button(String action, String label, String variant, boolean danger, String prefix) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("action", action);
+        item.put("label", jsText(label));
+        item.put("rawLabel", label);
+        item.put("variant", blankToNull(variant));
+        item.put("danger", danger);
+        item.put("icon", ICONS.getOrDefault(action, "dot"));
+        item.put("click", CLICKS.getOrDefault(action, "list.load()"));
+        item.put("perm", prefix + ":" + suffixOf(action));
+        return item;
+    }
+
+    private static final Map<String, String> ICONS = Map.of("create", "plus", "edit", "edit", "delete", "trash", "refresh", "refresh");
+    private static final Map<String, String> CLICKS = Map.of("create", "openCreate", "edit", "openEdit(row)", "delete", "remove(row)", "refresh", "list.load()");
+    private static final Map<String, String> ACTION_NAMES = Map.of("create", "新增", "edit", "编辑", "delete", "删除", "export", "导出", "refresh", "刷新");
+
+    private static String actionName(String action) {
+        return ACTION_NAMES.getOrDefault(action, action);
+    }
+
+    /** 动作 → 权限点后缀，与 {@code ComponentCatalog.permissionSuffix} 同一份口径 */
+    private static String suffixOf(String action) {
+        return switch (action) {
+            case "create" -> "add";
+            case "edit" -> "edit";
+            case "delete" -> "remove";
+            default -> "list";
+        };
     }
 
     /** 单个字段的模板视图：命名、列类型全形式与查询运算符都在这里定稿 */
@@ -249,6 +393,9 @@ public final class GenerationInput {
         // 提交前 trim 掉首尾空格；下拉、字典与日期的取值不是人打的自由文本，不动它
         item.put("valueTrim", "string".equals(item.get("tsType")) && !isChoice(formControl));
         item.put("inputVerb", isChoice(formControl) ? "请选择" : "请输入");
+        // 前端必填 = 模型必填或设计标了必填（只能收紧）；后端注解只认模型，两边不同口径时以数据库约束为准
+        item.put("inputRequired", truth(field.get("isRequired")));
+        item.put("placeholder", null);
         return item;
     }
 
@@ -469,18 +616,19 @@ public final class GenerationInput {
             Object dictType = field.get("dictType");
             boolean hasDict = dictType != null;
             List<Map<String, Object>> params = new ArrayList<>();
+            Object placeholder = field.get("placeholder");
             if ("BETWEEN".equals(kind)) {
                 // 区间两端按类型给控件（日期区间是两个日期框），不按字典渲染
                 params.add(queryParam(javaField + "Start", javaType, pattern, field.get("desc") + "（起）",
-                        queryControl(javaType, false), null, field.get("numberPrecision")));
+                        queryControl(javaType, false), null, field.get("numberPrecision"), placeholder));
                 params.add(queryParam(javaField + "End", javaType, pattern, field.get("desc") + "（止）",
-                        queryControl(javaType, false), null, field.get("numberPrecision")));
+                        queryControl(javaType, false), null, field.get("numberPrecision"), placeholder));
             } else if ("IN".equals(kind)) {
                 // 后端按 FIND_IN_SET 收逗号串，这里就如实给一个文本框，不假装是多选控件
-                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）", "input", null, null));
+                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）", "input", null, null, placeholder));
             } else {
                 params.add(queryParam(javaField, javaType, pattern, field.get("desc"),
-                        queryControl(javaType, hasDict), dictType, field.get("numberPrecision")));
+                        queryControl(javaType, hasDict), dictType, field.get("numberPrecision"), placeholder));
             }
             Map<String, Object> condition = new LinkedHashMap<>();
             condition.put("kind", kind);
@@ -507,7 +655,8 @@ public final class GenerationInput {
     }
 
     private static Map<String, Object> queryParam(String name, String javaType, String pattern, Object desc,
-                                                  String control, Object dictType, Object numberPrecision) {
+                                                  String control, Object dictType, Object numberPrecision,
+                                                  Object placeholder) {
         Map<String, Object> param = new LinkedHashMap<>();
         param.put("name", name);
         param.put("javaType", javaType);
@@ -518,6 +667,7 @@ public final class GenerationInput {
         param.put("dictType", dictType);
         param.put("formControl", control);
         param.put("numberPrecision", numberPrecision);
+        param.put("placeholder", placeholder);
         return param;
     }
 
@@ -602,6 +752,156 @@ public final class GenerationInput {
 
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /* ── 设计覆盖：把「形」换成设计里声明的那一份 ── */
+
+    private static Map<String, Map<String, Object>> indexByCode(List<Map<String, Object>> items) {
+        Map<String, Map<String, Object>> byCode = new LinkedHashMap<>();
+        for (Map<String, Object> item : items) {
+            byCode.put(String.valueOf(item.get("code")), item);
+        }
+        return byCode;
+    }
+
+    /** 设计里的 field 一定对得上模型（PageDesign 保存时已逐格查过），对不上就是库里进了老数据 */
+    private static Map<String, Object> copyOf(Map<String, Map<String, Object>> byCode, String code) {
+        Map<String, Object> item = byCode.get(code);
+        if (item == null) {
+            throw new BusinessException("设计里绑的字段「" + code + "」在模型里已经不存在，请重新保存这份页面设计");
+        }
+        // 复制一份：同一列在查询区叫「状态」、在表头叫「订单状态」是合法的，不能改到模型那份上去
+        return new LinkedHashMap<>(item);
+    }
+
+    private static List<Map<String, Object>> designQueryFields(List<DesignNode> nodes, Map<String, Map<String, Object>> byCode) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DesignNode node : nodes) {
+            Map<String, Object> item = copyOf(byCode, node.text("field"));
+            rename(item, node.text("label"));
+            item.put("placeholder", node.text("placeholder"));
+            item.put("formControl", designControl(node.type(), item.get("dictType") != null, item));
+            QueryType kind = QueryType.of(node.text("queryType"));
+            item.put("queryKind", kind.name());
+            item.put("queryOperator", kind.operator());
+            out.add(item);
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> designFormFields(List<DesignNode> nodes, Map<String, Map<String, Object>> byCode) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DesignNode node : nodes) {
+            Map<String, Object> item = copyOf(byCode, node.text("field"));
+            rename(item, node.text("label"));
+            item.put("placeholder", node.text("placeholder"));
+            item.put("formControl", designControl(node.type(), item.get("dictType") != null, item));
+            if (node.flag("required", false)) {
+                item.put("inputRequired", true);
+            }
+            out.add(item);
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> designColumns(List<DesignNode> nodes, Map<String, Map<String, Object>> byCode) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (DesignNode node : nodes) {
+            Map<String, Object> item = copyOf(byCode, node.text("field"));
+            rename(item, node.text("title"));
+            item.put("render", node.text("render", deriveRender(item)));
+            item.put("colWidth", node.number("width"));
+            Integer minWidth = node.number("minWidth");
+            item.put("colMinWidth", minWidth != null ? minWidth : defaultMinWidth(item));
+            item.put("colAlign", node.text("align"));
+            out.add(item);
+        }
+        return out;
+    }
+
+    /** 没有设计时列的形状回到类型推导，与 PR 5 的输出逐字节一致 */
+    private static void normalizeColumns(List<Map<String, Object>> columns) {
+        for (Map<String, Object> item : columns) {
+            item.put("render", deriveRender(item));
+            item.put("colWidth", null);
+            item.put("colMinWidth", defaultMinWidth(item));
+            item.put("colAlign", "number".equals(item.get("tsType")) ? "right" : null);
+        }
+    }
+
+    private static int defaultMinWidth(Map<String, Object> item) {
+        return "number".equals(item.get("tsType")) ? 110 : 160;
+    }
+
+    /** 单元格插槽由 render 决定：字典出标签、数字出等宽串、日期出弱化串，其余没有插槽 */
+    private static String deriveRender(Map<String, Object> item) {
+        if (item.get("dictType") != null) {
+            return "tag";
+        }
+        if ("number".equals(item.get("tsType"))) {
+            return "money";
+        }
+        String control = String.valueOf(item.get("formControl"));
+        return "date".equals(control) || "datetime".equals(control) ? "datetime" : "text";
+    }
+
+    /** 设计控件 → 模板认的控件形态。DictSelect 没挂字典是设计的事（PageDesign 拦），这里只按类型映射 */
+    private static String designControl(String type, boolean hasDict, Map<String, Object> item) {
+        if (hasDict && "DictSelect".equals(type)) {
+            return "dict";
+        }
+        return switch (type) {
+            case "Textarea" -> "textarea";
+            case "NumberInput" -> "number";
+            case "DateInput" -> "LocalDateTime".equals(item.get("javaType")) ? "datetime" : "date";
+            case "DateRangePicker" -> "range";
+            case "Select" -> "select";
+            default -> "input";
+        };
+    }
+
+    private static void rename(Map<String, Object> item, String label) {
+        if (label != null) {
+            item.put("desc", label);
+            item.put("descJs", jsText(label));
+            item.put("inputVerb", isChoice(String.valueOf(item.get("formControl"))) ? "请选择" : "请输入");
+        }
+    }
+
+    /** 写入语句的列 = 设计表单里摆了的 ∩ 模型允许写入的（两边都收紧，谁都不能单独放开） */
+    private static List<Map<String, Object>> writableSubset(List<Map<String, Object>> formFields, boolean insert) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> item : formFields) {
+            boolean autoKey = Boolean.TRUE.equals(item.get("primary")) && Boolean.TRUE.equals(item.get("autoIncrement"));
+            if (insert) {
+                if (Boolean.TRUE.equals(item.get("insert")) && !autoKey) {
+                    out.add(item);
+                }
+            } else if (Boolean.TRUE.equals(item.get("edit")) && !Boolean.TRUE.equals(item.get("primary"))) {
+                out.add(item);
+            }
+        }
+        return out;
+    }
+
+    private static List<Map<String, Object>> uniqueSubset(List<Map<String, Object>> formFields) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> item : formFields) {
+            if (Boolean.TRUE.equals(item.get("unique"))) {
+                out.add(item);
+            }
+        }
+        return out;
+    }
+
+    /** 主键不进列也要进 Row：openEdit 与 remove 都读它 */
+    private static List<Map<String, Object>> withPrimary(Map<String, Object> primary, List<Map<String, Object>> columns) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (!columns.contains(primary)) {
+            rows.add(primary);
+        }
+        rows.addAll(columns);
+        return rows;
     }
 
     private static String blankToDefault(String value, String fallback) {

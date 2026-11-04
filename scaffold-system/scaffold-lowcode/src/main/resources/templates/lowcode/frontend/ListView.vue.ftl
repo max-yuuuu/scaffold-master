@@ -9,7 +9,7 @@ import { required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validat
 import { ${apiVar}, type ${className}Row, type ${className}WriteRequest } from '@/api/${module}/${resourceSlug}'
 
 /* ============================================================
-   ${modelDesc}管理。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
+   ${pageTitle}。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
    版式固定走 ListPage + useListPage（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），
    页面只声明字段、列与动作。要加区块写到 src/views/${module}/overrides/ 里；
    要长期人工接管这一页，就把它改名并让发布不再产出它 —— 现在它每次发布都会被整文件覆盖。
@@ -28,13 +28,15 @@ const list = useListPage<${className}Row, ${className}Query>({
 </#list>
   },
   fetch: params => ${apiVar}.list(params),
+<#if hasExport>
   exporter: params => ${apiVar}.export(params),
   exportName: '${exportName}',
+</#if>
 })
 
 const columns: Column[] = [
-<#list rowFields as f>
-  { key: '${f.javaField}', title: '${f.descJs}', minWidth: <#if f.tsType == 'number'>110<#else>160</#if><#if f.tsType == 'number'>, align: 'right'</#if> },
+<#list tableColumns as f>
+  { key: '${f.javaField}', title: '${f.descJs}'<#if f.colWidth??>, width: ${f.colWidth}<#else>, minWidth: ${f.colMinWidth}</#if><#if f.colAlign??>, align: '${f.colAlign}'</#if> },
 </#list>
 <#if audit>
   { key: 'createTime', title: '创建时间', width: 160 },
@@ -94,7 +96,7 @@ async function openEdit(row: ${className}Row) {
 async function submit() {
   errors.value = validate(form, {
 <#list formFields as f>
-<#if f.required>
+<#if f.inputRequired>
     ${f.javaField}: [required('${f.inputVerb}${f.descJs}')],
 </#if>
 </#list>
@@ -140,14 +142,16 @@ async function remove(row: ${className}Row) {
 
 <template>
   <ListPage
-    title="${modelDesc}管理"
-    desc="本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。"
+    title="${pageTitle}"
+    desc="${pageDesc}"
     table-title="${modelName}列表"
     :list="list"
     :columns="columns"
   >
     <template #actions>
-      <PermissionButton perm="${permissionPrefix}:add" variant="primary" icon="plus" @click="openCreate">新增${modelName}</PermissionButton>
+<#list toolbarButtons as b>
+      <PermissionButton perm="${b.perm}"<#if b.variant??> variant="${b.variant}"</#if> icon="${b.icon}" @click="${b.click}">${b.label}</PermissionButton>
+</#list>
     </template>
 <#if queryParams?size gt 0>
 
@@ -157,7 +161,7 @@ async function remove(row: ${className}Row) {
 <#if q.formControl == 'dict'>
         <DictSelect v-model="list.query.${q.name}" type="${q.dictType}" all-label="全部" />
 <#elseif q.formControl == 'number'>
-        <NumberInput v-model="list.query.${q.name}"<#if q.numberPrecision??> :precision="${q.numberPrecision}"</#if> />
+        <NumberInput v-model="list.query.${q.name}"<#if q.numberPrecision??> :precision="${q.numberPrecision}"</#if><#if q.placeholder??> placeholder="${q.placeholder}"</#if> />
 <#elseif q.formControl == 'date'>
         <DateInput v-model="list.query.${q.name}" type="date" />
 <#elseif q.formControl == 'datetime'>
@@ -165,18 +169,18 @@ async function remove(row: ${className}Row) {
 <#elseif q.formControl == 'select'>
         <Select v-model="list.query.${q.name}" :options="[]" />
 <#else>
-        <TextInput v-model="list.query.${q.name}" clearable @enter="list.search()" />
+        <TextInput v-model="list.query.${q.name}"<#if q.placeholder??> placeholder="${q.placeholder}"</#if> clearable @enter="list.search()" />
 </#if>
       </Field>
 </#list>
     </template>
 </#if>
-<#list rowFields as f>
-<#if f.dictType??>
+<#list tableColumns as f>
+<#if f.render == 'tag'>
     <template #cell-${f.javaField}="{ row }"><DictTag type="${f.dictType}" :value="row.${f.javaField}" /></template>
-<#elseif f.tsType == 'number'>
+<#elseif f.render == 'money'>
     <template #cell-${f.javaField}="{ row }"><span class="tnum">{{ row.${f.javaField} ?? '—' }}</span></template>
-<#elseif f.formControl == 'date' || f.formControl == 'datetime'>
+<#elseif f.render == 'datetime'>
     <template #cell-${f.javaField}="{ row }"><span class="tnum soft">{{ row.${f.javaField} ?? '—' }}</span></template>
 </#if>
 </#list>
@@ -186,8 +190,9 @@ async function remove(row: ${className}Row) {
 
     <template #cell-actions="{ row }">
       <div class="row-actions">
-        <PermissionButton perm="${permissionPrefix}:edit" icon-only icon="edit" label="编辑" @click="openEdit(row)" />
-        <PermissionButton perm="${permissionPrefix}:remove" icon-only icon="trash" label="删除" danger @click="remove(row)" />
+<#list rowButtons as b>
+        <PermissionButton perm="${b.perm}" icon-only icon="${b.icon}" label="${b.label}"<#if b.danger> danger</#if> @click="${b.click}" />
+</#list>
       </div>
     </template>
   </ListPage>
@@ -209,7 +214,7 @@ async function remove(row: ${className}Row) {
       <!-- 没挂字典的单选 / 多选：选项来源由项目侧决定，先在 overrides/ 里换成 Select 或挂上字典 -->
       <TextInput v-model="form.${f.javaField}" />
 <#else>
-      <TextInput v-model="form.${f.javaField}" />
+      <TextInput v-model="form.${f.javaField}"<#if f.placeholder??> placeholder="${f.placeholder}"</#if> />
 </#if>
     </Field>
 </#list>
