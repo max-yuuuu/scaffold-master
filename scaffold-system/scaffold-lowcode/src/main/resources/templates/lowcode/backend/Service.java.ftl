@@ -22,7 +22,7 @@ import java.util.List;
 /**
  * ${modelDesc}（表 {@code ${tableName}}）的业务入口。
  *
- * <p>本类由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖。业务规则、状态流转、
+ * <p>本类由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。业务规则、状态流转、
  * 跨实体事务请写到同包的 {@code ${className}Extension}（C 档，生成一次后平台不再覆盖）——
  * 下面每个写操作与列表取数都会经过它的钩子。
  *
@@ -76,10 +76,11 @@ public class ${className}Service {
     </#if>) {
         List<${className}Row> rows = mapper.selectRows(<@mp.call items=queryParams /><#if queryParams?size gt 0>, </#if>0, EXPORT_LIMIT);
         extension.afterRows(rows);
+        // 导出的列与页面上那一套对齐：开了审计开关时页面有「创建时间」列，CSV 也要有这一列
         List<List<Object>> data = rows.stream()
-                .map(row -> CsvUtils.row(<#list rowFields as f>row.get${f.javaField?cap_first}()<#if f?has_next>, </#if></#list>))
+                .map(row -> CsvUtils.row(<#list rowFields as f>row.get${f.javaField?cap_first}()<#if f?has_next>, </#if></#list><#if audit>, row.getCreateTime()</#if>))
                 .toList();
-        return CsvUtils.csv(List.of(<#list rowFields as f>"${f.desc}"<#if f?has_next>, </#if></#list>), data);
+        return CsvUtils.csv(List.of(<#list rowFields as f>"${f.desc}"<#if f?has_next>, </#if></#list><#if audit>, "创建时间"</#if>), data);
     }
 
     /** 新增${modelDesc}，返回新行主键 */

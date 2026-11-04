@@ -27,7 +27,7 @@ import java.util.List;
 /**
  * ${modelDesc}（表 {@code ${tableName}}）的数据访问。
  *
- * <p>本类由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖，要自定义查询请回到设计器
+ * <p>本类由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖，要自定义查询请回到设计器
  * 改字段与查询方式，或在同包的 {@code ${className}Extension}（C 档）里另写。
  *
  * <p>查询条件是「参数为空就是不限制」的<b>静态 SQL</b>，不用动态标签拼 WHERE：任何参数组合下
@@ -45,10 +45,18 @@ public interface ${className}Mapper {
             """)
     <@mp.declare returnType="long" name="countByQuery" items=queryParams style="mapper" />
 
-    /** 一页列表行。排序固定按主键倒序（最新在前）：不按字段名猜「哪个才是排序列」 */
+    /**
+     * 一页列表行。排序固定按主键倒序（最新在前）：不按字段名猜「哪个才是排序列」。
+     * <p>审计四列要跟着选出来：开了审计开关时 {@code ${className}Row} 与页面上的「创建时间」列都有它们，
+     * 这里不选就是每行一个空值 —— 编译与单测都不会报，要到项目里打开页面才看得见。
+     */
     @Select("""
             SELECT <#list rowFields as f><#if f?index gt 0>,
-                   </#if>t.${f.column}<#if f.column != f.javaField> AS ${f.javaField}</#if></#list>
+                   </#if>t.${f.column}<#if f.column != f.javaField> AS ${f.javaField}</#if></#list><#if audit><#if rowFields?size gt 0>,
+                   </#if>t.create_by AS createBy,
+                   t.update_by AS updateBy,
+                   t.create_time AS createTime,
+                   t.update_time AS updateTime</#if>
             FROM ${tableName} t
             <@queryWhere.where alias="t" />
             ORDER BY t.${primaryField.column} DESC
@@ -94,7 +102,10 @@ public interface ${className}Mapper {
             INSERT INTO ${tableName} (<#list insertFields as f>${f.column}<#if f?has_next>, </#if></#list><#if audit>, create_by, update_by</#if>)
             VALUES (<#list insertFields as f>#{${entityVar}.${f.javaField}}<#if f?has_next>, </#if></#list><#if audit>, #{operator}, #{operator}</#if>)
             """)
-    @Options(useGeneratedKeys = true, keyProperty = "${primaryField.javaField}")
+<#-- keyProperty 必须写成「参数名.属性名」：这个方法不止一个参数（挂审计列时还收 operator），
+     只给属性名时 MyBatis 认不出该把自增号回写给谁。编译与单测都不报，真机上点一次新增才抛
+     ExecutorException —— 底座自己写的就是 keyProperty = "row.id"，跟着它。 -->
+    @Options(useGeneratedKeys = true, keyProperty = "${entityVar}.${primaryField.javaField}")
     <@mp.declare returnType="int" name="insert" items=writeParams style="mapper" />
 
     /**

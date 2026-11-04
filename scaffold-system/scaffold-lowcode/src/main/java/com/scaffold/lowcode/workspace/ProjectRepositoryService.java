@@ -132,7 +132,7 @@ public class ProjectRepositoryService {
             // 先读底座源码出清单：裁剪清单不合法时不碰远端，也不留半个工作区
             update(projectId, ProjectSyncStatus.INITIALIZING, "读取底座裁剪清单", null, null, null, false, operator);
             Path sourceRoot = ScaffoldSourceLocator.locate(configuredSourceRoot);
-            ScaffoldSnapshot snapshot = ScaffoldSnapshotPlanner.plan(sourceRoot, scaffoldUiVersion);
+            ScaffoldSnapshot snapshot = ScaffoldSnapshotPlanner.plan(sourceRoot, scaffoldUiVersion, text(project.get("projectName")));
             if (snapshot.files().size() > MAX_SNAPSHOT_FILES) {
                 throw new BusinessException("交付快照文件数异常：" + snapshot.files().size());
             }

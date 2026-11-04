@@ -3,7 +3,8 @@
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /build
 COPY . .
-RUN mvn -B -DskipTests package
+# 依赖仓库用 BuildKit 缓存挂载：交付项目日常就是改一两个类，不挂的话每次构建都要把几百个依赖重下一遍
+RUN --mount=type=cache,target=/root/.m2 mvn -B -DskipTests package
 
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app

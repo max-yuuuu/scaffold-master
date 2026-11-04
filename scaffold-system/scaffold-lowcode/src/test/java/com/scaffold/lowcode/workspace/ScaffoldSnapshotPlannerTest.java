@@ -21,7 +21,34 @@ class ScaffoldSnapshotPlannerTest {
 
     /** 走一次真实底座的裁剪，后面所有断言共用这份计划。版本写成显眼的哨兵值，交付改写是否生效一眼可见 */
     private static final String TEST_UI_VERSION = "^9.9.9-delivery-test";
-    private static final ScaffoldSnapshot SNAPSHOT = ScaffoldSnapshotPlanner.plan(SOURCE_ROOT, TEST_UI_VERSION);
+    /** 演练用的项目名：交付品牌要按它改写，登录页与侧栏不许再出现平台自己的名字 */
+    private static final String TEST_PROJECT_NAME = "订单中台";
+    private static final ScaffoldSnapshot SNAPSHOT = ScaffoldSnapshotPlanner.plan(SOURCE_ROOT, TEST_UI_VERSION, TEST_PROJECT_NAME);
+
+    @Test
+    void 交付项目按创建它的项目名展示品牌() {
+        // 交付的是这个项目自己的后台，不是平台的一个副本：登录页大字、侧栏品牌、浏览器标签
+        // 全都读 src/data/index.ts 那一份 APP —— 平台的名字留在这里，客户项目就永远是「元搭低代码平台」
+        String brand = textOf("scaffold-vue/src/data/index.ts");
+        assertThat(brand).contains("name: '订单中台'").contains("shortName: '订单中台'");
+        assertThat(textOf("scaffold-vue/src/views/Login.vue")).doesNotContain("元搭");
+    }
+
+    @Test
+    void 交付里不出现平台品牌也不吹自己没有的功能() {
+        // 品牌关键字一旦漏进交付产物，守卫要当场拦下（与平台代码引用同一套做法）：
+        // 这些字符串在页面上、注释里，客户每天看得见
+        for (SnapshotFile file : SNAPSHOT.files()) {
+            String lower = file.path().toLowerCase(java.util.Locale.ROOT);
+            if (!(lower.endsWith(".java") || lower.endsWith(".ts") || lower.endsWith(".vue") || lower.endsWith(".sql"))) {
+                continue;
+            }
+            String content = new String(ScaffoldSnapshotPlanner.content(file), StandardCharsets.UTF_8);
+            assertThat(content).as("交付文件 " + file.path() + " 不该带平台品牌").doesNotContain("元搭");
+        }
+        // 登录页那六条能力里，「代码生成」指的是被裁掉的 scaffold-generator 页面：交付项目里没有它
+        assertThat(textOf("scaffold-vue/src/views/Login.vue")).doesNotContain("title: '代码生成'");
+    }
 
     @Test
     void 平台自身的模块页面与接口不进交付项目() {
@@ -110,7 +137,7 @@ class ScaffoldSnapshotPlannerTest {
                         ? "{\n  \"dependencies\": {\n    \"@yuanda-lowcode-ai/scaffold-ui\": \"file:../../whatever\"\n  }\n}\n"
                         : "");
             }
-            assertThatThrownBy(() -> ScaffoldSnapshotPlanner.plan(root, "^1.2.3"))
+            assertThatThrownBy(() -> ScaffoldSnapshotPlanner.plan(root, "^1.2.3", "订单中台"))
                     .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("交付改写失败")
                     .hasMessageContaining("scaffold-vue/package.json");
@@ -213,7 +240,7 @@ class ScaffoldSnapshotPlannerTest {
 
     @Test
     void 底座目录不存在时给出可操作的提示() {
-        assertThatThrownBy(() -> ScaffoldSnapshotPlanner.plan(Path.of("/definitely/not/here"), "^1.0.0"))
+        assertThatThrownBy(() -> ScaffoldSnapshotPlanner.plan(Path.of("/definitely/not/here"), "^1.0.0", "订单中台"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("scaffold.lowcode.scaffold-source-root");
     }

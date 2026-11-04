@@ -118,6 +118,30 @@ class ModelApiTest {
     }
 
     @Test
+    void 自增主键的写入位由平台压掉() {
+        Fixture fx = new Fixture();
+        try {
+            String admin = fx.admin();
+            long projectId = fx.project(admin, "mproj7");
+            long modelId = fx.model(admin, projectId, "auto_pk");
+            // 给自增主键勾上「可录入 / 可编辑 / 必填」是常见误操作：那一列的值由数据库给，
+            // 留着这三格就会生成一张要人填主键的新增表单，页面的表单类型里还会多出重复成员
+            fx.field(admin, modelId, field("id", "主键", "INTEGER",
+                    Map.of("isPrimary", 1, "isAutoIncrement", 1, "isInsert", 1, "isEdit", 1, "isRequired", 1)));
+            Map<String, Object> id = fieldRow(admin, modelId, "id");
+            assertThat(id).containsEntry("isInsert", 0).containsEntry("isEdit", 0).containsEntry("isRequired", 0);
+            // 主键与自增本身按人给的留着，那是列的定义
+            assertThat(id).containsEntry("isPrimary", 1).containsEntry("isAutoIncrement", 1);
+
+            // 普通字段不受这条影响
+            fx.field(admin, modelId, field("orderNo", "订单号", "STRING", Map.of("columnLength", 32)));
+            assertThat(fieldRow(admin, modelId, "orderNo")).containsEntry("isInsert", 1).containsEntry("isEdit", 1);
+        } finally {
+            fx.clean();
+        }
+    }
+
+    @Test
     void 非法字段定义被拒() {
         Fixture fx = new Fixture();
         try {

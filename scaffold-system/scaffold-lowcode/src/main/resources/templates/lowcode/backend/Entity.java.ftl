@@ -9,7 +9,7 @@ import ${type};
 /**
  * ${modelDesc}（表 {@code ${tableName}}）。
  *
- * <p>本类由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖，请不要在这里改业务逻辑，
+ * <p>本类由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖，请不要在这里改业务逻辑，
  * 需要扩展请写到同包的 {@code ${className}Extension}（C 档，生成一次后平台不再覆盖）。
  */
 public class ${className} {

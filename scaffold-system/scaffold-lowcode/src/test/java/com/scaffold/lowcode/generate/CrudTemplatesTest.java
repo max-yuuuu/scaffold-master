@@ -110,11 +110,32 @@ class CrudTemplatesTest {
         // 自增主键不进 INSERT，否则会把 AUTO_INCREMENT 顶掉
         assertThat(mapper).contains("INSERT INTO biz_order (order_no, amount, pay_time, status, remark, create_by, update_by)");
         assertThat(mapper).contains("VALUES (#{order.orderNo}, #{order.amount}, #{order.payTime}, #{order.status}, #{order.remark}, #{operator}, #{operator})");
-        assertThat(mapper).contains("@Options(useGeneratedKeys = true, keyProperty = \"id\")");
+        // 回写自增主键要点名参数：底座自己写的就是 keyProperty = "row.id"。
+        // 这条过去钉的是「keyProperty = \"id\"」—— 模板与测试一起错，编译与单测都发现不了，
+        // 要到真机上点一次新增才炸（MyBatis：Could not determine which parameter to assign generated keys to）
+        assertThat(mapper).contains("@Options(useGeneratedKeys = true, keyProperty = \"order.id\")");
         // UPDATE 用整行覆盖，没勾选可编辑的字段一个都不碰；时间交给 ON UPDATE CURRENT_TIMESTAMP
         assertThat(mapper).contains("SET order_no = #{order.orderNo},");
         assertThat(mapper).contains("update_by = #{operator}\n            WHERE id = #{id} AND deleted = 0");
         assertThat(mapper).doesNotContain("update_time = NOW()");
+    }
+
+    @Test
+    void 列表查询与导出都带上审计列() {
+        // 页面在审计开关打开时会多出「创建时间」这一列，Row 里也声明了这四个字段。过去 selectRows 只选
+        // 勾选进列表的字段、导出也只按那份拼列 —— 真机上这一列每行都是「—」，CSV 里干脆没有这一列，
+        // 而它编得过、形状断言也过（PR 5G 在干净机器上点进页面才看见）
+        Map<String, Object> root = GenerationInput.of(model(true, true), richFields());
+        String mapper = renderer.render("backend/Mapper.java.ftl", root);
+        // selectRows 与 selectById 各选一次
+        assertThat(mapper.split("t.create_time AS createTime", -1)).hasSize(3);
+
+        String service = renderer.render("backend/Service.java.ftl", root);
+        assertThat(service).contains("row.getCreateTime()").contains("\"创建时间\"");
+
+        // 审计开关关掉，这些列一处都不该出现
+        String plain = renderer.render("backend/Mapper.java.ftl", GenerationInput.of(model(false, false), simpleFields()));
+        assertThat(plain).doesNotContain("create_time");
     }
 
     @Test
@@ -186,7 +207,9 @@ class CrudTemplatesTest {
                 GenerationInput.of(model(true, true), richFields()));
         assertThat(service).contains("private static final int EXPORT_LIMIT = 5000;");
         assertThat(service).contains("mapper.selectRows(orderNo, amountStart, amountEnd, payTimeStart, payTimeEnd, status, tags, 0, EXPORT_LIMIT)");
-        assertThat(service).contains("CsvUtils.csv(List.of(\"主键\", \"订单号\", \"订单金额\", \"支付时间\", \"状态\"), data)");
+        // 开了审计就有「创建时间」这一列：页面上有它，导出没有就是两份口径
+        assertThat(service).contains("CsvUtils.csv(List.of(\"主键\", \"订单号\", \"订单金额\", \"支付时间\", \"状态\", \"创建时间\"), data)")
+                .contains("CsvUtils.row(row.getId(), row.getOrderNo(), row.getAmount(), row.getPayTime(), row.getStatus(), row.getCreateTime())");
     }
 
     @Test

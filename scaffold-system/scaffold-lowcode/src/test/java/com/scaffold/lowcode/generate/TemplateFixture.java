@@ -49,8 +49,7 @@ final class TemplateFixture {
     }
 
     /** 说明里带单引号的字段：SQL 字面量必须把引号翻倍，否则建表语句从中间被截断 */
-    static List<Map<String, Object>> quotedRemarkFields() {
-        return List.of(
+    static List<Map<String, Object>> quotedRemarkFields() {        return List.of(
                 new Field("id", "主键", "Long", "bigint").primary().autoIncrement().build(),
                 new Field("flag", "状态'正常'的说明", "String", "varchar").input().list().build());
     }
@@ -59,6 +58,39 @@ final class TemplateFixture {
         return List.of(
                 new Field("id", "主键", "Long", "bigint").primary().autoIncrement().build(),
                 new Field("name", "名称", "String", "varchar").input().list().build());
+    }
+
+    /** 数字编号当主键（不自增）：这一列必须由人填，所以它要进表单与入参，但不能被当成「编辑哪一行」的记号 */
+    static List<Map<String, Object>> numericKeyFields() {
+        return List.of(
+                new Field("couponCode", "券号", "Long", "bigint").primary().input().required().list().build(),
+                new Field("amount", "金额", "BigDecimal", "decimal").input().list().build());
+    }
+
+    /** 字符串主键：生成物的路径参数写的是 {@code @PathVariable Long id}，这种模型现在支撑不了，要当场拦 */
+    static List<Map<String, Object>> stringKeyFields() {
+        return List.of(
+                new Field("orderNo", "订单号", "String", "varchar").primary().input().required().list().build(),
+                new Field("amount", "金额", "BigDecimal", "decimal").input().list().build());
+    }
+
+    /**
+     * 把自增主键改成「可录入 + 可编辑 + 必填」。
+     *
+     * <p>这不是好模型，而是存量数据与新模型的共同形状：字段接口过去给人勾的默认值就是三项全开，
+     * 老代码生成页 {@code gen_table_column} 里的历史配置也可能这么写着。生成物必须对这种输入免疫 ——
+     * 数据库自己给值的列一旦进表单，新增就要用户填主键，页面还会多出重复声明的成员。
+     */
+    static List<Map<String, Object>> withWritablePk(List<Map<String, Object>> fields) {
+        return fields.stream().map(row -> {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            if (Integer.valueOf(1).equals(row.get("isPrimary"))) {
+                copy.put("isInsert", 1);
+                copy.put("isEdit", 1);
+                copy.put("isRequired", 1);
+            }
+            return copy;
+        }).toList();
     }
 
     /** 库里的一行字段：默认全 0，测试里只写与断言有关的开关，读得见差异 */
@@ -134,6 +166,12 @@ final class TemplateFixture {
         Field dict(String type) {
             row.put("dictType", type);
             row.put("formType", "SELECT");
+            return this;
+        }
+
+        /** 数字输入框：控件形态是 NUMBER（金额与数量这类列在设计器里就是这么配的） */
+        Field number() {
+            row.put("formType", "NUMBER");
             return this;
         }
 

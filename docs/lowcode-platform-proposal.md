@@ -789,149 +789,280 @@ public class TenantContext {
 
 ### 4.1 模板引擎：FreeMarker
 
-模板清单（文件名同样受 §10.2 开放项 2 的命名定稿影响，`ServiceImpl` / `Query` / `types.ts` 三项在"向底座看齐"的分支下会消失）：
+> **清单已由代码持有（2026-11-04，PR 5G 定稿）**：模板住在 **`scaffold-lowcode`**，不在 `scaffold-generator` —— 模板定义的是平台的产物形状，老代码生成页只是另一个吃它的入口（PR 5F）。草稿里那份清单（`ServiceImpl` / `DTO` / `VO` / `Query` / `FormView` / `DetailView` / `types.ts`）已按 §10.2 开放项 2 的定稿作废，实际文件以下面这份为准。
 
 ```
-scaffold-generator/src/main/resources/templates/
-├── backend/
-│   ├── Controller.java.ftl      # 含 @RequiresPermission + @OperLog
-│   ├── Service.java.ftl         # 接口定义
-│   ├── ServiceImpl.java.ftl     # 含完整 CRUD + 校验 + 事务
-│   ├── Mapper.java.ftl          # 注解 SQL，含分页/软删除/导出
-│   ├── Entity.java.ftl          # 含审计字段
-│   ├── DTO.java.ftl             # 写入请求
-│   ├── VO.java.ftl              # 列表/详情视图
-│   └── Query.java.ftl           # 查询参数
+scaffold-system/scaffold-lowcode/src/main/resources/templates/lowcode/
+├── backend/                    # 七份，全部进 scaffold-business 的 {module} 子包
+│   ├── Entity.java.ftl         # 实体：模型字段 + 审计四列（按开关），日期带 @JsonFormat
+│   ├── WriteRequest.java.ftl   # 新增/修改入参：只装可写字段，自增主键不在内
+│   ├── Row.java.ftl            # 列表行：主键 + 勾选进列表的字段（{Cls}VO 不再存在）
+│   ├── Mapper.java.ftl         # 注解 SQL：count / 分页 / 导出 / 按主键取 / 增删改，软删按开关
+│   ├── Service.java.ftl        # B 档单类 Service：校验 + 事务 + 逐个调用 C 档钩子
+│   ├── Extension.java.ftl      # C 档骨架：七个钩子，生成一次之后平台不再碰
+│   └── Controller.java.ftl     # 五个入口 + @RequiresPermission + @OperLog，返回 R / PageResult
 ├── frontend/
-│   ├── api.ts.ftl               # TypeScript API 模块
-│   ├── ListView.vue.ftl         # 使用 ListPage + useListPage
-│   ├── FormView.vue.ftl         # 使用 FormDialog + Field
-│   ├── DetailView.vue.ftl       # 使用 Descriptions
-│   └── types.ts.ftl             # 类型定义
+│   ├── Api.ts.ftl              # 按模型一份 src/api/{module}/{resource}.ts，行与入参类型就地导出
+│   └── ListView.vue.ftl        # 列表 + 查询区 + 新增/编辑弹窗（表单内联在同一份 .vue 里）
 ├── sql/
-│   ├── table.sql.ftl            # CREATE TABLE
-│   └── menu.sql.ftl             # INSERT sys_menu
-└── _shared/
-    ├── auditFields.ftl          # 宏：审计字段
-    ├── pagination.ftl           # 宏：分页查询
-    └── csvExport.ftl            # 宏：CSV 导出
+│   ├── Table.sql.ftl           # CREATE TABLE IF NOT EXISTS：字段 + 逻辑删除 + 审计 + 索引
+│   └── Menu.sql.ftl            # sys_menu 一个菜单 + 三个按钮，按 permission 判重、不写死 ID
+└── _shared/                    # 宏：不单独成产物，被上面的模板引用
+    ├── pojo.ftl                # 字段块与访问器块（实体 / 列表行 / 入参三份共用一个形状）
+    ├── auditFields.ftl         # 审计四字段的声明与访问器
+    ├── queryWhere.ftl          # WHERE 片段：列表 count、分页、导出三处用同一段
+    └── methodParams.ftl        # 方法签名与调用处的参数排版（逐个一行）
 ```
+
+11 份模板出 11 份产物，产物清单与落点见 §4.3（由 `GeneratedPaths` 持有），`ModelCodeGenerator.renderFiles()` 是唯一的出口。
+
+三条渲染口径，改模板前先读：
+
+1. **`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`。** FreeMarker 默认同时认 `${...}` 与 `#{...}` 两种插值，不锁的话产物里 MyBatis 的 `#{orderNo}` 会被引擎当成自己的表达式求值，报的是「Undefined inverse variable」这类与业务无关的错。
+2. **派生全部在 Java 侧算完**（`GenerationInput`）：命名（类名 / 包段 / 资源名 / 表名）、列类型的完整写法、需要的 import、列表 / 查询 / 表单 / INSERT / UPDATE 五组字段的筛选。模板里只允许取值与循环 —— 生成的代码要给项目里的人读，模板本身也要给人读，把判断堆进 `.ftl` 只会两头都读不动。
+3. **同一份模型两次渲染必须逐字节一致**（`ModelCodeGeneratorTest` 与 `FrontendTemplatesTest` 各钉了一遍）。发布 diff 的可读性建立在这条上：内容不稳定，每次合并请求都是整文件重写，人就没法靠 diff 判断这次到底改了什么。
 
 ### 4.2 生成代码规范
 
-> ⚠️ 下面两段示例是**早期草稿的设想结构**，与本仓库现有底座的实际约定不一致（`R.ok` vs `R.success`、`{Cls}DTO` vs `{Cls}WriteRequest`、interface + impl vs 单类 Service、`views/{m}/{r}/index.vue` vs `views/{m}/Users.vue`）。PR 5 动手前先按 §10.2 开放项 2 定稿，示例届时重写；照抄现在这版会生成一套与底座风格分叉的代码。
+> **下面两段是 2026-11-04 真机演练（PR 5G）里一个真实模型渲染出来的原文**，模型叫「销售订单」（`sales_order`，主键自增、金额 `decimal(18,2)`、状态挂 `sys_normal_disable` 字典、交货日期 `date`、备注 `text`），不是手写示意。改模板要同步这里；核对方式见 `DeliveryGenerationApiTest` 与 `changelog.md` 的 5G 记录。
 
-#### 后端 Controller 示例
+口径清单（这几条就是「向底座看齐」的具体内容，与 §10.2 开放项 2 一致）：
+
+| 事项 | 定稿 |
+| --- | --- |
+| 返回结构 | `R.success(...)`，分页 `PageResult`，入参分页用 `PageQuery` |
+| 权限与日志 | `@RequiresPermission("{module}:{resource}:list")` 与 `@OperLog(module = 表说明, action = 动作)` |
+| 导出 | `CsvResponse.attachment(文件名, service.export(...))`，导出与列表共用 `:list` 权限点 |
+| Service | 单类，无 interface + impl；构造器注入 Mapper 与 **C 档 `{Cls}Extension`** |
+| 命名 | `{Cls}` / `{Cls}WriteRequest` / `{Cls}Row`（不再有 `VO` / `DTO` / `Query` / `types.ts`） |
+| 接口路径 | 单数 `/{module}/{resource}`，`resource` 用蛇形（`/api/sales_order/sales_order`） |
+| 品牌与话术 | 交付项目的登录页、侧栏与浏览器标签读 `scaffold-vue/src/data/index.ts` 那一份 `APP`，初始化时按 `lc_project.project_name` 改写（交付改写表里那条 `{PROJECT_NAME}`）；生成物注释写「低代码设计器」而不是平台名，也不引用交付清单里没有的本文档章节。守卫在 `ScaffoldSnapshotPlanner`：交付产物里出现平台品牌关键字就当场拒绝初始化 |
+| 前端物料 | 一律从 `@yuanda-lowcode-ai/scaffold-ui` 的子路径引，业务接口直引 `@/api/{module}/{resource}`，不经过 `@/api` 汇总出口（A 档） |
+| 版式 | `ListPage` + `useListPage`（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），弹窗内联在同一个 `.vue` |
+| 新增还是编辑 | 由一个独立的 `editing` ref 记着主键值，不借表单里某个字段的值猜 —— 主键可能根本不进表单（自增），也可能由人填（业务编号） |
+| 数字输入精度 | 小数列的 `<NumberInput>` 要带 `:precision="标度"`（表单与查询区两端都带），这个组件不传时按 `step`（默认 1）推断小数位，金额输入 1234.5 会被静默取整成 1235 |
+| 列表与导出的列 | 审计开关打开时页面多出「创建时间」一列，`selectRows` 与 CSV 都要带上它；`CsvUtils` 统一把 `LocalDateTime` / `LocalDate` 写成那两种规范串，导出文件里不出现 ISO 的 `T` |
+| 自增主键回写 | `@Options(useGeneratedKeys = true, keyProperty = "{实体参数名}.{主键属性}")` —— 这个方法还收 `operator`，属性名不点名参数 MyBatis 就找不到该把自增号回写给谁 |
+
+#### 后端 Controller 产物
 
 ```java
-package com.scaffold.{module}.controller;
+package com.scaffold.business.sales_order.controller;
 
+import com.scaffold.business.sales_order.domain.SalesOrder;
+import com.scaffold.business.sales_order.domain.SalesOrderRow;
+import com.scaffold.business.sales_order.domain.SalesOrderWriteRequest;
+import com.scaffold.business.sales_order.service.SalesOrderService;
+import com.scaffold.common.domain.PageQuery;
 import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.domain.R;
-import com.scaffold.framework.annotation.OperLog;
-import com.scaffold.framework.annotation.RequiresPermission;
-import com.scaffold.{module}.domain.{ClassName};
-import com.scaffold.{module}.domain.dto.{ClassName}DTO;
-import com.scaffold.{module}.domain.vo.{ClassName}VO;
-import com.scaffold.{module}.domain.query.{ClassName}Query;
-import com.scaffold.{module}.service.{ClassName}Service;
-import lombok.RequiredArgsConstructor;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.*;
+import com.scaffold.framework.audit.OperLog;
+import com.scaffold.framework.security.RequiresPermission;
+import com.scaffold.framework.web.CsvResponse;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
+
+/**
+ * 销售订单主表（表 {@code sales_order}）的接口。
+ *
+ * <p>本类由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖，要加接口请回到设计器，
+ * 或在同包的 {@code SalesOrderExtension}（C 档）里做，别在这里塞业务分支。
+ *
+ * <p>五个入口固定成一套（列表 / 导出 / 新增 / 修改 / 删除），路径与权限点由模型编码派生；
+ * 返回结构统一走 {@code R}，分页统一走 {@code PageResult}，与底座 {@code /api/system} 同一形状。
+ * 自定义动作在设计器里选 {@code custom:{name}}，平台只出一个带 TODO 的桩，实现由人填。
+ */
 @RestController
-@RequestMapping("/api/{module}/{resource}")
-@RequiredArgsConstructor
-public class {ClassName}Controller {
+@RequestMapping("/api/sales_order/sales_order")
+public class SalesOrderController {
 
-    private final {ClassName}Service {resource}Service;
+    private final SalesOrderService service;
 
-    @GetMapping
-    @RequiresPermission("{module}:{resource}:list")
-    public R<PageResult<{ClassName}VO>> list({ClassName}Query query) {
-        return R.ok({resource}Service.selectList(query));
+    public SalesOrderController(SalesOrderService service) {
+        this.service = service;
     }
 
+    @GetMapping
+    @RequiresPermission("sales_order:sales_order:list")
+    public R<PageResult<SalesOrderRow>> list(
+            PageQuery query,
+            @RequestParam(required = false) String orderNo,
+            @RequestParam(required = false) BigDecimal amountStart,
+            @RequestParam(required = false) BigDecimal amountEnd,
+            @RequestParam(required = false) Integer status
+    ) {
+        return R.success(service.page(query, orderNo, amountStart, amountEnd, status));
+    }
+
+    /** 单行详情：前端编辑前取整行，避免用列表行填表时把没显示的字段清空 */
     @GetMapping("/{id}")
-    @RequiresPermission("{module}:{resource}:list")
-    public R<{ClassName}VO> getById(@PathVariable Long id) {
-        return R.ok({resource}Service.selectById(id));
+    @RequiresPermission("sales_order:sales_order:list")
+    public R<SalesOrder> detail(@PathVariable Long id) {
+        return R.success(service.detail(id));
+    }
+
+    /** 导出当前筛选条件下的 CSV（上限由 Service 把住），文件名用模型中文名 */
+    @GetMapping("/export")
+    @RequiresPermission("sales_order:sales_order:list")
+    public ResponseEntity<String> export(
+            @RequestParam(required = false) String orderNo,
+            @RequestParam(required = false) BigDecimal amountStart,
+            @RequestParam(required = false) BigDecimal amountEnd,
+            @RequestParam(required = false) Integer status
+    ) {
+        return CsvResponse.attachment("salesOrder.csv", service.export(orderNo, amountStart, amountEnd, status));
     }
 
     @PostMapping
-    @RequiresPermission("{module}:{resource}:add")
-    @OperLog("{tableComment}新增")
-    public R<Void> add(@Validated @RequestBody {ClassName}DTO dto) {
-        {resource}Service.insert(dto);
-        return R.ok();
+    @RequiresPermission("sales_order:sales_order:add")
+    @OperLog(module = "销售订单主表", action = "新增")
+    public R<Long> create(@RequestBody SalesOrderWriteRequest request) {
+        return R.success(service.create(request));
     }
 
     @PutMapping("/{id}")
-    @RequiresPermission("{module}:{resource}:edit")
-    @OperLog("{tableComment}修改")
-    public R<Void> update(@PathVariable Long id, @Validated @RequestBody {ClassName}DTO dto) {
-        {resource}Service.update(id, dto);
-        return R.ok();
+    @RequiresPermission("sales_order:sales_order:edit")
+    @OperLog(module = "销售订单主表", action = "修改")
+    public R<Void> update(@PathVariable Long id, @RequestBody SalesOrderWriteRequest request) {
+        service.update(id, request);
+        return R.success(null);
     }
 
     @DeleteMapping("/{id}")
-    @RequiresPermission("{module}:{resource}:remove")
-    @OperLog("{tableComment}删除")
-    public R<Void> remove(@PathVariable Long id) {
-        {resource}Service.deleteById(id);
-        return R.ok();
-    }
-
-    @GetMapping("/export")
-    @RequiresPermission("{module}:{resource}:export")
-    @OperLog("{tableComment}导出")
-    public void export({ClassName}Query query, HttpServletResponse response) {
-        {resource}Service.export(query, response);
+    @RequiresPermission("sales_order:sales_order:remove")
+    @OperLog(module = "销售订单主表", action = "删除")
+    public R<Void> delete(@PathVariable Long id) {
+        service.delete(id);
+        return R.success(null);
     }
 }
 ```
 
-#### 前端列表页示例
+区间查询拆成 `amountStart` / `amountEnd` 两个参数而不是 `BETWEEN`：一端为空时 `BETWEEN` 会整条失效，两个独立条件才能各留一半。日期类查询参数带 `@DateTimeFormat` 按规范串绑定，与 `R` 出去的 JSON 格式同一个口径。
+
+#### 前端列表页产物（节选，完整形状见 `scaffold-vue/src/views/{module}/{Cls}.vue`）
 
 ```vue
 <script setup lang="ts">
-import ListPage from '@/components/business/ListPage.vue'
-import { useListPage } from '@/composables/list'
-import { {resource}Api } from '@/api/{module}/{resource}'
-import type { Column } from '@/components/ui/DataTable.vue'
+import { reactive, ref } from 'vue'
+import { DateInput, Field, NumberInput, TextInput, Textarea, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { DictSelect, DictTag, FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
+import { salesOrderApi, type SalesOrderRow, type SalesOrderWriteRequest } from '@/api/sales_order/sales_order'
+
+/* ============================================================
+   销售订单主表管理。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
+   版式固定走 ListPage + useListPage（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），
+   页面只声明字段、列与动作。要加区块写到 src/views/sales_order/overrides/ 里；
+   要长期人工接管这一页，就把它改名并让发布不再产出它 —— 现在它每次发布都会被整文件覆盖。
+   ============================================================ */
+
+type SalesOrderQuery = {
+  orderNo: string
+  amountStart: number | null
+  amountEnd: number | null
+  status: number | null
+}
+
+const list = useListPage<SalesOrderRow, SalesOrderQuery>({
+  query: { orderNo: '', amountStart: null, amountEnd: null, status: null },
+  fetch: params => salesOrderApi.list(params),
+  exporter: params => salesOrderApi.export(params),
+  exportName: '销售订单主表.csv',
+})
 
 const columns: Column[] = [
-  // 根据模型字段定义生成
-  { field: 'orderNo', title: '订单号', width: 150 },
-  { field: 'amount', title: '金额', width: 100, align: 'right' },
-  { field: 'status', title: '状态', width: 80, render: 'tag' },
+  { key: 'id', title: '主键', minWidth: 110, align: 'right' },
+  { key: 'orderNo', title: '订单编号', minWidth: 160 },
+  { key: 'amount', title: '订单金额', minWidth: 110, align: 'right' },
+  { key: 'status', title: '状态', minWidth: 110, align: 'right' },
+  { key: 'deliveryDate', title: '交货日期', minWidth: 160 },
+  { key: 'remark', title: '备注', minWidth: 160 },
+  { key: 'createTime', title: '创建时间', width: 160 },
+  { key: 'actions', title: '操作', width: 112, className: 'col-actions' },
 ]
 
-const list = useListPage({
-  query: { orderNo: undefined, status: undefined },
-  fetch: (params) => {resource}Api.list(params),
-  exporter: (params) => {resource}Api.export(params),
-  exportName: '{tableComment}.csv',
-})
+/** 正在编辑哪一行的主键；空着就是新增。不借表单里某个字段的值来猜 */
+const editing = ref<number | null>(null)
+
+async function openEdit(row: SalesOrderRow) {
+  try {
+    const detail = await salesOrderApi.detail(row.id)
+    editing.value = row.id
+    Object.assign(form, emptyForm(), detail)   // 编辑前先取整行：列表行只有勾选进列表的字段
+    errors.value = {}
+    dialog.value = true
+  } catch (error) {
+    toastError(error, '销售订单加载失败')
+  }
+}
+
+async function submit() {
+  errors.value = validate(form, { orderNo: [required('请输入订单编号')], status: [required('请选择状态')] })
+  if (Object.keys(errors.value).length) return
+  const payload: SalesOrderWriteRequest = { orderNo: form.orderNo.trim(), amount: form.amount, /* … */ }
+  saving.value = true
+  try {
+    if (editing.value !== null) await salesOrderApi.update(editing.value, payload)
+    else await salesOrderApi.create(payload)
+    pushToast(editing.value !== null ? '销售订单已更新' : '销售订单已创建')
+    dialog.value = false
+    await list.load()
+  } catch (error) {
+    toastError(error, '销售订单保存失败')
+  } finally {
+    saving.value = false
+  }
+}
 </script>
 
 <template>
-  <ListPage title="{tableComment}管理" :list="list" :columns="columns">
-    <template #search="{ query }">
-      <Field label="订单号" wide>
-        <TextInput v-model="query.orderNo" placeholder="请输入订单号" />
-      </Field>
-      <Field label="状态">
-        <DictSelect dict-type="order_status" v-model="query.status" />
-      </Field>
-    </template>
+  <ListPage title="销售订单主表管理" desc="本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。"
+            table-title="销售订单列表" :list="list" :columns="columns">
     <template #actions>
-      <PermissionButton perm="{module}:{resource}:add" @click="list.openForm()">新增</PermissionButton>
-      <PermissionButton perm="{module}:{resource}:export" @click="list.export()">导出</PermissionButton>
+      <PermissionButton perm="sales_order:sales_order:add" variant="primary" icon="plus" @click="openCreate">新增销售订单</PermissionButton>
+    </template>
+    <template #search>
+      <Field label="订单编号"><TextInput v-model="list.query.orderNo" clearable @enter="list.search()" /></Field>
+      <Field label="订单金额（起）"><NumberInput v-model="list.query.amountStart" :precision="2" /></Field>
+      <Field label="订单金额（止）"><NumberInput v-model="list.query.amountEnd" :precision="2" /></Field>
+      <Field label="状态"><DictSelect v-model="list.query.status" type="sys_normal_disable" all-label="全部" /></Field>
+    </template>
+    <template #cell-status="{ row }"><DictTag type="sys_normal_disable" :value="row.status" /></template>
+    <template #cell-createTime="{ row }"><span class="tnum soft">{{ row.createTime ?? '—' }}</span></template>
+    <template #cell-actions="{ row }">
+      <div class="row-actions">
+        <PermissionButton perm="sales_order:sales_order:edit" icon-only icon="edit" label="编辑" @click="openEdit(row)" />
+        <PermissionButton perm="sales_order:sales_order:remove" icon-only icon="trash" label="删除" danger @click="remove(row)" />
+      </div>
     </template>
   </ListPage>
+
+  <FormDialog :open="dialog" :title="editing !== null ? '编辑销售订单' : '新增销售订单'" :saving="saving" @close="dialog = false" @submit="submit">
+    <Field label="订单编号" required wide :error="errors.orderNo"><TextInput v-model="form.orderNo" /></Field>
+    <!-- 自增主键不在这里（值由数据库给）；小数列的数字输入框带 :precision，否则金额被抹成整数 -->
+    <Field label="订单金额" :error="errors.amount"><NumberInput v-model="form.amount" :precision="2" /></Field>
+    <Field label="状态" required :error="errors.status"><DictSelect v-model="form.status" type="sys_normal_disable" /></Field>
+    <Field label="交货日期" :error="errors.deliveryDate"><DateInput v-model="form.deliveryDate" type="date" /></Field>
+    <Field label="备注" wide :error="errors.remark"><Textarea v-model="form.remark" :rows="3" /></Field>
+  </FormDialog>
 </template>
 ```
+
+模板里的 `editing` 在 `<script setup>` 里要写 `editing.value`，在 `<template>` 里必须写 `editing` —— Vue 的 SFC 编译器只在模板上下文自动解包 ref。两处写反了单测看不出来（产物是字符串），交付项目 `npm run build` 的 `vue-tsc` 阶段会报 TS18047 / TS2551，这条是真机演练撞出来的。
 
 ### 4.3 生成文件路径规则
 
@@ -1001,6 +1132,10 @@ scaffold-system/         # 后端 Maven 聚合
 外加权限点（`permission_prefix` × 5）与 `@OperLog`。**这一类覆盖后台管理接口的绝大多数，不需要设计，只需要配置。**
 
 > **两个开关本期不在此列（PR 5E，2026-11-04）**：树表（`is_tree` 时的 `/tree` 端点与树形页面）与数据范围（`enable_data_scope` 的 `@DataScope` 与部门过滤）**模板还没实现**，`ModelCodeGenerator.renderFiles()` 在进模板**之前**就把这两种组合抛掉，`models.vue` 上两个开关的说明同步改成「本期不生成」。不选「忽略勾选、把能生成的生成出来」：静默忽略等于交付一个「看着配置对了、实际没有」的项目，比报错更难发现。库里那两列的注释记的是列的设计意图，边界当前写在生成入口与 UI 上，比 ALTER 一次列注释更靠近读的人；要做的时候按 §5.2 加模板、把这两条拒收回即可。
+
+> **主键的两条口径（PR 5G，2026-11-04，真机演练撞出来的）**：① **只支持数字主键**（`Long` / `Integer`）—— 五个入口的定位参数写的是 `@PathVariable Long id`，字符串主键的模型编得过但调不通（路径上拿到的是编号，Service 按数字查），`GenerationInput` 在进模板前就抛错说明原因，不做「生成一份看着对、跑起来错」的产物；② **自增主键不进表单也不进入参** —— 值由数据库给，进表单等于让人猜下一个 id，还会让页面的表单类型把 `id` 声明两遍（一条 `number | undefined`、一条 `number | null`），交付项目 `npm run build` 在 `vue-tsc` 阶段直接 `TS2717` / `TS2322`，前端镜像根本构建不出来。这条在两层各钉一次：`LcFieldService` 存字段时压掉自增主键的「可录入 / 可编辑 / 必填」（设计器里显示的就是真值，不留「勾了但没生效」），`GenerationInput` 组 `formFields` 时再排除一次（老链路的存量配置与库里改造前写入的行都可能还勾着）。
+>
+> 「新增还是编辑」因此不能靠表单里的值判断（自增主键根本不在表单里，业务编号主键新建那条也填了值），改成页面里一个独立的 `editing` ref 记着被编辑行的主键。注意它在 `<script setup>` 里要写 `editing.value`、在 `<template>` 里必须写 `editing` —— SFC 编译器只在模板上下文自动解包 ref，写反了单测看不出来（产物只是字符串），要到交付项目构建才炸。这条是 5G 第二轮构建抓到的。
 
 #### ② 自定义接口 —— 走 C 档扩展点，不生成
 
@@ -1121,8 +1256,8 @@ A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平�
 
 | 文件类型 | 更新策略 | 说明 |
 |----------|----------|------|
-| 建表 SQL | 覆盖到项目仓库 `sql/generated/{表名}.sql`，`CREATE TABLE IF NOT EXISTS` | **只建「新表」**：对已存在的表不加列、不删列，`DROP` / `ALTER ... DROP COLUMN` 一条都不生成。模型加过字段就看合并请求的 diff —— 多出来的那一行就是要人工补的 `ALTER TABLE ... ADD COLUMN`（MySQL 没有 IF NOT EXISTS 的加列写法，把 ALTER 写进这个文件会让第二次执行直接报错）。破坏性变更在发布结果里以提示列出，由人写迁移。这目录**不在** `docker-entrypoint-initdb.d` 的自动执行范围内（mysql 不递归子目录），由人在目标库执行一次 —— 平台不托管运行时，也不连项目的库 |
-| 菜单 SQL | 覆盖到 `sql/generated/menu/{资源名}.sql`，按 `permission` 判重的 `INSERT ... SELECT ... WHERE NOT EXISTS` | 不能照抄底座 V6 的「固定 ID + `INSERT IGNORE`」—— 那是因为它知道 502 这个号，而 `sys_menu.id` 在 V4 已改成数据库自增，生成物不知道本项目用到哪个号。同理授权也只按已存在判重，只授给内置管理员角色（`role_id = 1`），其它角色由项目侧在角色管理里勾。页面本身靠 `sys_menu` + `import.meta.glob` 自动注册，`component` 就是 `views/{module}/{Cls}` |
+| 建表 SQL | 覆盖到项目仓库 `scaffold-system/sql/pages/{表名}_table.sql`，`CREATE TABLE IF NOT EXISTS` | **只建「新表」**：对已存在的表不加列、不删列，`DROP` / `ALTER ... DROP COLUMN` 一条都不生成。模型加过字段就看合并请求的 diff —— 多出来的那一行就是要人工补的 `ALTER TABLE ... ADD COLUMN`（MySQL 没有 IF NOT EXISTS 的加列写法，把 ALTER 写进这个文件会让第二次执行直接报错）。破坏性变更在发布结果里以提示列出，由人写迁移。这目录**不在** `docker-entrypoint-initdb.d` 的自动执行范围内（mysql 不递归子目录），由人在目标库执行一次 —— 平台不托管运行时，也不连项目的库 |
+| 菜单 SQL | 覆盖到 `scaffold-system/sql/pages/{表名}_menu.sql`，按 `permission` 判重的 `INSERT ... SELECT ... WHERE NOT EXISTS` | 不能照抄底座 V6 的「固定 ID + `INSERT IGNORE`」—— 那是因为它知道 502 这个号，而 `sys_menu.id` 在 V4 已改成数据库自增，生成物不知道本项目用到哪个号。同理授权也只按已存在判重，只授给内置管理员角色（`role_id = 1`），其它角色由项目侧在角色管理里勾。页面本身靠 `sys_menu` + `import.meta.glob` 自动注册，`component` 就是 `views/{module}/{Cls}` |
 | 路由配置 | 不生成 | 走 `sys_menu` + 自动注册，避免生成文件与人工路由表冲突 |
 
 ### 5.3 合并请求：平台内的 PR 式功能
@@ -1256,6 +1391,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
    真机结果：`main` 全程未被写，`platform-generated` 上得到一次干净的形态迁移 diff（`D=107 / A=2 / M=37`，清理 109 个遗留文件），干净 clone 该分支后 `npm install` 装到 `@yuanda-lowcode-ai/scaffold-ui@1.0.0`、`vue-tsc` + `vite build` 通过。**存量升级通道可用，但「谁把新版本号写进项目」仍未落地**（PR 7/8 待办：落后读数 + 依赖升级动作走合并请求）。
 
 `lc_project.base_scaffold_sha`（§2.2）记录该项目快照取自本仓库哪个提交，用于日后判断"这个项目落后多少"，也是 §〇 方案②（用合并请求下发 A 档升级）的起点；交付项目根上的 `.scaffold-project.json` 里写同一份提交号，两边互相能核对。
+
+6. **交付品牌跟着项目走（PR 5G 真机演练后补，2026-11-04）**。演练时看见的客户项目登录页写着「元搭低代码平台」、侧栏写着「元搭低代码」，还宣传「代码生成」这个已被裁掉的功能 —— 交付的是项目自己的后台，不是平台的副本，所以这是缺陷不是外观。做法是给交付改写表再加两条：`scaffold-vue/src/data/index.ts` 里 `APP.name` / `APP.shortName` 两行换成 `{PROJECT_NAME}`（初始化时按 `lc_project.project_name` 填，空名拒绝交付；自由文本进 TS 字面量前转义引号与反斜杠），`views/Login.vue` 的「代码生成」那条能力直接删。底座自己那份不动，平台界面仍显示平台名。同一层守卫扩到品牌：交付产物里出现平台品牌关键字就当场拒绝初始化。**连带改了生成物话术** —— 11 份模板的注释与页面文案原样写着「由元搭低代码平台按模型定义生成」，「整页接管见方案 §5.2」引用的又是交付清单里不存在的本文档章节，统一换成「由低代码设计器按模型定义生成」与一句能执行的话；这条由 `ModelCodeGeneratorTest` 扫产物断言（改实现前它是红的，红得正好：列出的就是模板原话）。注意品牌改写属 A 档，**存量项目要等 PR 8 的底座升级才拿得到**。
 
 ---
 
@@ -1398,7 +1535,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@yuanda-lowcode-ai/scaffold-ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
 | ↳ 5A–5E | ✅ 已完成（2026-11-04，分片进度与踩坑见 `changelog.md`）：5A 渲染骨架 + 实体（`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`，否则 MyBatis 的 `#{}` 被引擎吃掉）；5B 后端 CRUD 五套 + `SqlIdentifiers` 保留字拦截 + 生成前守卫；5C 建表与菜单种子（真机在一个临时库里各跑两遍验幂等）；5D 前端接口与列表页（产物塞进宿主跑 `vue-tsc` + `vite build` 验）；**5E 分档落成代码** —— `GeneratedPaths` 持路径表并按路径白名单反推档位、`ModelCodeGenerator.renderFiles()` 出 `List<GeneratedFile>`、`{Cls}Extension` 七钩子骨架与 B 档调用点、`GeneratedFileZip` / `GeneratedFileWriter` 两条 sink、`is_tree` / `enable_data_scope` 明确拒绝 | 常驻测试 `GeneratedCodeCompilesTest` 把 7 个 java 产物按交付路径落盘后真起 javac（审计×逻辑删除四种组合）；`ExtensionContractTest` 扫渲染结果核对钩子契约；后端 202 例全绿 | — |
 | ↳ 5F | ✅ 已完成（2026-11-04）：老 `GeneratorService` 的 StringBuilder 全删，改由 `ImportedTableInput` 把 `gen_table` / `gen_table_column` 适配成模型形状后吃同一套模板；`javaType()` / `formType()` 并入 `FieldType.ofColumn`（连带补 `FieldType.LONG` 与 `FormType.code()`），`date` 两条链路都是 `LocalDate`；主键 / 自增 / 可空 / 长度 / 精度改为现查 `information_schema`（不再靠列名叫 `id` 猜），表已不存在时拒绝生成；审计四列齐且类型对才交给模板、`deleted` → 逻辑删除、`tenant_id` 只读不进列表；`LIKE` 只给文本列 | zip 下载与预览两个入口都在且**产物是交付形状**：`GeneratorImportApiTest` 4 例（含 zip 内 7 个 java 真起 javac、菜单 SQL 在真库执行后回滚）+ `ImportedTableInputTest` 6 例 + `FieldTypeTest` 反推表 2 例；后端 212 例全绿 | 5E |
-| ↳ 5G | ⬜ 待做：端到端真机验证（建项目 → 建模 → 生成 → 发布 → 合并 → 干净机器 `docker compose up`）+ 把 §4.1/4.2 的草稿示例重写为定稿形状 | 一个真实项目从建模到发布跑通；§4.2 示例与实际产物一致 | 5F |
+| ↳ 5G | ✅ 已完成（2026-11-04）。**发布与合并属 PR 7 / PR 8，还没实现，所以这一趟是「已有各段全用真东西，人肉补上发布那一跳」**：真实交付快照 + 真实模型接口 + 真实工作区提交 + 空目录 clone 真实 GitHub 仓库 + `docker compose --profile mysql up -d --build` 四个服务全 healthy，生成的两份 SQL 手工执行两遍验幂等，浏览器里走完登录 → 菜单 → 页面 → 新增（弹窗无主键格）→ 列表 → 修改 → 唯一查重 → 必填校验 → 导出 → 逻辑删除。§4.1 的模板清单与 §4.2 的示例改成实际产物原文（示例那个模型就是演练用的「销售订单」）。顺带把两件事收进本 PR：交付品牌按 `project_name` 改写（登录页 / 侧栏 / 浏览器标签，见 §6.4 第 6 条）与生成物话术去平台名。新增常驻端到端 `DeliveryGenerationApiTest`（交付快照 + 生成落盘 + 前端实物引用 + 菜单/权限点一致 + 二次发布 B 覆盖 C 跳过，5 例） | **一趟撞出六处「编得过、单测绿、真机才炸」的接缝缺陷**：① `NumberInput` 不带 `precision` → 金额 1234.5 被静默抹成 1235（数据错且不报错）；② 自增主键进表单 + 页面类型里 `id` 声明两遍 → 交付项目 `vue-tsc` 报错，前端镜像构建不出来；③ `@Options(keyProperty = "id")` 在多参数方法上回写不了自增号 → 第一次「新增」500；④ 列表与导出不带审计列 → 页面「创建时间」一列恒空；⑤ CSV 里时间是 ISO 带 `T` 的写法，与页面两种口径；⑥ 页面 `@/api` 引用用驼峰而文件落点是蛇形（单字词夹具看不出）。顺带定死两条边界：只支持数字主键、`lc_field.column_type` 已是完整写法不再二次拼长度。另发现交付链两处 A 档要改（Dockerfile 缺 Maven 依赖缓存挂载：第一次构建 14 分钟、加挂载后 4.7 秒；`CsvUtils` 时间口径），存量项目要等 PR 8 的底座升级下发 | 5F |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；**发布前 C 档引用体检**（扫扩展代码对已删字段的引用，默认阻断，可显式放行） | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上；删掉字段后带着旧引用的扩展代码发布不出去 | PR 6 |
 | **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |

@@ -1,6 +1,7 @@
 package com.scaffold.lowcode.generate;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.model.FieldType;
 import com.scaffold.lowcode.model.Naming;
 import com.scaffold.lowcode.model.QueryType;
 
@@ -69,6 +70,14 @@ public final class GenerationInput {
             if (Boolean.TRUE.equals(item.get("query"))) {
                 queryFields.add(item);
             }
+            if (Boolean.TRUE.equals(item.get("primary")) && Boolean.TRUE.equals(item.get("autoIncrement"))) {
+                // 自增主键不进表单：值由数据库给，进表单等于让人猜下一个 id，
+                // 也让页面的表单类型多出重复成员（vue-tsc 当场报错）。字段接口给默认值时也压掉这三格，
+                // 但这里不能只依赖上游干净 —— 老链路带过来的配置与存量数据都可能还勾着
+                item.put("insert", false);
+                item.put("edit", false);
+                item.put("required", false);
+            }
             if (Boolean.TRUE.equals(item.get("insert")) || Boolean.TRUE.equals(item.get("edit"))) {
                 formFields.add(item);
             }
@@ -88,6 +97,14 @@ public final class GenerationInput {
         }
         if (primary == null) {
             throw new BusinessException("模型 " + modelName + " 没有主键字段，生成物无法定位单条记录");
+        }
+        // 主键的类型要能对上路径参数：五个入口写的是 @PathVariable Long id（与底座同一形状），
+        // 字符串主键的模型编得过但调不通 —— 路径上拿到的是编号，Service 按数字查。当场拦掉比留到运行期好
+        String keyJavaType = text(primary.get("javaType"));
+        if (!"Long".equals(keyJavaType) && !"Integer".equals(keyJavaType)) {
+            throw new BusinessException("模型 " + modelName + " 的主键「" + primary.get("name") + "」是 "
+                    + keyJavaType + " 类型，本期生成器只支持数字主键（Long / Integer）。"
+                    + "请把业务编号做成唯一列并另加一个数字主键，那样按编号查询照样生成得出来");
         }
         // 这两条不是洁癖：字段全关时生成的 INSERT / UPDATE 会是缺列的残缺语句，
         // 推出去要到运行期才炸，当场拦掉更省事
@@ -221,6 +238,9 @@ public final class GenerationInput {
         item.put("ddlComment", sqlText(String.valueOf(item.get("desc"))));
         item.put("ddlNull", ddlNull(item));
         item.put("tsType", tsType(javaType));
+        // 数字输入框的小数位：只有 BigDecimal 需要。NumberInput 不传 precision 时按 step（默认 1）推断，
+        // 于是金额输入 1234.5 会被静默取整成 1235 —— 不报错也不失败，直接把数据写错
+        item.put("numberPrecision", "BigDecimal".equals(javaType) ? decimalScale(field) : null);
         item.put("descJs", jsText(String.valueOf(item.get("desc"))));
         // 前端接口里可空与否跟着「必填 / 主键」走：可空字段类型上要带 | null，编辑表单才知道能放 null
         item.put("nullableTs", !Boolean.TRUE.equals(item.get("required")) && !Boolean.TRUE.equals(item.get("primary")));
@@ -452,15 +472,15 @@ public final class GenerationInput {
             if ("BETWEEN".equals(kind)) {
                 // 区间两端按类型给控件（日期区间是两个日期框），不按字典渲染
                 params.add(queryParam(javaField + "Start", javaType, pattern, field.get("desc") + "（起）",
-                        queryControl(javaType, false), null));
+                        queryControl(javaType, false), null, field.get("numberPrecision")));
                 params.add(queryParam(javaField + "End", javaType, pattern, field.get("desc") + "（止）",
-                        queryControl(javaType, false), null));
+                        queryControl(javaType, false), null, field.get("numberPrecision")));
             } else if ("IN".equals(kind)) {
                 // 后端按 FIND_IN_SET 收逗号串，这里就如实给一个文本框，不假装是多选控件
-                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）", "input", null));
+                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）", "input", null, null));
             } else {
                 params.add(queryParam(javaField, javaType, pattern, field.get("desc"),
-                        queryControl(javaType, hasDict), dictType));
+                        queryControl(javaType, hasDict), dictType, field.get("numberPrecision")));
             }
             Map<String, Object> condition = new LinkedHashMap<>();
             condition.put("kind", kind);
@@ -487,7 +507,7 @@ public final class GenerationInput {
     }
 
     private static Map<String, Object> queryParam(String name, String javaType, String pattern, Object desc,
-                                                  String control, Object dictType) {
+                                                  String control, Object dictType, Object numberPrecision) {
         Map<String, Object> param = new LinkedHashMap<>();
         param.put("name", name);
         param.put("javaType", javaType);
@@ -497,6 +517,7 @@ public final class GenerationInput {
         param.put("descJs", jsText(String.valueOf(desc)));
         param.put("dictType", dictType);
         param.put("formControl", control);
+        param.put("numberPrecision", numberPrecision);
         return param;
     }
 
@@ -520,9 +541,16 @@ public final class GenerationInput {
      * 列类型的完整写法：{@code varchar} + 长度 → {@code varchar(255)}，
      * {@code decimal} + 精度标度 → {@code decimal(18,2)}，其余原样。
      * 存库的是拆开的三段（{@code FieldType} 算出来的），生成 SQL 与实体注释要的是合起来的一份。
+     *
+     * <p>两条链路的入参形状不一样：低代码链路的 {@code lc_field.column_type} 存的已经是合好的一份
+     * （{@code varchar(64)}），老代码生成页给的是 {@code information_schema} 的裸 {@code DATA_TYPE} 加长度列。
+     * 已经带括号就原样收下来，否则这里会拼出 {@code varchar(64)(64)} —— 建表语句当场语法错误。
      */
     private static String columnType(Map<String, Object> field) {
         String base = blankToDefault(text(field.get("columnType")), "varchar").toLowerCase(Locale.ROOT);
+        if (base.indexOf('(') >= 0) {
+            return base;
+        }
         Integer length = integer(field.get("columnLength"));
         Integer precision = integer(field.get("columnPrecision"));
         Integer scale = integer(field.get("columnScale"));
@@ -533,6 +561,12 @@ public final class GenerationInput {
             return base + "(" + length + ")";
         }
         return base;
+    }
+
+    /** 小数列的标度：两条链路都算好存在库里（列长度 / 精度 / 标度），缺时按 {@code FieldType.DECIMAL} 的默认两位收 */
+    private static Integer decimalScale(Map<String, Object> field) {
+        Integer scale = integer(field.get("columnScale"));
+        return scale != null && scale >= 0 ? scale : FieldType.DECIMAL.defaultScale();
     }
 
     private static Integer integer(Object value) {

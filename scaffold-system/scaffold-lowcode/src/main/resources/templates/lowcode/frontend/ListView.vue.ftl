@@ -6,13 +6,13 @@ import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
-import { ${apiVar}, type ${className}Row, type ${className}WriteRequest } from '@/api/${module}/${resourceName}'
+import { ${apiVar}, type ${className}Row, type ${className}WriteRequest } from '@/api/${module}/${resourceSlug}'
 
 /* ============================================================
-   ${modelDesc}管理。由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖。
+   ${modelDesc}管理。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
    版式固定走 ListPage + useListPage（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），
    页面只声明字段、列与动作。要加区块写到 src/views/${module}/overrides/ 里；
-   整页接管见方案 §5.2 —— 那个页面从此脱离平台托管。
+   要长期人工接管这一页，就把它改名并让发布不再产出它 —— 现在它每次发布都会被整文件覆盖。
    ============================================================ */
 
 type ${className}Query = {
@@ -44,12 +44,13 @@ const columns: Column[] = [
 
 /* ── 新增 / 编辑 ── */
 type ${className}Form = {
-  id?: number
 <#list formFields as f>
   ${f.javaField}: ${f.tsType}<#if f.tsType == 'number' || f.nullableTs> | null</#if>
 </#list>
 }
 
+/** 正在编辑哪一行的主键；空着就是新增。不借表单里某个字段的值来猜：主键可能由人填（业务编号），也可能根本不进表单（自增） */
+const editing = ref<number | null>(null)
 const dialog = ref(false)
 const saving = ref(false)
 const form = reactive<${className}Form>({
@@ -68,6 +69,7 @@ function emptyForm(): ${className}Form {
 }
 
 function openCreate() {
+  editing.value = null
   Object.assign(form, emptyForm())
   errors.value = {}
   dialog.value = true
@@ -80,6 +82,7 @@ function openCreate() {
 async function openEdit(row: ${className}Row) {
   try {
     const detail = await ${apiVar}.detail(row.${primaryField.javaField})
+    editing.value = row.${primaryField.javaField}
     Object.assign(form, emptyForm(), detail)
     errors.value = {}
     dialog.value = true
@@ -105,9 +108,9 @@ async function submit() {
   }
   saving.value = true
   try {
-    if (form.id) await ${apiVar}.update(form.id, payload)
+    if (editing.value !== null) await ${apiVar}.update(editing.value, payload)
     else await ${apiVar}.create(payload)
-    pushToast(form.id ? '${modelNameJs}已更新' : '${modelNameJs}已创建')
+    pushToast(editing.value !== null ? '${modelNameJs}已更新' : '${modelNameJs}已创建')
     dialog.value = false
     await list.load()
   } catch (error) {
@@ -138,7 +141,7 @@ async function remove(row: ${className}Row) {
 <template>
   <ListPage
     title="${modelDesc}管理"
-    desc="本页由元搭低代码平台按模型定义生成；要改字段回到设计器改模型再发布。"
+    desc="本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。"
     table-title="${modelName}列表"
     :list="list"
     :columns="columns"
@@ -154,7 +157,7 @@ async function remove(row: ${className}Row) {
 <#if q.formControl == 'dict'>
         <DictSelect v-model="list.query.${q.name}" type="${q.dictType}" all-label="全部" />
 <#elseif q.formControl == 'number'>
-        <NumberInput v-model="list.query.${q.name}" />
+        <NumberInput v-model="list.query.${q.name}"<#if q.numberPrecision??> :precision="${q.numberPrecision}"</#if> />
 <#elseif q.formControl == 'date'>
         <DateInput v-model="list.query.${q.name}" type="date" />
 <#elseif q.formControl == 'datetime'>
@@ -189,7 +192,7 @@ async function remove(row: ${className}Row) {
     </template>
   </ListPage>
 
-  <FormDialog :open="dialog" :title="form.id ? '编辑${modelName}' : '新增${modelName}'" :saving="saving" @close="dialog = false" @submit="submit">
+  <FormDialog :open="dialog" :title="editing !== null ? '编辑${modelName}' : '新增${modelName}'" :saving="saving" @close="dialog = false" @submit="submit">
 <#list formFields as f>
     <Field label="${f.desc}"<#if f.required> required</#if><#if f.formControl == 'textarea' || f.valueTrim> wide</#if> :error="errors.${f.javaField}">
 <#if f.formControl == 'dict'>
@@ -197,7 +200,7 @@ async function remove(row: ${className}Row) {
 <#elseif f.formControl == 'textarea'>
       <Textarea v-model="form.${f.javaField}" :rows="3" />
 <#elseif f.formControl == 'number'>
-      <NumberInput v-model="form.${f.javaField}" />
+      <NumberInput v-model="form.${f.javaField}"<#if f.numberPrecision??> :precision="${f.numberPrecision}"</#if> />
 <#elseif f.formControl == 'date'>
       <DateInput v-model="form.${f.javaField}" type="date" />
 <#elseif f.formControl == 'datetime'>
