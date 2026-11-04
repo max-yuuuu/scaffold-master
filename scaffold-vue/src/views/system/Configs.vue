@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import Icon from '@scaffold/ui/components/Icon.vue'
-import { Button, Field, IconButton, Segmented, SectionLabel, Switch, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { Button, Field, IconButton, Segmented, SectionLabel, Switch, Tag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import { systemApi } from '@/api'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { confirm } from '@scaffold/ui/composables/confirm'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { pattern, required, validate } from '@scaffold/ui/utils/validate'
-import { useViewMode } from '@scaffold/ui/composables/view'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
+import { useViewMode } from '@yuanda-lowcode-ai/scaffold-ui/composables/view'
 import { hasPermission } from '@/composables/permission'
-import { floatBarEnter, floatBarLeave, revealCascade, settlePop } from '@scaffold/ui/composables/motion'
-import { inferConfigKind, splitConfigName } from '@scaffold/ui/utils/configValue'
+import { floatBarEnter, floatBarLeave, revealCascade, settlePop } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
+import { inferConfigKind, splitConfigName } from '@yuanda-lowcode-ai/scaffold-ui/utils/configValue'
 
 interface ConfigRow { id: number; name: string; key: string; value: string; type: string; builtin: boolean; remark?: string; createTime: string }
 

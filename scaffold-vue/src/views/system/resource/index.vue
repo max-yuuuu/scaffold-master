@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import Icon from '@scaffold/ui/components/Icon.vue'
-import { Button, DataTable, Descriptions, DescriptionsItem, Metric, PageHeader, Panel, SectionLabel, Switch, Tag, type Column } from '@scaffold/ui/components/ui'
-import TrendChart from '@scaffold/ui/components/charts/TrendChart.vue'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { Button, DataTable, Descriptions, DescriptionsItem, Metric, PageHeader, Panel, SectionLabel, Switch, Tag, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import TrendChart from '@yuanda-lowcode-ai/scaffold-ui/components/charts/TrendChart.vue'
 import { systemApi, type ResourceSnapshot } from '@/api'
-import { toastError } from '@scaffold/ui/composables/toast'
+import { toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 
 /* ============================================================
    资源监测：当前服务所在主机与 Redis 的实时读数。

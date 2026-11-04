@@ -1,23 +1,42 @@
 # Changelog
 
-## 2026-11-04（分支口径调整 + PR 4B：组件抽成 `@scaffold/ui` 物料包、注入点解耦）
+## 2026-11-04（分支口径调整 + PR 4B：组件抽成 `@yuanda-lowcode-ai/scaffold-ui` 物料包、注入点解耦）
 
 - **分支口径**：`feat/lowcode-pr3-model-field`（PR 3b/3c + PR 4 + 抽屉版式，4 个提交）快进并入 `main`，再从 `main` 拉出 `dev`；后续模块开发分支一律向 `dev` 合并 PR，`main` 只做阶段收口。远端仍未推。
 
-按方案 §10.3 开 PR 4B（P1.5 组件抽包），这是 PR 5 的硬前置：模板要先决定生成的 `.vue` 里写 `@/components/...` 还是 `@scaffold/ui`。
+按方案 §10.3 开 PR 4B（P1.5 组件抽包），这是 PR 5 的硬前置：模板要先决定生成的 `.vue` 里写 `@/components/...` 还是 `@yuanda-lowcode-ai/scaffold-ui`。
 
-- **workspace 骨架**：仓库根新增 `package.json`（`workspaces: ["packages/*", "scaffold-vue"]`）、`package-lock.json` 从 `scaffold-vue/` 上移到根，开发命令一律从根跑（`npm run dev|build|test:unit`，`build` 先分别 `vue-tsc` 包与宿主再 `vite build`）。npm **不支持 `workspace:*` 协议**（报 `EUNSUPPORTEDPROTOCOL`），宿主写 `"@scaffold/ui": "*"` 让 workspace 解析，装完 `node_modules/@scaffold/ui` 是指向 `packages/scaffold-ui` 的软链。
-- **物料迁入包**：67 个 `.vue`（`Icon` + `ui/**` + `business/**` + `charts/**`）、16 个 composable、8 个工具、7 层样式进 `packages/scaffold-ui`；样式合并成单一入口 `theme.css`（`@import` 顺序就是原来 `main.ts` 的七行顺序），宿主只留 `import '@scaffold/ui/theme.css'`。`data/icons.ts`（`ICON_PATHS` / `MENU_ICON_OPTIONS`）与 `AVATAR_TINTS` 属展示物料跟着走；`NavGroup/NavLeaf/BaseRow/Menu/Dept` 抽到包内 `types.ts`，宿主 `data/index.ts` 只剩品牌 `APP` 并按原路径 `export type`，页面继续从 `@/data` 取类型。
+- **workspace 骨架**：仓库根新增 `package.json`（`workspaces: ["packages/*", "scaffold-vue"]`）、`package-lock.json` 从 `scaffold-vue/` 上移到根，开发命令一律从根跑（`npm run dev|build|test:unit`，`build` 先分别 `vue-tsc` 包与宿主再 `vite build`）。npm **不支持 `workspace:*` 协议**（报 `EUNSUPPORTEDPROTOCOL`），宿主写 `"@yuanda-lowcode-ai/scaffold-ui": "*"` 让 workspace 解析，装完 `node_modules/@yuanda-lowcode-ai/scaffold-ui` 是指向 `packages/scaffold-ui` 的软链。
+- **物料迁入包**：67 个 `.vue`（`Icon` + `ui/**` + `business/**` + `charts/**`）、16 个 composable、8 个工具、7 层样式进 `packages/scaffold-ui`；样式合并成单一入口 `theme.css`（`@import` 顺序就是原来 `main.ts` 的七行顺序），宿主只留 `import '@yuanda-lowcode-ai/scaffold-ui/theme.css'`。`data/icons.ts`（`ICON_PATHS` / `MENU_ICON_OPTIONS`）与 `AVATAR_TINTS` 属展示物料跟着走；`NavGroup/NavLeaf/BaseRow/Menu/Dept` 抽到包内 `types.ts`，宿主 `data/index.ts` 只剩品牌 `APP` 并按原路径 `export type`，页面继续从 `@/data` 取类型。
 - **边界按实际引用重判**（§6.4 那张「平台专属」表的三态落地）：进包 = `OrgCanvas` / `MenuStarMap` / `PermissionMatrix` / `PermissionTrace` / `DictSwatchbook` / `InsightPanel` / `AskDock` / `PostLadder`（部门、角色、菜单、字典、岗位五个基础页在用，剔掉交付项目编译不过）；留宿主 = 外壳 `components/layout/**`、`NeuralNet`、品牌配置、`composables/auth.ts`（登录态与动态路由是 app 的事），以及 `GeneratorPipeline` —— 移到 `scaffold-vue/src/components/platform/`，它只服务被裁剪的代码生成页。
 - **注入点 `installScaffoldUi({ http, permission, dict })`**：包内 14 个文件、21 处 `@/api` / `@/directives/permission` / 宿主 `auth.ts` 引用全部改走注入。`http` 只暴露物料真正用到的 `baseUrl / token / get / put / errorMessage`；`permission` = `has / pathOf / sessionVersion`；`dict` = `load(type)` 返回字典原始行，缓存与选项转换仍由包内 `useDict` 负责。宿主侧新增 `src/api/scaffold-providers.ts` 做适配，`main.ts` 在挂载前注入。包内新增 `api.ts`（`materialApi`）承载 7 个底座固定接口，`types.ts` 收走 `PageResult` / `QueryParams` / `UserRow` / `TimelineBlock` / `LoginHeatmap` / `PermissionGraph` 六个形状，宿主 `api/http.ts`、`api/system.ts` 改为按原路径转出，全仓只有一份定义。
 - **两处设计修正**：① 原设想 `installScaffoldUi(app, …)` 里注册 `v-permission`，实测**全仓零使用**（只有定义没有调用），于是指令删除、`app` 参数删除，权限状态留在宿主 `composables/permission.ts`（原 `directives/permission.ts`，目录名与内容终于一致）；② `provide/inject` 换成模块级单例注册表 `scaffoldUi()`，未安装直接抛错并指名安装入口 —— 宿主与包各装一份 vue 时 `inject` 会静默失配，单例不会。
-- **交付口径定稿**（回答「`@scaffold/ui` 放哪、生成项目从哪拿」）：包放本仓库 `packages/scaffold-ui`，**发布走 npm registry**，生成项目 `package.json` 里是普通版本号，`npm install` 不需要 GitHub 凭据；此前文档里的「GitHub git tag 依赖」作废，`max-yuuuu/lowcode-ai` 仓库也不必再建（GitHub 现在返回 Not Found）。未落地：`@scaffold` 组织归属（registry 上 `@scaffold/ui` 尚未被占用）、发布 token 只进主机 `~/.npmrc`、`files` 白名单与「源码直发 vs 补一层构建」的取舍。**因此交付快照的裁剪清单必须跟着改**（`packages/` 不进交付、根清单与锁不进交付、`scaffold-vue/package.json` 的依赖要写发布版本），这是下一步的 PR 4B-5，本期交付链尚未接上。
+- **交付口径定稿**（回答「`@yuanda-lowcode-ai/scaffold-ui` 放哪、生成项目从哪拿」）：包放本仓库 `packages/scaffold-ui`，**发布走 npm registry**，生成项目 `package.json` 里是普通版本号，`npm install` 不需要 GitHub 凭据；此前文档里的「GitHub git tag 依赖」作废，`max-yuuuu/lowcode-ai` 仓库也不必再建（GitHub 现在返回 Not Found）。未落地：`@scaffold` 组织归属（registry 上 `@yuanda-lowcode-ai/scaffold-ui` 尚未被占用）、发布 token 只进主机 `~/.npmrc`、`files` 白名单与「源码直发 vs 补一层构建」的取舍。**因此交付快照的裁剪清单必须跟着改**（`packages/` 不进交付、根清单与锁不进交付、`scaffold-vue/package.json` 的依赖要写发布版本），这是下一步的 PR 4B-5，本期交付链尚未接上。
 - **构建链**：前端镜像的构建上下文从 `scaffold-vue` 上移到仓库根（先拷三份清单跑 `npm ci`，再 `npm --workspace scaffold-vue run build`），`docker-compose.yml` 的 `frontend.build` 相应改 `context: .` + `dockerfile`；新增根 `.dockerignore`（`node_modules` / `dist` / `target` / `.git` / `lowcode-workspace` 等），原 `scaffold-vue/.dockerignore` 已删 —— 上下文换到根之后只有根那一份生效，留着是误导。
-- **一个值得记的坑**：`env.d.ts` 里 `declare module '*.vue'` 的兜底声明会让 `vue-tsc` **看不见错误的 `.vue` 路径**。搬迁脚本把宿主自己的 `@/components/NeuralNet.vue` 也改写成了 `@scaffold/ui/components/NeuralNet.vue`，两次 typecheck 全绿，是 `vite build` 才报「Rollup failed to resolve」。改完加了一个逐说明符落点校验脚本（`@/` 与 `@scaffold/ui/*` 全部按 exports + 扩展名解析一遍），此后靠它而不是靠 tsc 兜。
+- **一个值得记的坑**：`env.d.ts` 里 `declare module '*.vue'` 的兜底声明会让 `vue-tsc` **看不见错误的 `.vue` 路径**。搬迁脚本把宿主自己的 `@/components/NeuralNet.vue` 也改写成了 `@yuanda-lowcode-ai/scaffold-ui/components/NeuralNet.vue`，两次 typecheck 全绿，是 `vite build` 才报「Rollup failed to resolve」。改完加了一个逐说明符落点校验脚本（`@/` 与 `@yuanda-lowcode-ai/scaffold-ui/*` 全部按 exports + 扩展名解析一遍），此后靠它而不是靠 tsc 兜。
 - 验证：
   - 前端：`vue-tsc`（包 + 宿主各一遍）、`vite build`、24 个用例（宿主 api 10 + 包 utils 11 + 包注入点 3）全绿。新增 `packages/scaffold-ui/src/__tests__/providers.test.ts` 钉三件事 —— 未安装就取能力必须报错、`apiUrl` / `authHeaders` 走注入的 `baseUrl` / `token`、7 个物料接口的路径与查询串逐字不变。node 跑测试不认无扩展名的相对导入，包内 5 个运行时 `from '../providers'` 补成 `'../providers.ts'`。
   - 后端：`mvn test` 全绿（common 8 / framework 17 / lowcode 29 / admin 76）。`ScaffoldSnapshotPlannerTest` 仍过 —— 它断言的是「平台的东西不进交付项目」，包搬走之后交付快照只是少了一批物料文件，**这正说明它对本期这个破坏无感知**，PR 4B-5 要补一条「交付前端的依赖可解析」断言。
   - 浏览器真机（dev 5173 + 后端 8080 + 3316/6380，`admin` 登录，控制台无报错无 Vue 警告）：工作台/侧栏正常；`/system/user` 部门树出 4 个节点（`useDepts` → `materialApi.deptTree` → 注入 `http`）、列表 3 行、`新增用户` 按钮可见（`permission.has`）、「状态」下拉出 `正常 / 停用`（`dict.load`）；`/system/dept` 新增部门弹窗里负责人下拉出 3 个用户（`materialApi.usersPage`）；`/system/menu` 星图渲染出「导航 58 项 / 系统管理 8 个页面」（`loadPermissionGraph` + `pathOf`，并且 `sessionVersion` 的 watch 改成首次取数时才注册，避免模块加载早于 `installScaffoldUi`）；`:root` 上 `--ink` `--blue` 取到珍珠玻璃令牌值，`data-theme=light` / `data-density=regular` 由包内 `appearance` 在挂载前写入。
+- **交付链按 npm 依赖重接（PR 4B-5）**：物料进包之后，交付快照既没有 `packages/` 也没有根清单，交付项目的前端必然编译不过 —— 这一步把它接上。
+  - 裁剪清单加**第三层手段**：`ScaffoldTrimPolicy.deliverySubstitutions()` 精确整行块替换。标记块只会删，而底座有六处写的是「平台怎么用 npm workspaces 构建」，交付项目要换成「按 npm 依赖怎么构建」，同一批行既要消失又要换内容：`scaffold-vue/package.json` 的 `"@yuanda-lowcode-ai/scaffold-ui": "*"` → 配置里的版本、`scaffold-vue/Dockerfile` 的构建段与 nginx 两行、`docker-compose.yml` 的 `frontend.build`、README 两处命令注释、部署文档的构建说明行。替换文本里 `{SCAFFOLD_UI_VERSION}` 由新配置 `scaffold.lowcode.scaffold-ui-version`（env `LOWCODE_SCAFFOLD_UI_VERSION`，默认 `^1.0.0`）填入；**改写块找不到或出现多次当场报错**，不允许推一个装不上依赖的项目出去。
+  - `packages/`、根 `package.json` / `package-lock.json` / 根 `.dockerignore` 明确不进交付；`GeneratorPipeline` 的剔除路径跟着搬到 `scaffold-vue/src/components/platform/`；`REQUIRED_ROOTS` 加 `packages/scaffold-ui/package.json`（底座丢了物料包，规划阶段就失败）。
+  - 交付项目的前端**没有锁文件**，镜像里从 `npm ci` 改成 `npm install`，可复现性由 `@yuanda-lowcode-ai/scaffold-ui` 版本号承担；`scaffold-vue/.dockerignore` 恢复（交付的上下文就是这个目录，平台那份在仓库根，两份各管一边）；`vite.config.ts` 加 `optimizeDeps.exclude: ['@yuanda-lowcode-ai/scaffold-ui']` —— 包发的是 `.vue`/`.ts` 源码，被 esbuild 预打包会直接失败。
+  - README 里元搭定位、演进进度、平台专属链接（`PROJECT_MAP.md` / `changelog.md` / 方案文档）和 `packages/scaffold-ui` 目录行都用标记块裁掉，交付项目的 README 里读不到平台死链。
+  - **演练抓到一个真实缺陷**：平台本地工作区 `lowcode-workspace/`（容器里是卷）里装着上一版**交付克隆**，而它正好落在 `scaffold-system/` 白名单子树内，于是新快照把上一版交付整个套了进去 —— 文件数从 282 莫名涨到 460 才暴露。`IGNORED_NAMES` 补 `lowcode-workspace` 与 `.vite`，并加两条断言（`accepts(...lowcode-workspace...)` 为 false、快照路径不含该目录）。
+  - 包面收口：`package.json` 加 `files: ["src", "!src/**/__tests__"]`，`npm pack` 出 108 个文件、测试不进包；`peerDependencies` 补 `vue-router`（`ask.ts` 用它的类型）。
+  - 交付验证（真实代码，不是模拟）：用生产同一条 `ScaffoldSnapshotPlanner.plan(root, "file:/tmp/.../scaffold-ui-1.0.0.tgz")` + `ScaffoldSnapshotWriter` 落盘 **177 个文件** → 交付 `scaffold-vue` 里 `npm install` 装到物料包 → `npm run build`（`vue-tsc` + `vite build`）通过；交付的 `docker-compose.yml` 是 `context: ./scaffold-vue`、`Dockerfile` 是 `npm install` 形态、README 里平台死链计数为 0。验证完清理临时目录。
+  - 后端：`mvn test` 132 个用例全绿（common 8 / framework 17 / lowcode **31**（新增两条交付改写用例）/ admin 76）。
+  - **发布渠道已打通**：npmjs 组织 `yuanda-lowcode-ai` 建好，`@yuanda-lowcode-ai/scaffold-ui@1.0.0` 以 public 发布成功（108 个文件、173.8 kB）。剩下 `LOWCODE_SCAFFOLD_UI_VERSION` 就是真值，不再需要临时指 tarball。
+- **包名定为 `@yuanda-lowcode-ai/scaffold-ui`**（组织已建好，npm 强制 scope 等于组织或用户名，`@scaffold/ui` 发不到这个组织下）。全仓 293 处旧名一次改掉、覆盖 52 个文件：宿主与包的 import 说明符、`scaffold-vue/package.json` 依赖键、`vite.config.ts` 的 `optimizeDeps.exclude`、裁剪改写表两侧的文本、`application.yml` 配置注释、README / AGENTS / PROJECT_MAP / 方案 / 部署文档的叙述。`node_modules` 软链与根 lock 由 `npm install` 重建；改完宿主与包的 `vue-tsc`、`vite build`、24 个用例、planner 的交付改写用例全绿（旧名只剩 `target/`、`dist/` 与本地工作区里的上一版交付克隆，都是构建产物与忽略目录）。
+- **npm 发布实测到的四个坑**（都记下来，别下次再查一轮）：
+  - 本机默认 registry 是 `registry.npmmirror.com` 镜像，发布必须显式 `--registry=https://registry.npmjs.org`。
+  - scoped 包不带 `--access public` 会按 private 走。
+  - 账号开了 2FA：npm 已把老的 Automation 类型并进 Granular token，要勾 **Bypass two-factor authentication (2FA)**，且权限必须给到 **Organizations → `yuanda-lowcode-ai` → Read and write (publish and stage)**；只给包级权限发不了「还不存在的新包」（第一次试发布 PUT 返回 404、`npm access list packages` 返回 403 就是这个原因，不是组织没建）。
+  - **新组织首个包会进 npm 自动审核暂存态**：注册表先挂一个 `0.0.0-stage` 占位版本，`1.0.0` 几分钟后才可见；**镜像更滞后**，这期间按镜像装直接 `ETARGET: No matching version found for @yuanda-lowcode-ai/scaffold-ui@^1.0.0`。我先前写「镜像会自动同步、国内装不受影响」是错的，实测打脸后修正。
+- **因此交付目录多带一份 `scaffold-vue/.npmrc`**：把 `@yuanda-lowcode-ai` 这个 scope 钉在官方 registry，其余依赖仍走机器默认镜像不牺牲速度。写这份文件时我先误覆盖了原有的 `cache=.npm-cache / fund=false / audit=false` 三行，从 `git show HEAD` 里读回来才没丢配置 —— 教训是改既有配置文件前先 `git show` 看原内容，别直接整份重写。planner 加了一条断言守住「交付里必须有 `scaffold-vue/.npmrc`」。
+- **发布后的端到端复验（真实链路，不是模拟）**：物化交付快照 **177 个文件**（依赖写 `^1.0.0`）→ 交付 `scaffold-vue` 里 `npm install` 装到 `@yuanda-lowcode-ai/scaffold-ui@1.0.0` → `npm run build`（`vue-tsc` + `vite build`）通过。PR 4B 的验收项里「包被外部 app 以版本号依赖消费」就此闭环 —— 消费者是真实交付项目，比另造一个 demo app 更有说服力。
+- **安全提醒**：会话里出现过的那把第一张 token 仍有发布权（它报的是 EOTP，说明权限够），建议去 npmjs 撤销；当前 `~/.npmrc` 用的是新的 granular token，值没进对话、也没进仓库。
 
 ## 2026-11-04（PR 4：JGit 仓库接入、§6.4 裁剪清单代码化、空仓库首次初始化）
 
@@ -132,13 +151,13 @@
 - **§九 风险新增四条**："什么都想配置"导致范围失控（用 §1.4 判据挡）、模型与项目实体分叉、删字段打断已有页面、以及原有设计器复杂度项归位到 P2 范围。§10.1 已定口径补模型定位/接口生成/页面与模型三条；§10.3 与 P3 交付物补 `custom` handler 桩与 import 走包。
 - **修正残留**：§1.2 架构图 `scaffold-{business}` → `scaffold-business`（单业务模块，见 §5.2）；§1.3 C 档示例名从已废弃的 `{Cls}ServiceImplCustom` / `{resource}.ext.ts` 对齐到 §4.3 的 `service/{Cls}Extension.java` / `overrides/*.vue`。
 
-## 2026-11-03（低代码方案三次修订：`@scaffold/ui` 抽包定为既定路线）
+## 2026-11-03（低代码方案三次修订：`@yuanda-lowcode-ai/scaffold-ui` 抽包定为既定路线）
 
 用户指出「平台生成的项目用的也是同一套组件物料，所以需要复用一套组件」，据此推翻我上一轮把抽包降级为条件方案的判断。纯文档变更，**未动代码**。
 
-- **改判**：`@scaffold/ui` **必须抽包**，是既定路线而非备选。统一性只能在包里保证 —— 组件源码拷进项目意味着每个项目一份副本、修复靠人肉搬 diff。上一轮写的「② 用合并请求下发 A 档升级 / ③ 只在项目多到审不过来才抽包」三档表整体删除。
+- **改判**：`@yuanda-lowcode-ai/scaffold-ui` **必须抽包**，是既定路线而非备选。统一性只能在包里保证 —— 组件源码拷进项目意味着每个项目一份副本、修复靠人肉搬 diff。上一轮写的「② 用合并请求下发 A 档升级 / ③ 只在项目多到审不过来才抽包」三档表整体删除。
 - **实测规模与真实障碍**（当前 main）：`@/components` 引用 **148 处 / 64 文件**（组件互引 83、页面引用 62），体量 73 个 `.vue` 组件 + 17 个 composable。改 import 是机械活，**障碍是 28 个文件直接 import app 层**：`@/api` 14（`UserSelect` 直接 `systemApi`、`PostLadder`/`DictSwatchbook`/`PasswordDialog`/`CommandPalette` 同）、`@/data` 10（多数只是类型，如 `DeptTree` 的 `import type { Dept }`，但该模块还装品牌常量）、`@/directives/permission` 8、`@/utils/*` 8。
-- **解法定为注入点**：`installScaffoldUi(app, { http, permission, dict })` + `import '@scaffold/ui/theme.css'`（7 个 css 合并为单一入口）。包面 = AGENTS.md 那份组件清单**全量进包**，带数据的组件也进（否则生成模板要替每项目重写一篇 `DictSelect`）。三个注入契约列为 PR 4B 第一刀（§10.2 开放项 6）。
+- **解法定为注入点**：`installScaffoldUi(app, { http, permission, dict })` + `import '@yuanda-lowcode-ai/scaffold-ui/theme.css'`（7 个 css 合并为单一入口）。包面 = AGENTS.md 那份组件清单**全量进包**，带数据的组件也进（否则生成模板要替每项目重写一篇 `DictSelect`）。三个注入契约列为 PR 4B 第一刀（§10.2 开放项 6）。
 - **包边界**：平台/演示专属组件不进包也不进项目 —— `GeneratorPipeline`、`OrgCanvas`、`MenuStarMap`、`PermissionMatrix`、`PermissionTrace`、`DictSwatchbook`、`AskDock`、`InsightPanel`，加设计器画布/属性面板/diff 视图。
 - **仓库与发布**：包放**本仓库** `packages/scaffold-ui` + npm workspaces（不新建仓库：平台与组件同步演进，跨仓库来回改的摩擦大于收益）；发布走 **GitHub git tag 依赖**，零 registry 运维、版本号即 tag、与 `base_scaffold_sha` 天然对齐；token 走主机 `~/.npmrc`，延续"凭据不进 DB"。
 - **时机是硬约束**：新增 **P1.5 / PR 4B（2.5 周）**，必须在 PR 5（FreeMarker 模板）之前 —— 模板与设计器画布都要先定组件引用方式是包名还是 `@/` 别名，晚抽包等于把设计器代码和所有历史项目生成物再改一遍。总排期 19 → **21.5 周**。
@@ -150,7 +169,7 @@
 同日方案修订的续集。用户指出「scaffold-vue 就是给低代码平台用的」，据此追查发现一条更早的口径同样建立在已作废的假设上。仍是**纯文档变更，未动代码**。
 
 - **「fork scaffold-vue 整个 app」口径作废（§〇）**：`git log -S` 追到 A/B/C 三选一那张表写于 `742eb0e`，其前提是文档初版 `ba3e0dc` 里的「低代码管理平台（**独立项目**）」—— 正是上一轮 §〇之二 第 1 条作废的那条。平台与组件同在 `scaffold-vue` 一个 app，低代码视图进 `src/views/lowcode/**` 即可，**不 fork、不 subtree、不为复用而抽包**；上一轮我只改了口径表却把「A ✅ 起步采用」留在原地，是自相矛盾，本轮清掉。
-- **重述真正剩下的问题**：`scaffold-vue` 是 `private: true` 单体应用，影响的是「生成项目是组件库的一份拷贝，修复与升级不会自动流过去」。给出三档处置：① 不主动下发（本期默认）② **用已设计的合并请求下发 A 档升级**（推荐，PR 8 上线后近乎零额外成本）③ 抽 `@scaffold/ui` npm 包。原「稳定后走 B」从既定路线降级为**条件触发**（项目多到 diff 审不过来才做）。
+- **重述真正剩下的问题**：`scaffold-vue` 是 `private: true` 单体应用，影响的是「生成项目是组件库的一份拷贝，修复与升级不会自动流过去」。给出三档处置：① 不主动下发（本期默认）② **用已设计的合并请求下发 A 档升级**（推荐，PR 8 上线后近乎零额外成本）③ 抽 `@yuanda-lowcode-ai/scaffold-ui` npm 包。原「稳定后走 B」从既定路线降级为**条件触发**（项目多到 diff 审不过来才做）。
 - **新增 §6.4 初始化快照裁剪清单**：生成项目拿到的不是本仓库全量，否则每个交付项目里都躺着一套设计器、租户管理和一个能反向生成代码的 `tool` 菜单。逐项列出剔除（`scaffold-lowcode`、`scaffold-generator` + `views/tool/**` + 菜单种子、`lc_*` 建表、设计器专用组件）/ 保留（common/framework/system、组件库、珍珠玻璃、登录页、工作台；`sys_*` 的 `tenant_id` 列与 `TenantContext` 保留、项目内租户恒为 1，避免两套 schema 与两套认证代码分叉）/ 预置（`scaffold-business` 空壳）。要求裁剪清单落成**代码里的显式白/黑名单**并配「裁剪后能编译、能起、能登录」的集成用例，进 PR 4 验收。
 - **新增 A 档硬约束：一个项目只有一个业务模块（§5.2）**。核对 `scaffold-system/pom.xml` 与 `scaffold-admin/pom.xml` 后确认：新增 Maven 模块必须同时改父 pom 的 `<modules>` 与 admin 的 `<dependencies>`，而这两处是 A 档"初始化后固定"。若每个业务模块都改 pom，"固定代码不随发布更新"当场失效、每次发布都可能带 pom 冲突。故约定所有生成业务代码进 `scaffold-business` 的子包 `com.scaffold.business.{model}`，pom 初始化时一次写好；`lc_project.backend_module` 默认 `business` 正是为此（与 `lc_tenant` 那条同源的猜测这次对上了）。附带好处：A 档不进 diff，审的就是"这次发布动了哪些业务文件"。
 - **`lc_project.base_scaffold_sha`**：记录项目快照取自本仓库哪个提交，是判断"该项目落后多少"与执行上述 ② 升级下发的起点。
@@ -213,7 +232,7 @@
 - **合并冲突处理**：`AGENTS.md` 自动合并；`PROJECT_MAP.md` 保留 framework 侧的 `V3__system_resource_menu.sql` 引用 + 保留 deploy 侧的 `docs/docker-deployment.md` 引用；`README.md` 保留 deploy 侧的 Docker 段落 + 采用 framework 侧的新验证码文案（放弃 deploy 侧的旧"页面显示的字符"表述）；`changelog.md` 两个 `## 2026-11-01` 段落并列保留（回迁 + Docker）。
 - **低代码平台方案落地**：新增 `docs/lowcode-platform-proposal.md`（792 行），综合四个 agent 从架构、多租户、代码生成、前端设计器四个维度的深度分析。核心口径：租户→项目→模型→页面 四层层级；scaffold 三重身份（平台底座 + 生成项目模板 + 上游同步通道）；FreeMarker 模板替换 `GeneratorService` 的 StringBuilder 拼接、生成完整 CRUD 而非骨架；页面设计器采用拖拽 + 配置融合（流式布局、容器嵌套、属性面板），产出结构化 JSON 由运行时引擎映射到 `ListPage` / `FormDialog` / `DataTable`；增量发布按文件哈希对比只写变更；Git 集成支持文件级 / 页面级 / 发布级三级回滚，`CUSTOM-START/END` 标记保护手写代码。
 - **README 演进说明**：顶部加"演进方向"提示块，新增"低代码平台演进"段列出关键口径与当前阶段。开发入口新增方案文档链接。
-- **组件复用待决策项明确**：`scaffold-vue/package.json` 是 `"private": true` 单体应用而非可发布 npm 包，平台复用其组件的三条路径（fork 整个 app / 抽 `@scaffold/ui` 包 / git subtree）在方案中标为待决策，倾向路径为"短期 fork 起步、稳定后抽包"。
+- **组件复用待决策项明确**：`scaffold-vue/package.json` 是 `"private": true` 单体应用而非可发布 npm 包，平台复用其组件的三条路径（fork 整个 app / 抽 `@yuanda-lowcode-ai/scaffold-ui` 包 / git subtree）在方案中标为待决策，倾向路径为"短期 fork 起步、稳定后抽包"。
 
 ## 2026-11-01（从业务工程回迁框架通用能力）
 

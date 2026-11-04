@@ -12,9 +12,10 @@
 | `.env.example` | 环境变量模板，复制为 `.env` 后修改（`.env` 已被 git 忽略） |
 | `deploy/mysql-client.cnf` | 内置 MySQL 导入初始化 SQL 时的客户端字符集配置 |
 | `scaffold-system/Dockerfile` | 后端镜像：Maven 多阶段构建 → `eclipse-temurin:17-jre` 运行 |
-| `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 构建 → `nginx:1.27-alpine` 托管。**构建上下文是仓库根**（npm workspaces 要把根清单、`packages/scaffold-ui` 与 `scaffold-vue` 一起交给构建），compose 里写作 `context: .` + `dockerfile: scaffold-vue/Dockerfile` |
-| `.dockerignore`（仓库根） | 上下文换到根之后只有这一份生效：排除 `node_modules`、`dist`、`target`、`.git`、`lowcode-workspace` 等，原来的 `scaffold-vue/.dockerignore` 已删 |
-| `package.json` / `package-lock.json`（仓库根） | npm workspaces 声明（`packages/*` + `scaffold-vue`）与锁文件；`@scaffold/ui` 的物料源码在 `packages/scaffold-ui`，镜像内 `npm ci` 会把它软链进 `node_modules` |
+| `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 构建 → `nginx:1.27-alpine` 托管。平台自身的构建上下文是仓库根（npm workspaces 要把根清单与 `packages/scaffold-ui` 一起交给构建，compose 里写作 `context: .` + `dockerfile: scaffold-vue/Dockerfile`）；交付项目的上下文是 `scaffold-vue` 目录，组件与主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui` |
+| `.dockerignore`（仓库根）与 `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`target`、`.git`、`lowcode-workspace` 等。Docker 只读「上下文根」的那一份，所以两份各管一边 |
+| `package.json` / `package-lock.json`（仓库根） | 平台侧 npm workspaces 声明（`packages/*` + `scaffold-vue`）与锁文件；`@yuanda-lowcode-ai/scaffold-ui` 的物料源码在 `packages/scaffold-ui`，镜像内 `npm ci` 会把它软链进 `node_modules`。这两份清单属平台，不进交付项目 |
+| `scaffold-vue/.npmrc` | 前端项目的 npm 配置：缓存目录、关 audit/fund，并把 `@yuanda-lowcode-ai` 这个 scope 钉在官方 registry —— 国内镜像同步新物料包有延迟，不钉住会 `ETARGET` 装不上 |
 | `scaffold-vue/nginx.conf` | 静态资源缓存、SPA 回退与 `/api` 反代配置 |
 
 ## 前置条件

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Field, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
+import { Field, Tag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import { platformApi, type TenantConfigRow } from '@/api'
 import { currentUser } from '@/composables/auth'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { confirm } from '@scaffold/ui/composables/confirm'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { pattern, required, validate } from '@scaffold/ui/utils/validate'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
 
 /* ============================================================
    租户参数（lc_tenant_config）：按租户存放的键值参数，读写都限定在

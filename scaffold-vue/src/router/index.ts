@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { setUnauthorizedHandler } from '@/api'
 import { authed, clearSession, dynamicRoutes, loadRoutes, navGroups, refreshUser, sessionVersion, setSessionRouteReset } from '@/composables/auth'
-import { pushToast } from '@scaffold/ui/composables/toast'
+import { pushToast } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { APP } from '@/data'
 import AppShell from '@/components/layout/AppShell.vue'
 

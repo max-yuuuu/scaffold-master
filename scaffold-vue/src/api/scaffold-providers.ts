@@ -1,6 +1,6 @@
-import type { QueryParams } from '@scaffold/ui/types'
-import type { ScaffoldDict, ScaffoldHttp, ScaffoldPermission } from '@scaffold/ui'
-import { UploadError } from '@scaffold/ui/composables/upload'
+import type { QueryParams } from '@yuanda-lowcode-ai/scaffold-ui/types'
+import type { ScaffoldDict, ScaffoldHttp, ScaffoldPermission } from '@yuanda-lowcode-ai/scaffold-ui'
+import { UploadError } from '@yuanda-lowcode-ai/scaffold-ui/composables/upload'
 import { apiBaseUrl, ApiError, httpClient } from './http'
 import { authSession } from './session'
 import { systemApi } from './index'
@@ -9,7 +9,7 @@ import { pathOf, sessionVersion } from '@/composables/auth'
 
 /* ============================================================
    物料包注入点。
-   @scaffold/ui 不 import 宿主模块，接口、权限、字典三项能力在这里交给它 ——
+   @yuanda-lowcode-ai/scaffold-ui 不 import 宿主模块，接口、权限、字典三项能力在这里交给它 ——
    平台自身与每个生成项目的 main.ts 都按这一份口径接线。
    ============================================================ */
 

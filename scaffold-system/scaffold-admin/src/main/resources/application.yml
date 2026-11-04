@@ -26,6 +26,9 @@ scaffold:
     workspace-root: ${LOWCODE_WORKSPACE_ROOT:./lowcode-workspace}
     # 底座源码 checkout：留空时从当前目录向上找 scaffold-system/pom.xml + scaffold-vue/package.json
     scaffold-source-root: ${LOWCODE_SCAFFOLD_SOURCE_ROOT:}
+    # 写进交付项目 package.json 的 @yuanda-lowcode-ai/scaffold-ui 依赖写法：发布到 npm 后就是版本号；
+    # 本地演练交付链时可以临时改成 file:../packages/scaffold-ui 之类的路径，不用改代码
+    scaffold-ui-version: ${LOWCODE_SCAFFOLD_UI_VERSION:^1.0.0}
     git:
       timeout-seconds: 120
       commit-name: 元搭平台

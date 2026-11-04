@@ -1,7 +1,7 @@
 /* ============================================================
-   @scaffold/ui 对外出口。
+   @yuanda-lowcode-ai/scaffold-ui 对外出口。
    组件与物料可按目录（./components/ui）、按 barrel（本文件）或按单文件（./components/ui/Button.vue）引用；
-   珍珠玻璃主题走独立入口 '@scaffold/ui/theme.css'。
+   珍珠玻璃主题走独立入口 '@yuanda-lowcode-ai/scaffold-ui/theme.css'。
    ============================================================ */
 
 export * from './components/ui'

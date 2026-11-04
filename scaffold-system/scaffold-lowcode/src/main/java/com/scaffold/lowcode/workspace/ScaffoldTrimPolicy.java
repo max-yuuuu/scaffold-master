@@ -65,19 +65,29 @@ public final class ScaffoldTrimPolicy {
             // 在线代码生成页面：交付项目里没有 scaffold-generator，留着就是一个点开报错的菜单
             "scaffold-vue/src/views/tool/",
             "scaffold-vue/src/api/platform.ts",
-            // 只有被剔除的代码生成页在用这个流水线组件；其余业务组件与系统页面一起保留
-            "scaffold-vue/src/components/business/GeneratorPipeline.vue",
+            // 只有被剔除的代码生成页在用这个流水线组件（抽包后它留在宿主，不进包）；其余业务组件与系统页面一起保留
+            "scaffold-vue/src/components/platform/GeneratorPipeline.vue",
+            // 物料包源码不进交付项目：组件与主题走 @yuanda-lowcode-ai/scaffold-ui 依赖（§〇 抽包口径），交付只改写依赖版本
+            "packages/",
+            // 根 package.json / package-lock.json 与 .dockerignore 属平台 workspace 构建，交付项目按 npm 依赖自洽
+            "package.json",
+            "package-lock.json",
+            ".dockerignore",
             // 方案文档与部署文档里的平台章节：交付项目不需要读它
             "docs/lowcode-platform-proposal.md");
 
-    /** 任何层级命中这个名字就跳过：构建产物、依赖目录与本机垃圾文件 */
+    /** 任何层级命中这个名字就跳过：构建产物、依赖目录、平台工作区与本机垃圾文件 */
     private static final List<String> IGNORED_NAMES = List.of(
             ".git",
             ".idea",
             ".npm-cache",
+            ".vite",
             "node_modules",
             "target",
             "dist",
+            // 平台本地工作区根（默认 ./lowcode-workspace，容器里是卷）：里面是各项目 clone 出来的交付物，
+            // 不排除的话交付快照会把上一版交付整个套进新一版里
+            "lowcode-workspace",
             ".DS_Store");
 
     /** 快照里不允许出现的平台代码引用（Java/TS/JSON），残留即说明裁剪清单漏项 */
@@ -110,8 +120,84 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/scaffold-business/pom.xml",
             "scaffold-system/scaffold-admin/pom.xml",
             "scaffold-system/sql/V1__init_schema.sql",
+            "packages/scaffold-ui/package.json",
             "scaffold-vue/package.json",
             "scaffold-vue/src/main.ts");
+
+    /** 交付改写里依赖版本的占位符，由 {@code scaffold.lowcode.scaffold-ui-version} 填入 */
+    public static final String SCAFFOLD_UI_VERSION_PLACEHOLDER = "{SCAFFOLD_UI_VERSION}";
+
+    /**
+     * 交付改写：底座这几处写的是「平台自己怎么用 npm workspaces 构建」，交付项目要换成
+     * 「按 npm 依赖怎么构建」。这里是整块精确匹配的行替换 —— 不做正则、不做模板引擎，
+     * 底座这几行一旦改动，{@link ScaffoldSnapshotPlanner} 会当场失败而不是交付一个装不上依赖的项目。
+     *
+     * @param path     相对底座根的文件路径
+     * @param from     底座里的原文（连续若干行，不含结尾换行）
+     * @param to       交付项目里的替换文本，可含 {@link #SCAFFOLD_UI_VERSION_PLACEHOLDER}
+     */
+    public record DeliverySubstitution(String path, List<String> from, List<String> to) {
+    }
+
+    private static final List<DeliverySubstitution> DELIVERY_SUBSTITUTIONS = List.of(
+            new DeliverySubstitution("scaffold-vue/package.json",
+                    List.of("    \"@yuanda-lowcode-ai/scaffold-ui\": \"*\","),
+                    List.of("    \"@yuanda-lowcode-ai/scaffold-ui\": \"" + SCAFFOLD_UI_VERSION_PLACEHOLDER + "\",")),
+            new DeliverySubstitution("scaffold-vue/Dockerfile",
+                    List.of("# 构建上下文为仓库根：npm workspaces 需要根 package.json / package-lock.json 与 packages/scaffold-ui 的物料源码",
+                            "FROM node:22-alpine AS build",
+                            "WORKDIR /build",
+                            "# 先只拷三份清单，依赖未变时 npm ci 这一层可复用缓存",
+                            "COPY package.json package-lock.json ./",
+                            "COPY packages/scaffold-ui/package.json packages/scaffold-ui/",
+                            "COPY scaffold-vue/package.json scaffold-vue/",
+                            "RUN npm ci",
+                            "COPY packages packages",
+                            "COPY scaffold-vue scaffold-vue",
+                            "RUN npm --workspace scaffold-vue run build"),
+                    List.of("# 构建上下文为 scaffold-vue 目录：物料包 @yuanda-lowcode-ai/scaffold-ui 是普通 npm 依赖，不需要 workspace 清单",
+                            "# 交付项目不带锁文件（锁跟着平台的 workspace 走），按 package.json 里的版本号 npm install",
+                            "FROM node:22-alpine AS build",
+                            "WORKDIR /build",
+                            "COPY package.json ./",
+                            "RUN npm install",
+                            "COPY . .",
+                            "RUN npm run build")),
+            new DeliverySubstitution("scaffold-vue/Dockerfile",
+                    List.of("COPY scaffold-vue/nginx.conf /etc/nginx/conf.d/default.conf",
+                            "COPY --from=build /build/scaffold-vue/dist /usr/share/nginx/html"),
+                    List.of("COPY nginx.conf /etc/nginx/conf.d/default.conf",
+                            "COPY --from=build /build/dist /usr/share/nginx/html")),
+            new DeliverySubstitution("docker-compose.yml",
+                    List.of("    build:",
+                            "      # 上下文是仓库根：npm workspaces 要把 packages/scaffold-ui 一起交给镜像构建",
+                            "      context: .",
+                            "      dockerfile: scaffold-vue/Dockerfile"),
+                    List.of("    build:",
+                            "      context: ./scaffold-vue")),
+            new DeliverySubstitution("README.md",
+                    List.of("# 前端命令一律在仓库根执行（npm workspaces）；首次使用先 npm install"),
+                    List.of("# 在 scaffold-vue 目录启动前端；首次使用先 npm install")),
+            new DeliverySubstitution("README.md",
+                    List.of("# 在仓库根：test:unit 会分别进 packages/scaffold-ui 与 scaffold-vue 各跑一遍",
+                            "npm run test:unit",
+                            "npm run build",
+                            "# 已安装 Python Playwright 与 Chromium 时，可验证真实浏览器会话与权限",
+                            "python3 scaffold-vue/scripts/session-regression.py"),
+                    List.of("# 在 scaffold-vue 目录",
+                            "npm run test:unit",
+                            "npm run build",
+                            "# 已安装 Python Playwright 与 Chromium 时，可验证真实浏览器会话与权限",
+                            "python3 scripts/session-regression.py")),
+            new DeliverySubstitution("docs/docker-deployment.md",
+                    List.of("| `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 构建 → `nginx:1.27-alpine` 托管。平台自身的构建上下文是仓库根（npm workspaces 要把根清单与 `packages/scaffold-ui` 一起交给构建，compose 里写作 `context: .` + `dockerfile: scaffold-vue/Dockerfile`）；交付项目的上下文是 `scaffold-vue` 目录，组件与主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui` |",
+                            "| `.dockerignore`（仓库根）与 `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`target`、`.git`、`lowcode-workspace` 等。Docker 只读「上下文根」的那一份，所以两份各管一边 |",
+                            "| `package.json` / `package-lock.json`（仓库根） | 平台侧 npm workspaces 声明（`packages/*` + `scaffold-vue`）与锁文件；`@yuanda-lowcode-ai/scaffold-ui` 的物料源码在 `packages/scaffold-ui`，镜像内 `npm ci` 会把它软链进 `node_modules`。这两份清单属平台，不进交付项目 |"),
+                    List.of("| `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 里 `npm install` + `npm run build` → `nginx:1.27-alpine` 托管；构建上下文是 `scaffold-vue` 目录，组件与珍珠玻璃主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui` |",
+                            "| `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`.DS_Store` |")));
+
+    /** 交付项目里物料包依赖的默认版本写法（可被配置覆盖，便于本地用 file: 依赖演练交付链） */
+    public static final String DEFAULT_SCAFFOLD_UI_VERSION = "^1.0.0";
 
     private ScaffoldTrimPolicy() {
     }
@@ -134,6 +220,10 @@ public final class ScaffoldTrimPolicy {
 
     public static List<String> requiredRoots() {
         return REQUIRED_ROOTS;
+    }
+
+    public static List<DeliverySubstitution> deliverySubstitutions() {
+        return DELIVERY_SUBSTITUTIONS;
     }
 
     /**

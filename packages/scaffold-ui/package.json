@@ -1,5 +1,5 @@
 {
-  "name": "@scaffold/ui",
+  "name": "@yuanda-lowcode-ai/scaffold-ui",
   "version": "1.0.0",
   "description": "元搭后台物料包：统一组件、composable、工具与珍珠玻璃主题，平台与生成项目共用",
   "type": "module",
@@ -20,6 +20,10 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test:unit": "node --test --experimental-strip-types src/__tests__/*.test.ts src/utils/__tests__/*.test.ts"
   },
+  "files": [
+    "src",
+    "!src/**/__tests__"
+  ],
   "peerDependencies": {
     "gsap": "^3.15.0",
     "vue": "^3.5.13",

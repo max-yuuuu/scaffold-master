@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import EmptyState from '@scaffold/ui/components/ui/EmptyState.vue'
+import EmptyState from '@yuanda-lowcode-ai/scaffold-ui/components/ui/EmptyState.vue'
 </script>
 
 <template>

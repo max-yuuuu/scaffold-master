@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import Icon from '@scaffold/ui/components/Icon.vue'
-import { Button, Checkbox, Field, Modal, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { ListPage, PermissionButton } from '@scaffold/ui/components/business'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { Button, Checkbox, Field, Modal, Tag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import GeneratorPipeline from '@/components/platform/GeneratorPipeline.vue'
 import { portalApi } from '@/api'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { downloadBlob } from '@scaffold/ui/utils/download'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { downloadBlob } from '@yuanda-lowcode-ai/scaffold-ui/utils/download'
 
 interface TableRow { id: number; tableName: string; tableComment: string; className: string; module: string; businessName: string; synced: boolean; createTime: string }
 

@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import Icon from '@scaffold/ui/components/Icon.vue'
-import { DataTable, Drawer, Field, Segmented, Select, StatusTag, Switch, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
-import DictSwatchbook from '@scaffold/ui/components/business/DictSwatchbook.vue'
-import { useViewMode } from '@scaffold/ui/composables/view'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { DataTable, Drawer, Field, Segmented, Select, StatusTag, Switch, Tag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { DictSelect, FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
+import DictSwatchbook from '@yuanda-lowcode-ai/scaffold-ui/components/business/DictSwatchbook.vue'
+import { useViewMode } from '@yuanda-lowcode-ai/scaffold-ui/composables/view'
 import { systemApi } from '@/api'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { confirm } from '@scaffold/ui/composables/confirm'
-import { invalidateDict } from '@scaffold/ui/composables/dict'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { pattern, required, validate } from '@scaffold/ui/utils/validate'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { invalidateDict } from '@yuanda-lowcode-ai/scaffold-ui/composables/dict'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
 
 interface TypeRow { id: number; dictName: string; dictType: string; status: number; remark?: string; createTime: string }
 interface DataRow { id: number; label: string; value: string; tone?: string; sort: number; def: boolean; status: number; remark?: string }

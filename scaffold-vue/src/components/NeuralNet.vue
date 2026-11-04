@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createFrameLoop, motionSkipped } from '@scaffold/ui/composables/motion'
+import { createFrameLoop, motionSkipped } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
 
 /* ============================================================
    神经网络画布：能力模块节点缓慢呼吸，脉冲沿连线往返（导 Conduct）。

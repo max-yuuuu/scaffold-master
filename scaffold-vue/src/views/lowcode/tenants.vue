@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { DateInput, Field, StatusTag, Switch, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
+import { DateInput, Field, StatusTag, Switch, Tag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { DictSelect, FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import { platformApi, type TenantRow } from '@/api'
 import { currentUser, switchTenant } from '@/composables/auth'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { confirm } from '@scaffold/ui/composables/confirm'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { pattern, required, validate } from '@scaffold/ui/utils/validate'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
 
 /* ============================================================
    租户管理（平台侧）。lc_tenant 是平台表，平台管理员在本租户内直接

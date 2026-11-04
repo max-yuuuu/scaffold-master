@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 
 /* 按钮级权限的宿主侧状态：权限码来自 /api/auth/me 的 permissions，'*' 表示全部。
-   @scaffold/ui 里的 PermissionButton / RowMenuItem 不直接读这里，
+   @yuanda-lowcode-ai/scaffold-ui 里的 PermissionButton / RowMenuItem 不直接读这里，
    而是经 main.ts 的 installScaffoldUi 把 hasPermission 作为 permission.has 注入。 */
 export const permissions = ref<Set<string>>(new Set())
 

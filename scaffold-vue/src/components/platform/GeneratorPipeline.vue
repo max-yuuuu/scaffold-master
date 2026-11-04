@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
-import RelationGraph, { type GraphLink, type GraphNode } from '@scaffold/ui/components/charts/RelationGraph.vue'
-import Modal from '@scaffold/ui/components/ui/Modal.vue'
-import Button from '@scaffold/ui/components/ui/Button.vue'
-import Field from '@scaffold/ui/components/ui/Field.vue'
-import TextInput from '@scaffold/ui/components/ui/TextInput.vue'
-import Switch from '@scaffold/ui/components/ui/Switch.vue'
-import Icon from '@scaffold/ui/components/Icon.vue'
+import RelationGraph, { type GraphLink, type GraphNode } from '@yuanda-lowcode-ai/scaffold-ui/components/charts/RelationGraph.vue'
+import Modal from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Modal.vue'
+import Button from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Button.vue'
+import Field from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Field.vue'
+import TextInput from '@yuanda-lowcode-ai/scaffold-ui/components/ui/TextInput.vue'
+import Switch from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Switch.vue'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import { portalApi, type GeneratorFile } from '@/api'
-import { gsap, EASE, motionSkipped, slideThumb } from '@scaffold/ui/composables/motion'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { copyText } from '@scaffold/ui/utils/clipboard'
+import { gsap, EASE, motionSkipped, slideThumb } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { copyText } from '@yuanda-lowcode-ai/scaffold-ui/utils/clipboard'
 
 /* ============================================================
    代码生成流水线：① 表信息 → ② 字段映射 → ③ 代码预览，一个弹窗走完。

@@ -21,7 +21,7 @@ export interface HttpClient {
   downloadForm(path: string, form?: QueryParams): Promise<Blob>
 }
 
-import type { QueryParams } from '@scaffold/ui/types'
+import type { QueryParams } from '@yuanda-lowcode-ai/scaffold-ui/types'
 
 export type { QueryParams }
 

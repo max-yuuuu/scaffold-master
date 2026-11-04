@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@scaffold/ui/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
-import Icon from '@scaffold/ui/components/Icon.vue'
+import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { DictSelect, FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
-import { useListPage } from '@scaffold/ui/composables/list'
-import { confirm } from '@scaffold/ui/composables/confirm'
-import { pushToast, toastError } from '@scaffold/ui/composables/toast'
-import { maxLength, pattern, required, validate } from '@scaffold/ui/utils/validate'
+import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
+import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
+import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { maxLength, pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
 
 /* ============================================================
    项目管理。项目 = 租户名下的一个 Git 仓库，模型与页面都挂在项目下。

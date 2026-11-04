@@ -1,7 +1,7 @@
 import type { HttpClient, QueryParams } from './http'
-import type { LoginHeatmap, PageResult, PermissionGraph, TimelineBlock, UserRow } from '@scaffold/ui/types'
+import type { LoginHeatmap, PageResult, PermissionGraph, TimelineBlock, UserRow } from '@yuanda-lowcode-ai/scaffold-ui/types'
 
-/* 分页、用户行、泳道块、登录热力与权限图形状由 @scaffold/ui 统一定义（组件与接口共用一份），
+/* 分页、用户行、泳道块、登录热力与权限图形状由 @yuanda-lowcode-ai/scaffold-ui 统一定义（组件与接口共用一份），
    这里按原路径转出，页面继续从 @/api 引用。 */
 export type { LoginHeatmap, PageResult, PermissionGraph, TimelineBlock, UserRow }
 

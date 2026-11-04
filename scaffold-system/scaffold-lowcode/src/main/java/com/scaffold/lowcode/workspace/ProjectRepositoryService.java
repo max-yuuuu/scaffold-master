@@ -43,17 +43,21 @@ public class ProjectRepositoryService {
     private final GitGateway gateway;
     private final Path workspaceRoot;
     private final String configuredSourceRoot;
+    private final String scaffoldUiVersion;
     private final Set<Long> running = ConcurrentHashMap.newKeySet();
 
     public ProjectRepositoryService(
             LcProjectMapper projectMapper,
             GitGateway gateway,
             @Value("${scaffold.lowcode.workspace-root:./lowcode-workspace}") String workspaceRoot,
-            @Value("${scaffold.lowcode.scaffold-source-root:}") String configuredSourceRoot) {
+            @Value("${scaffold.lowcode.scaffold-source-root:}") String configuredSourceRoot,
+            @Value("${scaffold.lowcode.scaffold-ui-version:" + ScaffoldTrimPolicy.DEFAULT_SCAFFOLD_UI_VERSION + "}")
+            String scaffoldUiVersion) {
         this.projectMapper = projectMapper;
         this.gateway = gateway;
         this.workspaceRoot = Path.of(workspaceRoot).toAbsolutePath().normalize();
         this.configuredSourceRoot = configuredSourceRoot;
+        this.scaffoldUiVersion = scaffoldUiVersion;
     }
 
     /**
@@ -128,7 +132,7 @@ public class ProjectRepositoryService {
             // 先读底座源码出清单：裁剪清单不合法时不碰远端，也不留半个工作区
             update(projectId, ProjectSyncStatus.INITIALIZING, "读取底座裁剪清单", null, null, null, false, operator);
             Path sourceRoot = ScaffoldSourceLocator.locate(configuredSourceRoot);
-            ScaffoldSnapshot snapshot = ScaffoldSnapshotPlanner.plan(sourceRoot);
+            ScaffoldSnapshot snapshot = ScaffoldSnapshotPlanner.plan(sourceRoot, scaffoldUiVersion);
             if (snapshot.files().size() > MAX_SNAPSHOT_FILES) {
                 throw new BusinessException("交付快照文件数异常：" + snapshot.files().size());
             }

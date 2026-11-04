@@ -8,10 +8,10 @@
 | --- | --- | --- | --- | --- |
 | 后端 | `scaffold-system` | Java 17+、Spring Boot 3.5、MyBatis、MySQL、Redis、JWT | `8080`，接口前缀 `/api` | 已确认 |
 | 管理后台 | `scaffold-vue` | Vue 3、TypeScript、Vite、Vue Router、GSAP，自有组件 | `5173`，开发代理 `/api` | 已确认 |
-| 前端物料包 | `packages/scaffold-ui`（`@scaffold/ui`） | 73 个组件 + 16 个 composable + 工具 + 珍珠玻璃主题，npm workspaces 成员 | 宿主按 `@scaffold/ui/...` 子路径引用，主题走 `@scaffold/ui/theme.css` | 已确认 |
+| 前端物料包 | `packages/scaffold-ui`（`@yuanda-lowcode-ai/scaffold-ui`） | 73 个组件 + 16 个 composable + 工具 + 珍珠玻璃主题，npm workspaces 成员 | 宿主按 `@yuanda-lowcode-ai/scaffold-ui/...` 子路径引用，主题走 `@yuanda-lowcode-ai/scaffold-ui/theme.css` | 已确认 |
 
 - Maven 模块：`scaffold-common`、`scaffold-framework`、`scaffold-system`、`scaffold-generator`、`scaffold-admin`。
-- npm workspaces：仓库根 `package.json` 声明 `packages/*` 与 `scaffold-vue`，锁文件在根（`package-lock.json`），`scaffold-vue/node_modules/@scaffold/ui` 是指向 `packages/scaffold-ui` 的软链。开发命令一律从根跑：`npm run dev` / `build` / `test:unit`（`build` 与 `test:unit` 会分别进包和进宿主各跑一遍）。
+- npm workspaces：仓库根 `package.json` 声明 `packages/*` 与 `scaffold-vue`，锁文件在根（`package-lock.json`），`scaffold-vue/node_modules/@yuanda-lowcode-ai/scaffold-ui` 是指向 `packages/scaffold-ui` 的软链。开发命令一律从根跑：`npm run dev` / `build` / `test:unit`（`build` 与 `test:unit` 会分别进包和进宿主各跑一遍）。
 - 包名前缀：`com.scaffold`；启动类：`scaffold-system/scaffold-admin/src/main/java/com/scaffold/admin/ScaffoldAdminApplication.java`。
 - 配置：`scaffold-system/scaffold-admin/src/main/resources/application.yml`、`application-dev.yml`；前端代理：`scaffold-vue/vite.config.ts`。
 - 数据库初始化：`scaffold-system/sql/V1__init_schema.sql`（15 张表，含 `lc_tenant`，`sys_*` 表带 `tenant_id`）、`V2__seed_data.sql`（首行平台租户 id=1 种子）、`V3__system_resource_menu.sql`；开发工具：`scaffold-admin/src/main/java/com/scaffold/admin/util/DbInit.java`。
@@ -34,7 +34,7 @@
 
 ## 三、模块文件地图
 
-下列后端业务路径均相对于 `scaffold-system`，宿主前端路径均相对于 `scaffold-vue/src`；物料包内文件写作 `packages/scaffold-ui/src/...`（表格里同一目录后续的 `Xxx.vue` 省略前缀，宿主引用时写成 `@scaffold/ui/components/ui/Xxx.vue`）。
+下列后端业务路径均相对于 `scaffold-system`，宿主前端路径均相对于 `scaffold-vue/src`；物料包内文件写作 `packages/scaffold-ui/src/...`（表格里同一目录后续的 `Xxx.vue` 省略前缀，宿主引用时写成 `@yuanda-lowcode-ai/scaffold-ui/components/ui/Xxx.vue`）。
 
 | 后端模块 | Controller | Service | Mapper / 表 | 来源 |
 | --- | --- | --- | --- | --- |
@@ -79,7 +79,7 @@
 | 公共能力 | 文件入口 | 用途 |
 | --- | --- | --- |
 | 列表模板与数据状态 | `packages/scaffold-ui/src/components/business/ListPage.vue`、`packages/scaffold-ui/src/composables/list.ts` | 查询、重置、分页、导出、勾选、底部批量浮条及树列表；`altView` + `#alt` 换成画布 / 看板 / 矩阵；行操作由 `RowActions.vue` + `RowMenuItem.vue` 承载（前几个平铺图标按钮，其余收进 teleport 到 body 的「更多」菜单，横向滚动与 overflow 裁剪都盖不住） |
-| 版式组件 | `packages/scaffold-ui/src/components/business/OrgCanvas.vue`、`BoardView.vue`、`PermissionMatrix.vue`、`PostLadder.vue`、`PermissionTrace.vue`、`MenuStarMap.vue`、`DictSwatchbook.vue`、`GeneratorPipeline.vue`、`packages/scaffold-ui/src/composables/view.ts` | 组织画布、看板分列（拖拽 + 键盘移动）、角色权限矩阵、岗位阶梯、权限溯源（三层下钻）、导航星系（三层下钻）、字典样本册、生成流水线、按页面记忆视图 |
+| 版式组件 | `packages/scaffold-ui/src/components/business/OrgCanvas.vue`、`BoardView.vue`、`PermissionMatrix.vue`、`PostLadder.vue`、`PermissionTrace.vue`、`MenuStarMap.vue`、`DictSwatchbook.vue`、`packages/scaffold-ui/src/composables/view.ts` | 组织画布、看板分列（拖拽 + 键盘移动）、角色权限矩阵、岗位阶梯、权限溯源（三层下钻）、导航星系（三层下钻）、字典样本册、按页面记忆视图。`GeneratorPipeline.vue` 不在此列：它只服务被裁掉的代码生成页，留在宿主 `scaffold-vue/src/components/platform/` |
 | 图谱与问答 | `packages/scaffold-ui/src/components/charts/RelationGraph.vue`、`packages/scaffold-ui/src/composables/neural.ts`、`packages/scaffold-ui/src/components/business/InsightPanel.vue`、`AskDock.vue`、`packages/scaffold-ui/src/composables/ask.ts`、`packages/scaffold-ui/src/composables/viewport.ts`、`components/NeuralNet.vue` | 通用关系图（弹簧布局变形、脉冲、扇形触须；`variant="stage"` 为珍珠玻璃图谱舞台）、舞台 Canvas 绘制件（珍珠球、玻璃刻度表盘、连线与脉冲、背景网络、轨道、台阶光柱）、分析栏、问答坞、本地规则问答引擎、共享视口平移缩放、登录神经网络背景 |
 | 仪器化组件 | `packages/scaffold-ui/src/components/ui/Metric.vue`、`Odometer.vue`、`SectionLabel.vue`、`SpecPlate.vue`、`DeltaPill.vue`、`Ruler.vue`、`HoverCard.vue`、`Descriptions.vue` + `DescriptionsItem.vue` | 显示级读数、逐位滚动、编号眉标、规格铭牌、环比、刻度尺、悬停名片、只读键值汇总（复用 `.kv-grid` 材质，配 `Panel` 的 `padded`） |
 | 图表 | `packages/scaffold-ui/src/components/charts/TrendChart.vue`、`BarChart.vue`、`TickRing.vue`、`Swimlane.vue` | 自绘 SVG：形变折线与准星（稀疏数据茎叶点，`max` 可锁定纵轴上限给百分比一类有界序列用）、柱状、刻度环、时间轴泳道（默认聚焦有操作时段）；工作台数据权限为页内占比条 |
@@ -88,7 +88,7 @@
 | 外壳 | `components/layout/AppShell.vue`、`Sidebar.vue`、`Topbar.vue`、`CommandPalette.vue` | 导航、移动侧栏、滚动凝结顶栏、命令面板（最近访问 / 页面 / 用户 / 动作）与账号操作 |
 | 请求与会话 | `api/http.ts`、`api/session.ts`、`composables/auth.ts`、`router/index.ts` | 响应解包、存储、401 处理、动态路由与会话清理；`download` 走 GET 查询串、`downloadForm` 走 POST + 表单参数，两者共用同一套 401 与附件失败处理；`sys_menu.component` 由 `COMPONENT_ALIAS` 显式别名 + `import.meta.glob('../views/**/*.vue')` 约定解析，新增页面不必改 `auth.ts` |
 | 外观与动效 | `packages/scaffold-ui/src/composables/appearance.ts`、`motion.ts`、`focus.ts` | 主题、密度、GSAP、浮层层级与焦点 |
-| 样式 | `packages/scaffold-ui/src/styles/theme.css`（单一入口）内含 `tokens.css`、`base.css`、`materials.css`、`components.css`、`instruments.css`、`layout.css`、`pages.css` | 珍珠玻璃主题随包发布，`@import` 顺序就是原来的七层加载顺序；宿主 `main.ts` 只留 `import '@scaffold/ui/theme.css'` 一行 |
+| 样式 | `packages/scaffold-ui/src/styles/theme.css`（单一入口）内含 `tokens.css`、`base.css`、`materials.css`、`components.css`、`instruments.css`、`layout.css`、`pages.css` | 珍珠玻璃主题随包发布，`@import` 顺序就是原来的七层加载顺序；宿主 `main.ts` 只留 `import '@yuanda-lowcode-ai/scaffold-ui/theme.css'` 一行 |
 
 | 部署链路 | 文件入口 | 用途 |
 | --- | --- | --- |
@@ -252,7 +252,7 @@
 | 模型没有版本历史 | 模型改动只体现在下次发布的 diff 里，库里不留版本（`lc_model.version` / `config` 本期不建） | 需要「回滚某个模型定义」时再设计，别和 `lc_page_version` 混为一谈 |
 | 真机推送 | 已对本机 → GitHub 真实空仓库跑通：282 个文件推上 `platform-generated`（提交 `36c8021`），`sync_status=2`、`main` 未被写、回读远端一致；过程中修掉系统代理劫持与缺 BouncyCastle 两处 | 租户各带凭据、以及 deploy key 一把只绑一个仓库的限制（现在每台主机一把账号级 key 还是每仓库一把 deploy key）需要定口径，属 `lc_tenant_credential` 那一档的事 |
 | 容器里的仓库凭据 | compose 已把 `~/.ssh`、工作区卷、Maven/npm 缓存与底座 checkout 挂进后端，流程写在 `docs/docker-deployment.md` 的「低代码平台的工作区与仓库凭据」一节 | 第一次上容器部署时按那节逐步跑一遍；私钥带口令或 `known_hosts` 缺指纹都会在初始化时如实报错 |
-| 交付快照的「能起能登录」 | 已实测一次：282 文件落盘 → 离线 `mvn package` → 前端 `npm ci` + `build` → 用交付侧 V1–V3 建新库 → 起服务、登录、菜单里没有 `/tool` 与 `/lowcode` | 这条链依赖本机 Maven/npm 缓存；CI 里要长期守住就得把「干净 `npm ci`」也放进去（方案 §九 已列为风险） |
+| 交付快照的「能起能登录」 | 已实测两次：PR 4 是 282 文件（含组件源码）离线 `mvn package` + `npm ci` + 建库起服务登录；PR 4B 抽包后是 **177 文件**，前端依赖换成 npm 包 `@yuanda-lowcode-ai/scaffold-ui`，用 `npm pack` 出的 tarball 走 `file:` 依赖装成功后 `vue-tsc` + `vite build` 通过 | 这条链依赖本机 Maven/npm 缓存；CI 里要长期守住就得把「干净 `npm install`」也放进去（方案 §九 已列为风险）。交付项目的前端**没有锁文件**，可复现性由 `@yuanda-lowcode-ai/scaffold-ui` 版本号承担 |
 | 租户开通流程 | 自助注册与「租户管理里手工新增（填了管理员即开通）」两条路径共用 `TenantProvisionService`，菜单模板当前是**复制平台租户的业务菜单** | 菜单模板要成为可维护的一等资产时再建 `lc_menu_template`，避免长期靠「平台租户恰好配得对」 |
 | 注册接口默认公开 | 任何能访问前端的人都能自助开出租户，只靠验证码与编码/账号唯一性挡 | 对外暴露前先决定是否加审核开关或白名单 |
 | 拦截器覆盖不到的写入 | 关联中间表与显式跨租户写参数（`insertForTenant`）靠服务层校验与显式条件 | 后续新增无 `tenant_id` 的关联表时，必须同步加归属校验，不能只靠拦截器 |

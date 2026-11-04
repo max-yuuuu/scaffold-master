@@ -43,7 +43,7 @@ let installed: ScaffoldUiOptions | null = null
 /** 包内取注入能力的唯一入口：未安装直接报错，不静默回退到宿主模块 */
 export function scaffoldUi(): ScaffoldUiOptions {
   if (!installed) {
-    throw new Error('@scaffold/ui 未安装：请在宿主 main.ts 调用 installScaffoldUi(app, { http, permission, dict })')
+    throw new Error('@yuanda-lowcode-ai/scaffold-ui 未安装：请在宿主 main.ts 调用 installScaffoldUi(app, { http, permission, dict })')
   }
   return installed
 }

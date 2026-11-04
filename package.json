@@ -11,9 +11,9 @@
   "scripts": {
     "dev": "npm --workspace scaffold-vue run dev",
     "build": "npm run typecheck && npm --workspace scaffold-vue run bundle",
-    "typecheck": "npm --workspace @scaffold/ui run typecheck && npm --workspace scaffold-vue run typecheck",
+    "typecheck": "npm --workspace @yuanda-lowcode-ai/scaffold-ui run typecheck && npm --workspace scaffold-vue run typecheck",
     "preview": "npm --workspace scaffold-vue run preview",
-    "test:unit": "npm --workspace @scaffold/ui run test:unit && npm --workspace scaffold-vue run test:unit"
+    "test:unit": "npm --workspace @yuanda-lowcode-ai/scaffold-ui run test:unit && npm --workspace scaffold-vue run test:unit"
   },
   "license": "MIT"
 }

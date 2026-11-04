@@ -2,7 +2,7 @@
    品牌与全局配置：换品牌只改这里。
    导航与业务行类型随物料包提供，这里按原路径转出，宿主页面继续从 @/data 引用。
    ============================================================ */
-export type { BaseRow, Dept, Menu, NavGroup, NavLeaf } from '@scaffold/ui/types'
+export type { BaseRow, Dept, Menu, NavGroup, NavLeaf } from '@yuanda-lowcode-ai/scaffold-ui/types'
 
 export interface BeianItem {
   /** 备案号显示文本，须与工信部 / 公安备案截图一致 */
