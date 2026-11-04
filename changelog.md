@@ -1,5 +1,29 @@
 # Changelog
 
+## 2026-11-04（底座升级的两个缺口：base 侧留痕落地 + 两条部署不变式）
+
+用户对 §5.2「A 档固定」提出两点质疑：① 配置文件与 app 壳不随发布更新，那平台级的框架迭代怎么下发到存量项目；② 模型删了字段而扩展代码还在引用，只靠交付时编译 + 合并时 diff 不友好。方案文档先按建议改定（A 档另设人工发起的「底座升级」动作 + 三方合并 + 合并请求人审；C 档发布前做引用体检、默认阻断；命名口径收口为 `{Cls}Extension`，`VO`/`Query`/`types.ts` 作废），随后追问「具体怎么升级」，暴露出两个真缺口，这一轮把它们处理掉。
+
+- **缺口 1（必须现在做，事后补不回来）：三方合并的 base 侧没有留痕。** 库里只存了 `base_scaffold_sha` 一个字符串，`last_commit_sha` 又每次发布都被覆盖 —— 光有 sha 拿不到内容，而项目仓库里那个交付提交过一阵就没人认得出是哪个。没有 base 就只是两份文件的 diff，平台无法判断该覆盖谁，正是「静默覆盖项目私有配置」那个担心。修法：新增 `PlatformBaseTag`（tag 名 `yuanda/platform-base/{底座提交号}` + 附注说明），`GitGateway` 增 `tagCommit` / `pushTag`（`JGitGateway` 把分支推送与 tag 推送共用的 refspec 状态校验提成 `push()`），初始化每交付一份完整 A 档快照就给那个提交打附注 tag 并推到项目仓库。三条路径都覆盖：空仓库首次提交、非空仓库全量同步提交、以及**与远端一致没有新提交**（此时 tag 打在仓库里已有的那个提交上，发布分支优先、没有就落主干 —— 存量项目手工把交付内容合进主干后再来初始化就是这个形状）。
+- **口径**：tag **只创建、永不移动、永不删除**（移动它等于改掉上一轮升级的 base，三方合并会算出错的结果），同名已存在就原样留着；tag 推不上去（仓库侧 tag 保护）**不回滚初始化**，只在 `sync_message` 与初始化结果里留告警 —— 分支已经推好了，不该因为一个 tag 让整次动作失败并删工作区；tag 推送失败抛的是普通 `BusinessException` 而不是 `WorkspaceGitException`，避免把项目状态误打成「与远端分叉」。
+- **底座 checkout 读不到提交号时如实喊出来**：只拷源码树（tarball、`docker cp`）时 `headSha` 返回 null，原来静默留空。现在初始化照做，但把「该项目后续无法做三方底座升级，请把带 .git 的底座仓库挂给平台」写进 `sync_message`，工作区读数新增 `baseScaffoldSha` / `baseTag` / `baseTagExists`（三态：远端已有 / 远端缺 / 工作区不在时未核对），项目抽屉「底座标记 tag」一行按三态显示。
+- **缺口 2 因此大幅缩水**：三方合并的三个输入是 ours = 项目 `main`、theirs = 按底座 checkout **当前 HEAD** 现生成、base = 项目仓库的 tag，**三者都不需要平台侧保留底座 git 历史**。历史只剩「落后多少个提交」那个计数的装饰用途，拿不到就退化为只给文件级差异清单。剩下的是两条部署不变式：底座 checkout 必须带 `.git`；**平台镜像与底座 checkout 必须成对更新** —— 裁剪清单在后端代码里、底座源码在 checkout 里，版本错开就是「按旧清单裁新源码」，而 tag 记的是新源码的提交号，base 成了假话。当前没有自动核对（PR 8 可加构建期烘进镜像的 sha 与 checkout HEAD 比对），靠部署流程约束。
+- **未做但已记清**：冲突解决本期只列冲突文件，真正的解决走本地 `git fetch && git merge platform-upgrade/{sha}`，浏览器内合并编辑器不在 PR 8 范围；底座升级动作本身（生成 theirs、三方合并、推升级分支、开合并请求、合并后重打 tag）仍是 PR 8 的活。
+- **验证**：`JGitGatewayTest` 8→10 例（真机裸仓库验 tag 创建/推送/同名不移动，以及 tag 推送被拒时不是 `WorkspaceGitException`）；`ProjectWorkspaceApiTest` 10→15 例（tag 钉进仓库且指向本次交付提交、同名已存在不重推不移动、内容与远端一致时打在已有提交上且不推分支、tag 推送失败仍就绪但留告警、无底座提交号时如实告警）。后端两处全绿，前端 `vue-tsc`（包 + 宿主）全绿。
+- **文档**：方案 §5.2 补三方合并输入表、base 侧留痕机制与两条部署不变式；PR 4 行补记 tag、PR 8 行写明三个输入与「缺 tag 的项目被挡住」、风险表「脚手架升级下发困难」一行改为 tag 方案；`docs/docker-deployment.md` 平台专属段把「底座源码 checkout」扩成三条子项（必须带 `.git`、只读挂载所以平台不 fetch/pull、动底座就重建镜像）并新增第 4 条「项目仓库要允许推 tag」；`PROJECT_MAP.md` 仓库与工作区链路行加 `PlatformBaseTag`，事实清单加一条完整机制。
+- **遗留**：在本轮之前已初始化的项目（含真机那个存量项目）没有这个 tag。补法有两条 —— 挂带 `.git` 的底座 checkout 后「清空工作区 → 重新初始化」（会走「内容与远端一致」那条新路径自动补 tag），或在项目仓库手工 `git tag yuanda/platform-base/{sha} {交付提交} && git push origin --tags`。两者都要推远端，等用户点头再做。
+
+## 2026-11-04（PR 5A：FreeMarker 渲染骨架与实体模板）
+
+PR 5 的第一步，只搭「渲染 + 输入派生」的骨架并用实体模板验证形状，四套后端模板与前端模板留到 5B/5D。用户对 PR 5 的口径是**可读性优先**：模板文件要适合人读，所以按「产物形态」分目录（`backend/`、`frontend/`、`sql/`、`_shared/`），文件名就是产物名（`Entity.java.ftl`），派生逻辑一律留在 Java 侧，模板只做插值与循环。
+
+- **依赖**：`scaffold-lowcode` 加 `org.freemarker:freemarker`（版本由 Spring Boot BOM 管），模板随本模块 resources 走 —— 与 JGit 一样只落平台侧模块，交付项目不带它。
+- **`TemplateRenderer`**：`Configuration.VERSION_2_3_32` + `setClassLoaderForTemplateLoading(..., "templates/lowcode")` + `setNumberFormat("computer")`（不让数字被本地化成 `1,000`）+ `RETHROW_HANDLER` + `setLogTemplateExceptions(false)`；渲染失败包成 `BusinessException("模板渲染失败：{模板名}（…）")`，模板名与根因都回给人。
+- **`GenerationInput.of(project, model, fields)`**：把三张表的行派生成模板要的口径 —— `module` / `className` / `resourceName` / `tableName` / `modelName` / `modelDesc` / `permissionPrefix` / `apiPath` / `tree` / `logicDelete` / `dataScope` / `audit` / `fields` / `listFields` / `queryFields` / `formFields` / `imports`（排序后输出，保证同样输入得到同样字节）/ `primaryField`；每个字段派生 `code` / `name` / `desc` / `javaField` / `javaType` / `column` / `columnType` / `primary` / `autoIncrement` / `nullable` / `unique` / `required` / `list` / `query` / `queryOperator` / `insert` / `edit` / `formType` / `dictType` / `defaultValue`。**读的是库里已经算好的 `java_type` / `column_type`**（`FieldType` 是唯一事实源），模板侧不再二次推导；`columnType` 负责合成 `varchar(64)` / `decimal(18,2)` 这种带参数的写法，`queryOperator` 走 `QueryType.of(...).operator()`，`truth()` 同时认 `Boolean` / `Number` / `"1"`。
+- **`GeneratedFile`**：`record (path, content, tier)` + `enum Tier { GENERATED, EXTENSION }`，为 5E 的 A/B/C 分档与「存在即跳过」先占好形状。
+- **模板**：`_shared/auditFields.ftl` 提供 `declarations` / `accessors` 两个宏（`createBy` / `createTime` / `updateBy` / `updateTime`，被实体与后续的 Row / WriteRequest 共用）；`backend/Entity.java.ftl` 出单类 POJO —— 类注释写清「本类由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖，业务逻辑写 `{Cls}Extension`（C 档）」，每个字段带中文说明与列名/列类型注释，getter/setter 按字段顺序输出，审计四字段按 `audit` 开关追加。
+- **验证**：`EntityTemplateTest` 5 例 —— POJO 形状（package、字段、访问器、审计开关）、同样输入两次渲染字节一致、派生只在 Java 侧（模板里不出现类型推导）、模板名写错时报错带模板名。
+
 ## 2026-11-04（PR 4B 收尾：存量项目真机升级，顺带修掉两个交付链缺陷）
 
 用户要求「按方案处理存量项目」。选的路径是**不删历史**：把上次真机推出去的旧形态（282 文件，只有 `platform-generated` 一条分支）先推成 `main`，再让平台对它做一次全量初始化 —— 这等于把「存量项目怎么升级到抽包后的形态」真跑了一遍。

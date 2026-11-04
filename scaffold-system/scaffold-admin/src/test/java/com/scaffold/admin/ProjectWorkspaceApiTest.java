@@ -1,5 +1,6 @@
 package com.scaffold.admin;
 
+import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.RemoteRef;
 import com.scaffold.lowcode.workspace.ScaffoldSnapshotWriter;
@@ -126,6 +127,126 @@ class ProjectWorkspaceApiTest {
             assertThat(Files.isRegularFile(workspace.resolve("scaffold-vue/src/components/business/ListPage.vue"))).isFalse();
             assertThat(Files.isDirectory(workspace.resolve("scaffold-vue/src/components/business"))).isFalse();
             assertThat(String.valueOf(projectRow(id).get("sync_message"))).contains("清理快照外旧文件");
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void 初始化把底座标记tag钉进项目仓库() {
+        String admin = platformToken();
+        String code = newCode("ittag");
+        long id = createProject(admin, code, REPO);
+        try {
+            gateway.remoteRefs = List.of();
+            ResponseEntity<Map<String, Object>> response = post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            Map<String, Object> data = dataOf(response.getBody());
+
+            String baseSha = String.valueOf(projectRow(id).get("base_scaffold_sha"));
+            String expectedTag = "yuanda/platform-base/" + baseSha;
+            // tag 指向的就是这次交付的那个提交：底座升级三方合并要从它取 base 侧内容
+            assertThat(gateway.pushedTags).containsExactly(expectedTag);
+            assertThat(gateway.localTags).containsEntry(expectedTag, String.valueOf(data.get("commitSha")));
+            assertThat(data).containsEntry("baseTag", expectedTag);
+
+            Map<String, Object> workspace = dataOf(get("/api/lowcode/projects/" + id + "/workspace", admin));
+            assertThat(workspace).containsEntry("baseTag", expectedTag).containsEntry("baseTagExists", true);
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void 同名底座标记已存在时不重推也不移动() {
+        String admin = platformToken();
+        String code = newCode("ittagkeep");
+        long id = createProject(admin, code, REPO);
+        try {
+            // 同一个底座版本已经交付过：远端已有那个 tag，且指向的是上一轮的提交
+            gateway.remoteRefs = List.of(new RemoteRef("refs/heads/main", "1".repeat(40)),
+                    new RemoteRef("refs/tags/yuanda/platform-base/" + "b".repeat(40), "9".repeat(40)));
+            gateway.legacyFormOnClone = true;
+            assertThat(post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin).getStatusCode())
+                    .isEqualTo(HttpStatus.OK);
+
+            assertThat(gateway.pushedTags).isEmpty();
+            assertThat(gateway.localTags).isEmpty();
+            // 远端那个 tag 没被改动：移动它等于改掉上一轮升级的 base
+            assertThat(gateway.remoteRefs).anySatisfy(ref -> {
+                assertThat(ref.name()).isEqualTo("refs/tags/yuanda/platform-base/" + "b".repeat(40));
+                assertThat(ref.sha()).isEqualTo("9".repeat(40));
+            });
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void 内容与远端一致时底座标记打在已有提交上() {
+        String admin = platformToken();
+        String code = newCode("ittagsame");
+        long id = createProject(admin, code, REPO);
+        try {
+            // 存量项目手工把交付内容合进主干后再来初始化：这次没有新提交，但 base 仍要留痕
+            gateway.remoteRefs = List.of(new RemoteRef("refs/heads/main", "1".repeat(40)),
+                    new RemoteRef("refs/heads/platform-generated", "2".repeat(40)));
+            gateway.legacyFormOnClone = true;
+            gateway.noChangesOnCommit = true;
+
+            ResponseEntity<Map<String, Object>> response = post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(String.valueOf(dataOf(response.getBody()).get("message"))).contains("内容与远端一致");
+
+            assertThat(gateway.pushedTags).containsExactly("yuanda/platform-base/" + "b".repeat(40));
+            assertThat(gateway.localTags).containsValue("2".repeat(40));
+            // 没有新内容就不推分支，只补 tag
+            assertThat(gateway.pushedBranches).isEmpty();
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void tag推送失败不影响初始化就绪但留下告警() {
+        String admin = platformToken();
+        String code = newCode("ittagfail");
+        long id = createProject(admin, code, REPO);
+        try {
+            gateway.remoteRefs = List.of();
+            gateway.tagPushFails = true;
+
+            ResponseEntity<Map<String, Object>> response = post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(dataOf(response.getBody())).containsEntry("syncStatus", 2);
+
+            String message = String.valueOf(projectRow(id).get("sync_message"));
+            assertThat(message).contains("固定代码已推送到").contains("底座标记 tag").contains("做不了三方底座升级");
+            assertThat(gateway.pushedBranches).containsExactly("platform-generated");
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void 底座checkout读不到提交号时如实告警() {
+        String admin = platformToken();
+        String code = newCode("ittagnosha");
+        long id = createProject(admin, code, REPO);
+        try {
+            gateway.remoteRefs = List.of();
+            gateway.noBaseSha = true;
+
+            ResponseEntity<Map<String, Object>> response = post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin);
+            // 初始化本身照做：拿不到底座提交号不该挡住交付，但不能静默
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(dataOf(response.getBody())).containsEntry("syncStatus", 2).containsEntry("baseTag", null);
+            assertThat(gateway.pushedTags).isEmpty();
+
+            String message = String.valueOf(projectRow(id).get("sync_message"));
+            assertThat(message).contains("读不到提交号").contains("无法做三方底座升级");
+            Map<String, Object> workspace = dataOf(get("/api/lowcode/projects/" + id + "/workspace", admin));
+            assertThat(workspace).containsEntry("baseTag", null).containsEntry("baseTagExists", false);
         } finally {
             cleanup(code, id);
         }
@@ -431,7 +552,15 @@ class ProjectWorkspaceApiTest {
         boolean dirty;
         /** clone 出来的仓库按「抽包前的旧形态」铺几个文件，用来验全量初始化会清理快照外的遗留 */
         boolean legacyFormOnClone;
+        /** 底座 checkout 不是 git 仓库：headSha 返回 null，用来验平台会如实喊出来 */
+        boolean noBaseSha;
+        /** 远端拒绝接收 tag（tag 保护一类），初始化不该因此回滚 */
+        boolean tagPushFails;
+        /** 快照与远端完全一致：commitAll 返回 null，走「无需提交」那条路 */
+        boolean noChangesOnCommit;
         final List<String> pushedBranches = new ArrayList<>();
+        final List<String> pushedTags = new ArrayList<>();
+        final Map<String, String> localTags = new LinkedHashMap<>();
 
         void reset() {
             remoteRefs = new ArrayList<>();
@@ -439,7 +568,12 @@ class ProjectWorkspaceApiTest {
             localShaOverride = null;
             dirty = false;
             legacyFormOnClone = false;
+            noBaseSha = false;
+            tagPushFails = false;
+            noChangesOnCommit = false;
             pushedBranches.clear();
+            pushedTags.clear();
+            localTags.clear();
         }
 
         @Override
@@ -486,6 +620,9 @@ class ProjectWorkspaceApiTest {
 
         @Override
         public String commitAll(Path dir, String message) {
+            if (noChangesOnCommit) {
+                return null;
+            }
             return localShaOverride != null ? localShaOverride : "a".repeat(40);
         }
 
@@ -516,7 +653,21 @@ class ProjectWorkspaceApiTest {
 
         @Override
         public String headSha(Path repoDir) {
-            return "b".repeat(40);
+            return noBaseSha ? null : "b".repeat(40);
+        }
+
+        @Override
+        public boolean tagCommit(Path dir, String tagName, String sha, String message) {
+            return localTags.putIfAbsent(tagName, sha) == null;
+        }
+
+        @Override
+        public void pushTag(Path dir, String tagName) {
+            if (tagPushFails) {
+                throw new BusinessException("远端拒绝推送 底座标记 tag " + tagName + "：模拟 tag 保护");
+            }
+            pushedTags.add(tagName);
+            remoteRefs = withTag(remoteRefs, tagName, localTags.get(tagName));
         }
 
         private String remoteSha(String branch) {
@@ -528,6 +679,15 @@ class ProjectWorkspaceApiTest {
             next.removeIf(ref -> branch.equals(ref.branchName()));
             if (sha != null) {
                 next.add(new RemoteRef("refs/heads/" + branch, sha));
+            }
+            return next;
+        }
+
+        private static List<RemoteRef> withTag(List<RemoteRef> refs, String tagName, String sha) {
+            List<RemoteRef> next = new ArrayList<>(refs);
+            next.removeIf(ref -> tagName.equals(ref.tagName()));
+            if (sha != null) {
+                next.add(new RemoteRef("refs/tags/" + tagName, sha));
             }
             return next;
         }

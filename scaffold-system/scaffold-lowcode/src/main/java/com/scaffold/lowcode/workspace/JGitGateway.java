@@ -46,6 +46,7 @@ public class JGitGateway implements GitGateway {
 
     private static final String REMOTE = "origin";
     private static final String HEADS_PREFIX = "refs/heads/";
+    private static final String TAGS_PREFIX = "refs/tags/";
 
     private final int timeoutSeconds;
     private final PersonIdent committer;
@@ -165,7 +166,47 @@ public class JGitGateway implements GitGateway {
     @Override
     public void pushBranch(Path dir, String branch) {
         // 不带 + 的 refspec：远端若非快进会直接拒绝，平台永不 force-push
-        RefSpec refSpec = new RefSpec(HEADS_PREFIX + branch + ":" + HEADS_PREFIX + branch);
+        push(dir, new RefSpec(HEADS_PREFIX + branch + ":" + HEADS_PREFIX + branch), "分支 " + branch, true);
+    }
+
+    @Override
+    public boolean tagCommit(Path dir, String tagName, String sha, String message) {
+        try (Git git = open(dir)) {
+            Repository repository = git.getRepository();
+            if (repository.findRef(TAGS_PREFIX + tagName) != null) {
+                // 已存在就绝不移动：这个 tag 是某一轮交付的 base，改了它三方合并会算错
+                return false;
+            }
+            ObjectId target = repository.resolve(sha);
+            if (target == null) {
+                throw new BusinessException("要打底座标记的提交不在工作区里：" + sha);
+            }
+            RevCommit commit = repository.parseCommit(target);
+            git.tag()
+                    .setName(tagName)
+                    .setObjectId(commit)
+                    .setMessage(message)
+                    .setTagger(committer)
+                    .setAnnotated(true)
+                    .call();
+            return true;
+        } catch (GitAPIException | IOException e) {
+            throw new BusinessException("创建底座标记 tag " + tagName + " 失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public void pushTag(Path dir, String tagName) {
+        push(dir, new RefSpec(TAGS_PREFIX + tagName + ":" + TAGS_PREFIX + tagName), "底座标记 tag " + tagName, false);
+    }
+
+    /**
+     * 推一条 refspec。
+     *
+     * @param repoLevelFailure 远端拒绝时是否按「仓库分歧」上报：分支推送失败要改 {@code sync_status}，
+     *                         tag 推送失败只该当告警，所以抛的是普通业务异常
+     */
+    private void push(Path dir, RefSpec refSpec, String label, boolean repoLevelFailure) {
         try (Git git = open(dir)) {
             Iterable<PushResult> results = git.push()
                     .setRemote(REMOTE)
@@ -178,14 +219,21 @@ public class JGitGateway implements GitGateway {
                     if (update.getStatus() != RemoteRefUpdate.Status.OK
                             && update.getStatus() != RemoteRefUpdate.Status.UP_TO_DATE) {
                         String reason = update.getMessage() == null ? update.getStatus().name() : update.getMessage();
-                        throw new WorkspaceGitException(ProjectSyncStatus.DIVERGED,
-                                "远端拒绝推送 " + branch + "：" + reason
-                                + "（分支保护或历史不一致，请在仓库侧处理，平台不做强推）");
+                        String detail = "远端拒绝推送 " + label + "：" + reason
+                                + "（分支或 tag 保护、历史不一致，请在仓库侧处理，平台不做强推）";
+                        if (repoLevelFailure) {
+                            throw new WorkspaceGitException(ProjectSyncStatus.DIVERGED, detail);
+                        }
+                        throw new BusinessException(detail);
                     }
                 }
             }
         } catch (GitAPIException | IOException e) {
-            throw new WorkspaceGitException(ProjectSyncStatus.UNREACHABLE, describe("推送分支 " + branch + " 到 origin 失败", "", e));
+            String detail = describe("推送 " + label + " 到 origin 失败", "", e);
+            if (repoLevelFailure) {
+                throw new WorkspaceGitException(ProjectSyncStatus.UNREACHABLE, detail);
+            }
+            throw new BusinessException(detail);
         }
     }
 

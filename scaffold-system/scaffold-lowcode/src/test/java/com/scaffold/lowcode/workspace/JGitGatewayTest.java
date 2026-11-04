@@ -1,5 +1,6 @@
 package com.scaffold.lowcode.workspace;
 
+import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import org.eclipse.jgit.api.Git;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,8 +19,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * JGit 行为验证（方案 §10.3 标注的技术风险点之一）。
  *
- * <p>这里用本机临时裸仓库当真仓库跑，覆盖三条最容易出事的语义：空仓库的未出生 HEAD 能不能直接
- * 提交并显式建分支、非快进推送会不会被如实拒绝（平台不强推）、脏与未推送能不能查出来。
+ * <p>这里用本机临时裸仓库当真仓库跑，覆盖最容易出事的几条语义：空仓库的未出生 HEAD 能不能直接
+ * 提交并显式建分支、非快进推送会不会被如实拒绝（平台不强推）、脏与未推送能不能查出来、
+ * 底座标记 tag 能不能创建推送且同名时不被移动。
  * 远端主机（GitHub / 自建 GitLab）的 SSH 与 known_hosts 行为仍需要在部署时再跑一次真机验证。
  */
 class JGitGatewayTest {
@@ -165,6 +167,51 @@ class JGitGatewayTest {
         assertThat(gateway.isValidBranch("trailing.")).isFalse();
         assertThat(gateway.isValidBranch("")).isFalse();
         assertThat(gateway.isValidBranch(null)).isFalse();
+    }
+
+    @Test
+    void 底座标记tag能创建推送且同名时不移动() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "platform-generated");
+        write(workspace, "scaffold-system/pom.xml", "<project/>\n");
+        String first = gateway.commitAll(workspace, "chore: 第一次交付");
+        gateway.pushBranch(workspace, "platform-generated");
+
+        String tag = "yuanda/platform-base/" + "c".repeat(40);
+        assertThat(gateway.tagCommit(workspace, tag, first, "底座快照")).isTrue();
+        gateway.pushTag(workspace, tag);
+
+        assertThat(gateway.lsRemote(remoteUrl)).anySatisfy(ref -> assertThat(ref.tagName()).isEqualTo(tag));
+
+        // 同一底座版本再交付一次：同名 tag 已存在，必须原样留着 —— 移动它就改掉了 base
+        write(workspace, "scaffold-vue/package.json", "{}\n");
+        String second = gateway.commitAll(workspace, "chore: 第二次交付");
+        assertThat(second).isNotEqualTo(first);
+        assertThat(gateway.tagCommit(workspace, tag, second, "底座快照")).isFalse();
+    }
+
+    @Test
+    void tag推送被拒时不当成仓库分歧() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "gen");
+        write(workspace, "a.txt", "1\n");
+        String sha = gateway.commitAll(workspace, "chore: 提交");
+        String tag = "yuanda/platform-base/" + "d".repeat(40);
+        gateway.tagCommit(workspace, tag, sha, "底座快照");
+
+        // 别处先把同名 tag 推上去，占住这个名字
+        Path other = tempDir.resolve("other");
+        gateway.initEmpty(other, remoteUrl, "other");
+        write(other, "b.txt", "2\n");
+        String otherSha = gateway.commitAll(other, "chore: 别人的提交");
+        gateway.tagCommit(other, tag, otherSha, "别人的底座快照");
+        gateway.pushTag(other, tag);
+
+        // 第二份推不上去，但这是 tag 的问题，不能把项目状态打成「与远端分叉」
+        assertThatThrownBy(() -> gateway.pushTag(workspace, tag))
+                .isInstanceOf(BusinessException.class)
+                .isNotInstanceOf(WorkspaceGitException.class)
+                .hasMessageContaining("远端拒绝推送");
     }
 
     @Test
