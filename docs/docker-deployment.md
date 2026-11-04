@@ -127,7 +127,8 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
 ## 低代码平台的工作区与仓库凭据
 
 平台要往租户自己的 Git 仓库推固定代码，容器需要三样东西，缺一样就会在「初始化固定代码」这一步报错，
-而且报错原因会写进项目的「最近一次动作」，不用翻容器日志：
+而且报错原因会写进项目的「最近一次动作」，不用翻容器日志。第 4 条不是容器的事，是项目仓库侧的权限：
+缺它不会让初始化失败，只会留下告警。
 
 1. **工作区与构建缓存卷**：`lowcode-workspace`（各项目 clone 目录）、`maven-repo`、`npm-cache`。
    工作区只是缓存，可以从「clone + 按裁剪清单全量重生成」重建；构建缓存卷一旦没有，每次生成都要全量重下依赖。
@@ -143,6 +144,15 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
 2. **底座源码 checkout**：容器要能读到本仓库的一份代码（`LOWCODE_SCAFFOLD_SRC` 挂成只读）。
    发布产物就是从这份 checkout 按裁剪清单读出来的，所以它必须是一个 git 工作副本，
    平台的 `base_scaffold_sha` 记的就是它当时的提交号。
+   - **必须带 `.git`**：只拷源码树（tarball、`docker cp`）时读不到提交号，`base_scaffold_sha` 为空、
+     底座标记 tag 打不出来，这个项目以后做不了「底座升级」的三方合并。平台不静默容忍：初始化照做，
+     但会把原因写进项目的「最近一次动作」，项目抽屉的「底座标记 tag」一行也显示未记录。
+     补救是挂一份带 `.git` 的 checkout，清空工作区后重新初始化。
+   - **只读挂载意味着平台不会 fetch/pull**：下发的一直是这份 checkout 的**当前 HEAD**。
+     要下发新版本，由人在宿主机上 `git pull` 到目标提交，平台不代劳，也不该改宿主的代码副本。
+   - **动了底座就要重建镜像**：裁剪清单在后端代码里，底座源码在 checkout 里。两者版本错开时，
+     交付物是「按旧清单裁新源码」，而 tag 记的是新源码的提交号，base 就成了假话。
+     两件事必须成对做，当前没有自动核对（PR 8 可加构建期烘进镜像的 sha 与 checkout HEAD 比对）。
 3. **主机 SSH 密钥与 `known_hosts`**：库里只有 `repo_url` 与分支名，不存任何 token。
    私钥必须无口令（或容器内起 ssh-agent），并且目标主机指纹要预先登记：
 
@@ -163,6 +173,11 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
    HTTPS 地址（`https://github.com/...`）本期不带 token：匿名读可以，推送会被远端拒（回显
    `Authentication is required...`）。要推 HTTPS 得让平台从主机环境变量读凭据，属未交付的能力。
    推送统一建议 `git@host:org/repo.git`。平台永不 `force-push`，分支保护导致的拒绝会原样回显。
+4. **项目仓库要允许推 tag**：平台每交付一份完整的固定代码快照，就给那个提交打附注 tag
+   `yuanda/platform-base/{底座提交号}` 并推到项目仓库，它是后续「底座升级」三方合并的 base 侧
+   （机制见 `docs/lowcode-platform-proposal.md` §5.2）。仓库侧开了 tag 保护时这一步会被拒：
+   平台只在「最近一次动作」里留告警，不回滚已经推好的分支；但补上 tag 之前该项目做不了底座升级，
+   需要在仓库侧放行后重新初始化，或由人手工补 tag。平台自己永不移动或删除这个 tag。
 
 初始化与推送是同步执行的 HTTP 请求，仓库较大时可能几十秒。nginx 反代默认 60 秒读超时，
 如果超时就给 `/api` 这个 location 加 `proxy_read_timeout 300s;`（`scaffold-vue/nginx.conf`），
