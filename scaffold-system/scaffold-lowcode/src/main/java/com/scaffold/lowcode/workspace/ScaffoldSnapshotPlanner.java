@@ -32,9 +32,15 @@ public final class ScaffoldSnapshotPlanner {
      * @param sourceRoot           底座 checkout 根（本仓库的工作副本，含 {@code scaffold-system/} 与 {@code scaffold-vue/}）
      * @param scaffoldUiVersion    交付项目里 {@code @yuanda-lowcode-ai/scaffold-ui} 的依赖写法（版本号或 {@code file:} 路径），
      *                             空则用 {@link ScaffoldTrimPolicy#DEFAULT_SCAFFOLD_UI_VERSION}
+     * @param projectName          交付项目的名字，用来改写品牌（登录页大字、侧栏、浏览器标签都读那一份 {@code APP}）。
+     *                             交付的是这个项目自己的后台，不是平台的一个副本，所以这里不给空
      * @throws BusinessException 底座结构与裁剪清单不一致
      */
-    public static ScaffoldSnapshot plan(Path sourceRoot, String scaffoldUiVersion) {
+    public static ScaffoldSnapshot plan(Path sourceRoot, String scaffoldUiVersion, String projectName) {
+        String brand = projectName == null ? "" : projectName.trim();
+        if (brand.isEmpty()) {
+            throw new BusinessException("交付项目没有名字，无法改写品牌：请检查 lc_project.project_name");
+        }
         if (sourceRoot == null || !Files.isDirectory(sourceRoot)) {
             throw new BusinessException("底座源码目录不存在：" + sourceRoot + "，请检查 scaffold.lowcode.scaffold-source-root 配置");
         }
@@ -50,7 +56,7 @@ public final class ScaffoldSnapshotPlanner {
         if (!missing.isEmpty()) {
             throw new BusinessException("底座源码与裁剪清单不一致，缺少：" + String.join("、", missing));
         }
-        List<SnapshotFile> files = collect(sourceRoot, version);
+        List<SnapshotFile> files = collect(sourceRoot, version, brand);
         if (files.isEmpty()) {
             throw new BusinessException("裁剪清单没有命中任何文件：" + sourceRoot);
         }
@@ -58,7 +64,7 @@ public final class ScaffoldSnapshotPlanner {
         return new ScaffoldSnapshot(List.copyOf(files));
     }
 
-    private static List<SnapshotFile> collect(Path sourceRoot, String version) {
+    private static List<SnapshotFile> collect(Path sourceRoot, String version, String projectName) {
         List<SnapshotFile> files = new ArrayList<>();
         try {
             Files.walkFileTree(sourceRoot, new SimpleFileVisitor<>() {
@@ -83,7 +89,7 @@ public final class ScaffoldSnapshotPlanner {
                     } catch (IllegalStateException e) {
                         throw new BusinessException("裁剪标记块写法有误：" + relative + " → " + e.getMessage());
                     }
-                    byte[] delivered = substituteForDelivery(relative, stripped, version);
+                    byte[] delivered = substituteForDelivery(relative, stripped, version, projectName);
                     if (delivered != null) {
                         files.add(SnapshotFile.rewritten(relative, delivered));
                     } else if (stripped == raw) {
@@ -106,7 +112,7 @@ public final class ScaffoldSnapshotPlanner {
      * @return 改写后的字节；该文件没有任何改写块时返回 {@code null}，表示按原文件直接拷贝
      * @throws BusinessException 改写块没找到或被改成多处 —— 宁可不交付，也不交付一个装不上依赖的项目
      */
-    private static byte[] substituteForDelivery(String relative, byte[] content, String version) {
+    private static byte[] substituteForDelivery(String relative, byte[] content, String version, String projectName) {
         List<ScaffoldTrimPolicy.DeliverySubstitution> applicable = ScaffoldTrimPolicy.deliverySubstitutions().stream()
                 .filter(item -> item.path().equals(relative))
                 .toList();
@@ -116,7 +122,10 @@ public final class ScaffoldSnapshotPlanner {
         String text = new String(content, StandardCharsets.UTF_8);
         for (ScaffoldTrimPolicy.DeliverySubstitution item : applicable) {
             String from = String.join("\n", item.from());
-            String to = String.join("\n", item.to()).replace(ScaffoldTrimPolicy.SCAFFOLD_UI_VERSION_PLACEHOLDER, version);
+            String to = String.join("\n", item.to())
+                    .replace(ScaffoldTrimPolicy.SCAFFOLD_UI_VERSION_PLACEHOLDER, version)
+                    // 项目名是人在页面上打的自由文本，出现引号或反斜杠就会把 TS 字面量截断
+                    .replace(ScaffoldTrimPolicy.PROJECT_NAME_PLACEHOLDER, tsLiteral(projectName));
             int hits = countOccurrences(text, from);
             if (hits != 1) {
                 throw new BusinessException("交付改写失败：" + relative + " 里应当恰好出现 1 次「" + item.from().get(0).strip()
@@ -125,6 +134,11 @@ public final class ScaffoldSnapshotPlanner {
             text = text.replace(from, to);
         }
         return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** 单引号 TS 字符串字面量里的内容：反斜杠与引号都要翻倍 */
+    private static String tsLiteral(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
     }
 
     private static int countOccurrences(String text, String needle) {
@@ -152,6 +166,13 @@ public final class ScaffoldSnapshotPlanner {
             for (String token : tokens) {
                 if (text.contains(token)) {
                     throw new BusinessException("裁剪清单遗漏：交付文件 " + file.path() + " 仍引用 " + token);
+                }
+            }
+            // 品牌是另一类残留：它不该出现，不是因为交付项目缺哪个模块，而是因为那不是客户的项目
+            for (String token : ScaffoldTrimPolicy.forbiddenBrandReferences()) {
+                if (text.contains(token)) {
+                    throw new BusinessException("交付文件 " + file.path() + " 带着平台品牌「" + token
+                            + "」：要么补交付改写把它换成项目名，要么把它从交付清单里裁掉");
                 }
             }
         }

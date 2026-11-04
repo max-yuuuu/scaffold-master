@@ -132,6 +132,15 @@ public final class ScaffoldTrimPolicy {
     /** 交付改写里依赖版本的占位符，由 {@code scaffold.lowcode.scaffold-ui-version} 填入 */
     public static final String SCAFFOLD_UI_VERSION_PLACEHOLDER = "{SCAFFOLD_UI_VERSION}";
 
+    /** 交付改写里项目名的占位符，初始化时按 {@code lc_project.project_name} 填入 */
+    public static final String PROJECT_NAME_PLACEHOLDER = "{PROJECT_NAME}";
+
+    /**
+     * 交付产物里不许出现的平台自身品牌。交付的是项目自己的后台，登录页大字、侧栏品牌、浏览器标签
+     * 与生成物注释都读得到这些字 —— 底座里留着自己的名字（平台界面要用），交付这一份必须改写。
+     */
+    private static final List<String> FORBIDDEN_BRAND_REFERENCES = List.of("元搭低代码平台", "元搭低代码");
+
     /**
      * 交付改写：底座这几处写的是「平台自己怎么用 npm workspaces 构建」，交付项目要换成
      * 「按 npm 依赖怎么构建」。这里是整块精确匹配的行替换 —— 不做正则、不做模板引擎，
@@ -140,11 +149,24 @@ public final class ScaffoldTrimPolicy {
      * @param path     相对底座根的文件路径
      * @param from     底座里的原文（连续若干行，不含结尾换行）
      * @param to       交付项目里的替换文本，可含 {@link #SCAFFOLD_UI_VERSION_PLACEHOLDER}
+     *                 与 {@link #PROJECT_NAME_PLACEHOLDER}
      */
     public record DeliverySubstitution(String path, List<String> from, List<String> to) {
     }
 
     private static final List<DeliverySubstitution> DELIVERY_SUBSTITUTIONS = List.of(
+            // 品牌只这一份：APP.name 进登录页与浏览器标签，APP.shortName 进侧栏（composables 与路由都读它）
+            new DeliverySubstitution("scaffold-vue/src/data/index.ts",
+                    List.of("  name: '元搭低代码平台',",
+                            "  shortName: '元搭低代码',"),
+                    List.of("  name: '" + PROJECT_NAME_PLACEHOLDER + "',",
+                            "  shortName: '" + PROJECT_NAME_PLACEHOLDER + "',")),
+            // 交付项目里没有在线代码生成页（scaffold-generator 与 views/tool 都被裁掉），
+            // 登录页继续宣传它就是向客户吹一个不存在的功能
+            new DeliverySubstitution("scaffold-vue/src/views/Login.vue",
+                    List.of("  { icon: 'log', title: '操作审计', desc: '登录日志与操作日志自动记录' },",
+                            "  { icon: 'code', title: '代码生成', desc: '导入数据表，生成业务模块开发骨架' },"),
+                    List.of("  { icon: 'log', title: '操作审计', desc: '登录日志与操作日志自动记录' },")),
             new DeliverySubstitution("scaffold-vue/package.json",
                     List.of("    \"@yuanda-lowcode-ai/scaffold-ui\": \"*\","),
                     List.of("    \"@yuanda-lowcode-ai/scaffold-ui\": \"" + SCAFFOLD_UI_VERSION_PLACEHOLDER + "\",")),
@@ -224,6 +246,10 @@ public final class ScaffoldTrimPolicy {
 
     public static List<String> forbiddenSchemaReferences() {
         return FORBIDDEN_SCHEMA_REFERENCES;
+    }
+
+    public static List<String> forbiddenBrandReferences() {
+        return FORBIDDEN_BRAND_REFERENCES;
     }
 
     public static List<String> requiredRoots() {

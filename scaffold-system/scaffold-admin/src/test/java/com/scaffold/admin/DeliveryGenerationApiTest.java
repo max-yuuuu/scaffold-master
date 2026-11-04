@@ -119,6 +119,15 @@ class DeliveryGenerationApiTest {
         assertThat(read(delivery, BUSINESS_DIR + "domain/" + CLASS_NAME + ".java"))
                 .contains("package com.scaffold.business." + MODULE + ".domain;");
         compileBackend(delivery);
+
+        // 交付的是这个项目自己的后台：登录页大字、侧栏品牌与浏览器标签都读那一份 APP，
+        // 初始化时不按项目名改写，客户项目就永远显示平台自己的名字
+        assertThat(read(delivery, "scaffold-vue/src/data/index.ts")).contains("name: '交付生成验收'");
+        assertThat(read(delivery, "scaffold-vue/src/views/Login.vue")).doesNotContain("title: '代码生成'");
+        // 生成物是客户项目里的源码：注释带平台品牌或引用交付里读不到的方案文档，都是话术没跟着交付走
+        for (GeneratedFile file : delivery.files()) {
+            assertThat(file.content()).as("生成物 " + file.path()).doesNotContain("元搭").doesNotContain("方案 §");
+        }
     }
 
     @Test

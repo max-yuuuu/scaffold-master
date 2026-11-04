@@ -9,10 +9,10 @@ import { required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validat
 import { ${apiVar}, type ${className}Row, type ${className}WriteRequest } from '@/api/${module}/${resourceSlug}'
 
 /* ============================================================
-   ${modelDesc}管理。由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖。
+   ${modelDesc}管理。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
    版式固定走 ListPage + useListPage（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），
    页面只声明字段、列与动作。要加区块写到 src/views/${module}/overrides/ 里；
-   整页接管见方案 §5.2 —— 那个页面从此脱离平台托管。
+   要长期人工接管这一页，就把它改名并让发布不再产出它 —— 现在它每次发布都会被整文件覆盖。
    ============================================================ */
 
 type ${className}Query = {
@@ -141,7 +141,7 @@ async function remove(row: ${className}Row) {
 <template>
   <ListPage
     title="${modelDesc}管理"
-    desc="本页由元搭低代码平台按模型定义生成；要改字段回到设计器改模型再发布。"
+    desc="本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。"
     table-title="${modelName}列表"
     :list="list"
     :columns="columns"

@@ -119,6 +119,22 @@ class ModelCodeGeneratorTest {
     }
 
     @Test
+    void 产物里不出现平台品牌也不引用交付里没有的方案文档() {
+        // 生成物是客户项目里的源码：注释与页面文案带着「元搭低代码平台」，就等于在客户的项目里
+        // 宣传平台自己；「见方案 §5.2」这类引用更糟 —— 那份文档属平台，裁剪清单里不进交付项目，
+        // 读者按图索骥只会翻到一个不存在的文件
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
+
+        assertThat(files).allSatisfy(file -> {
+            String content = file.content();
+            assertThat(content).as("产物 " + file.path()).doesNotContain("元搭");
+            assertThat(content).as("产物 " + file.path() + " 引用了交付里读不到的方案文档").doesNotContain("方案 §");
+        });
+        // 页面顶部那句说明是给项目里的人看的，要说清「这页是生成的、要改回设计器改模型」
+        assertThat(contentOf(files, "scaffold-vue/src/views/order/Order.vue")).contains("低代码设计器");
+    }
+
+    @Test
     void 产物的档位是从路径反推出来的而不是模板自述() {
         // GeneratedFile.of 是唯一入口：模板把路径拼错就当场拒绝，错不到磁盘上
         List<String> paths = new ArrayList<>(generator.renderFiles(model(true, true), richFields())
