@@ -293,9 +293,10 @@ CREATE TABLE lc_model (
     enable_data_scope TINYINT DEFAULT 0 COMMENT '数据权限',
     enable_audit_field TINYINT DEFAULT 1 COMMENT '审计字段',
     
-    config JSON COMMENT '扩展配置',
-    status TINYINT DEFAULT 1,
-    version INT DEFAULT 1,
+    -- config / version 本期不建：config 没有读取方，版本历史属于页面侧（lc_page_version），
+    -- 模型自身的历史靠发布 diff 看。见 §10.3 PR 3b。
+    status TINYINT NOT NULL DEFAULT 1,
+    deleted TINYINT NOT NULL DEFAULT 0 COMMENT '删除标记：模型下线要留痕，页面可能还在引用它的字段',
     
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -314,7 +315,7 @@ CREATE TABLE lc_field (
     field_desc VARCHAR(256) COMMENT '描述',
     
     -- 类型
-    field_type VARCHAR(32) NOT NULL COMMENT 'STRING/INTEGER/DECIMAL/DATE/DATETIME/ENUM/FILE/REF',
+    field_type VARCHAR(32) NOT NULL COMMENT 'STRING/TEXT/INTEGER/DECIMAL/DATE/DATETIME/ENUM/FILE/REF —— TEXT 为 PR 3b 扩充：后台的备注/说明/富文本最高频，只靠 varchar 撑到几 K 会让生成的列类型与底座不一致',
     java_type VARCHAR(64) NOT NULL,
     java_field VARCHAR(64) NOT NULL,
     
@@ -501,6 +502,24 @@ CREATE TABLE IF NOT EXISTS lc_tenant_config (
 ```
 
 内置两条，PR 3 建项目与 PR 4 发布读它作为该租户下所有项目的分支默认值：`project.main_branch`（生成项目主干，人工合并的落点）与 `project.gen_branch`（平台发布只推这条分支）。
+
+### 2.2 之二 字段类型映射（PR 3b 定，代码为准）
+
+映射只定义一次：`com.scaffold.lowcode.model.FieldType`。库里 `java_type` / `column_type` 存的是**保存时算出来的结果**，模板生成时直接读，不再二次推导；前端通过 `GET /api/lowcode/models/meta` 取同一份表，界面上能看到「选了这个类型会生成什么」。
+
+| field_type | Java | 列类型（默认） | 默认控件 | 约束 |
+| --- | --- | --- | --- | --- |
+| STRING | String | varchar(255) | INPUT | 长度可改 |
+| TEXT | String | text | TEXTAREA | PR 3b 扩充 |
+| INTEGER | Integer | int | NUMBER | 自增主键升级为 Long / bigint |
+| DECIMAL | BigDecimal | decimal(18,2) | NUMBER | 精度与小数位可改 |
+| DATE | LocalDate | date | DATE | — |
+| DATETIME | LocalDateTime | datetime | DATETIME | — |
+| ENUM | String | varchar(64) | SELECT | 必须挂当前租户真实存在的字典 |
+| FILE | String | varchar(512) | UPLOAD | 存路径或 URL |
+| REF | Long | bigint | REF | 必须指向同项目模型；指向自身合法（树表 parent_id） |
+
+> **PR 5 的连带项**：`GeneratorService.javaType()` 是「导入已有表 → Java 类型」的反向映射，目前把 `date` 也算成 `LocalDateTime`。模板改造时必须与上表对齐，否则同一个 `date` 列在两条链路上得到不同答案。
 
 ### 2.3 多租户实现
 
@@ -1319,7 +1338,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 |----|------|----------|------|
 | **PR 2**<br>P0-B | `TenantLineInnerInterceptor` 自动注入；`super_admin` 切换租户旁路；登录 `tenantCode` 与按 `userId` 的身份解析；关联表写入归属校验；`lc_tenant_config`；租户管理 UI（列表/新增/编辑/启停/进入租户）；**租户自助注册**（登录页切换注册表单，提交即开通租户 + 管理员 + 菜单） | ✅ 已完成：双租户种子数据下 A 租户令牌查 B 租户记录为空、`super_admin` 切换后可见且身份权限不变、非管理员切换被拒、停用租户账号登录被拒、跨租户角色授权被拦、租户参数只在当前租户内读写（`TenantIsolationApiTest` 9 例 + 拦截器单测 5 例） | PR 1 ✅ |
 | **PR 3a**<br>P1 上 | ✅ 已完成：`lc_project` 建表（`db_*` / `deploy_*` 等无读写方的列留到 PR 5 以 ALTER 补）、`RepoUrlValidator` 协议白名单、项目 CRUD 与 `ListPage` 版式的项目管理页面、500 段「低代码」菜单，以及「补齐租户资产」接口（已有租户获得迁移新增的菜单 / 字典 / 参数） | 项目从新增到软删全链路；非法仓库地址与同分支被拒；跨租户同名编码各自可见且改删被拒（`ProjectApiTest` 3 例 + `RepoUrlValidatorTest` 4 例） | PR 2 ✅ |
-| **PR 3b / 3c**<br>P1 上 | `lc_model` / `lc_field` 建表与后端 CRUD；模型与字段配置 UI（复用 `ListPage` / `FormDialog` / `DataTable`）；租户开通流程的**手工新增分支**（自助注册路径已在 PR 2 交付：建租户 + 复制菜单树 + `tenant_admin` 角色 + 管理员账号 + 直接回令牌） | 能建模型、配字段；字段类型 → Java 类型/列类型映射表有单测；平台管理员手工新增的租户也能开通并登录 | PR 3a ✅ |
+| **PR 3b / 3c**<br>P1 上 | ✅ 已完成：`lc_model` / `lc_field` 建表与 CRUD、`FieldType` 作为类型映射的唯一事实源（库里存算好的 `java_type` / `column_type`，前端读 `/models/meta`）、字段配置走 `ListPage` + `Drawer` 主从形态；手工新增租户时填了管理员就走同一套开通流程 | 建模型、配字段；`FieldTypeTest` 7 例钉死映射表；`ModelApiTest` 5 例覆盖派生/约束/跨租户；手工开通的租户能用该账号登录并看到菜单 | PR 3a ✅ |
 | **PR 4**<br>P1 下 | JGit 接入（依赖只落 `scaffold-lowcode`）；`repo_url` 协议白名单校验 + `ls-remote` 连通性检查；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单（代码里的显式白/黑名单）+ `scaffold-business` 空壳预置**；空仓库首次初始化（§6.3） | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止 | PR 3 |
 | **PR 4B**<br>P1.5 | **抽 `@scaffold/ui`**：`packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi(app, {http, permission, dict})` 注入点；解 28 处 app 层 import；平台/演示专属组件划出包外；打 tag 发布，宿主与文档改依赖。**分两步提交**：先搬路径建 workspace（行为不变），再改注入点解耦 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）；148 处引用中不再有组件间 `@/` 互引；包被一个最小 demo app 以 git tag 依赖消费成功 | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@scaffold/ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |

@@ -37,6 +37,9 @@ class TenantIsolationApiTest {
     @Autowired
     private TestRestTemplate restTemplate;
 
+    @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
     @Test
     void 每个租户的令牌只能查到本租户的账号和参数() {
         assertThat(usernames(platformToken())).contains("admin", "chensy").doesNotContain("acmeadmin");
@@ -201,6 +204,37 @@ class TenantIsolationApiTest {
     }
 
     @Test
+    void 手工新增租户带管理员时一并开通() {
+        String admin = platformToken();
+        String tenantCode = "itprov" + System.nanoTime() % 1_000_000;
+        String username = "it_prov_admin_" + System.nanoTime() % 1_000_000;
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("tenantCode", tenantCode);
+        body.put("tenantName", "手工开通租户");
+        body.put("adminUsername", username);
+        body.put("adminPassword", "Prov@12345");
+        ResponseEntity<Map<String, Object>> created = restTemplate.exchange(
+                "/api/platform/tenants", HttpMethod.POST, new HttpEntity<>(body, bearer(admin)), MAP_TYPE);
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.OK);
+        long tenantId = ((Number) dataOf(created.getBody()).get("id")).longValue();
+        try {
+            // 账号可直接登录，且拿到的是本租户业务菜单，没有平台管理菜单
+            String token = TestAuthClient.login(restTemplate, username, "Prov@12345", tenantCode);
+            Map<String, Object> me = dataOf(get("/api/auth/me", token));
+            assertThat(me).containsEntry("tenantCode", tenantCode);
+            assertThat(listOf(me, "roles")).contains("tenant_admin");
+            assertThat(listOf(me, "permissions")).contains("system:user:list").doesNotContain("platform:tenant:list");
+            // /auth/routes 回的是 { routes: [...] }，不是分页对象
+            assertThat(routePaths(token)).contains("/dashboard", "/system/user");
+            // 菜单与字典都按平台模板复制过来了
+            assertThat(jdbcTemplateCount("sys_menu", tenantId)).isGreaterThan(30L);
+            assertThat(jdbcTemplateCount("sys_dict_type", tenantId)).isGreaterThanOrEqualTo(3L);
+        } finally {
+            jdbcTemplateTenantCleanup(tenantId);
+        }
+    }
+
+    @Test
     void 关键词查询也不能绕过租户过滤() {
         // project.main_branch 两个租户各有一条：带 keyword 的 OR 组若不整体加括号，
         // 拦截器补的 "AND tenant_id = ?" 只会绑到最后一个 OR 分支上，另一个租户的行会漏出来
@@ -222,6 +256,46 @@ class TenantIsolationApiTest {
         assertThat(TestAuthClient.login(restTemplate, "acmeadmin", "admin123", ACME_TENANT)).isNotBlank();
         ResponseEntity<Map<String, Object>> wrongTenant = TestAuthClient.loginResponse(restTemplate, "admin", "admin123", ACME_TENANT);
         assertThat(wrongTenant.getBody()).containsEntry("message", "账号或密码错误");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> routePaths(String token) {
+        Object routes = dataOf(get("/api/auth/routes", token)).get("routes");
+        List<String> paths = new java.util.ArrayList<>();
+        collectPaths((List<Map<String, Object>>) routes, paths);
+        return paths;
+    }
+
+    @SuppressWarnings("unchecked")
+    private void collectPaths(List<Map<String, Object>> nodes, List<String> paths) {
+        for (Map<String, Object> node : nodes) {
+            Object path = node.get("path");
+            if (path != null) {
+                paths.add(String.valueOf(path));
+            }
+            Object children = node.get("children");
+            if (children instanceof List<?> list) {
+                collectPaths((List<Map<String, Object>>) list, paths);
+            }
+        }
+    }
+
+    private long jdbcTemplateCount(String table, long tenantId) {
+        return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table + " WHERE tenant_id = ?", Long.class, tenantId);
+    }
+
+    private void jdbcTemplateTenantCleanup(long tenantId) {
+        jdbcTemplate.update("DELETE FROM sys_role_menu WHERE role_id IN (SELECT id FROM sys_role WHERE tenant_id = ?)", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id IN (SELECT id FROM sys_user WHERE tenant_id = ?)", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_user WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_role WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_menu WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_dict_data WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_dict_type WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_config WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM lc_tenant_config WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM sys_login_log WHERE tenant_id = ?", tenantId);
+        jdbcTemplate.update("DELETE FROM lc_tenant WHERE id = ?", tenantId);
     }
 
     private String platformToken() {

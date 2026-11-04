@@ -48,9 +48,12 @@ interface TenantForm {
   expireDate: string
   status: number
   remark: string
+  adminUsername: string
+  adminPassword: string
 }
 const emptyForm = (): TenantForm => ({
   tenantCode: '', tenantName: '', contactName: '', contactPhone: '', maxProjects: 5, expireDate: '', status: 1, remark: '',
+  adminUsername: '', adminPassword: '',
 })
 const dialog = ref(false)
 const saving = ref(false)
@@ -84,10 +87,11 @@ async function submit() {
   errors.value = validate(form, {
     tenantName: [required('请输入租户名称')],
     tenantCode: editing.value ? [] : [required('请输入租户编码'), pattern(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/, '字母开头，仅含字母、数字、下划线、短横线')],
+    adminUsername: editing.value || form.adminUsername.trim() === '' ? [] : [pattern(/^[A-Za-z][A-Za-z0-9_]{2,31}$/, '字母开头，仅含字母、数字、下划线，长度 3-32')],
   })
   if (Object.keys(errors.value).length) return
   saving.value = true
-  const payload = {
+  const payload: any = {
     tenantName: form.tenantName.trim(),
     contactName: form.contactName.trim(),
     contactPhone: form.contactPhone.trim(),
@@ -95,6 +99,11 @@ async function submit() {
     expireDate: form.expireDate.trim() || undefined,
     status: form.status,
     remark: form.remark.trim(),
+  }
+  // 管理员账号只在新增时有意义：填了就顺带把租户开通（建角色 + 复制菜单与字典）
+  if (!form.id && form.adminUsername.trim()) {
+    payload.adminUsername = form.adminUsername.trim()
+    payload.adminPassword = form.adminPassword.trim() || undefined
   }
   try {
     if (form.id) {
@@ -251,6 +260,14 @@ const isCurrentTenant = (row: TenantRow) => currentUser.value?.tenantId === row.
       <Field label="备注" span>
         <TextInput v-model="form.remark" multiline :rows="2" placeholder="交付范围、合同号等" :maxlength="200" />
       </Field>
+      <template v-if="!editing">
+        <Field label="管理员账号" hint="留空则只建租户，之后可再「补齐资产」并开通账号" :error="errors.adminUsername">
+          <TextInput v-model="form.adminUsername" placeholder="如：acmeadmin" :invalid="!!errors.adminUsername" />
+        </Field>
+        <Field label="管理员初始密码" hint="留空时用系统参数「账号初始密码」">
+          <TextInput v-model="form.adminPassword" type="password" placeholder="至少 8 位，含字母与数字" autocomplete="new-password" />
+        </Field>
+      </template>
     </FormDialog>
   </ListPage>
 </template>

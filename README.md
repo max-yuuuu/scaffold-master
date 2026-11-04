@@ -21,11 +21,12 @@
 - 增量发布：文件哈希对比只写变更文件；路由通过 `sys_menu` + `import.meta.glob` 自动注册，无需改前端代码。
 - 组件物料：抽 **`@scaffold/ui`** 包（本仓库 `packages/scaffold-ui` + npm workspaces），平台与每个生成项目共用同一个包 —— 组件源码不再拷进项目，升级从搬 diff 降为 bump 版本号。带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`）靠 `installScaffoldUi(app, {http, permission, dict})` 注入宿主能力，需先解 28 处对 `@/api`、`@/data`、`@/directives` 的 import。发布走 GitHub git tag 依赖。不存在 fork：平台前端就是 scaffold-vue 宿主，低代码视图进 `src/views/lowcode/**`。
 - 每个生成项目只有一个业务模块 `scaffold-business`（初始化时预置进 pom），生成代码进它的子包 —— 否则每次发布都要改 A 档 pom，"固定代码不随发布变动"就破了。
+- 字段类型映射只有一份：`com.scaffold.lowcode.model.FieldType` 定义类型 → Java 类型 / 列类型 / 默认控件，保存时算好落库，前端读 `/api/lowcode/models/meta`，改这张表等于改所有已生成项目未来发布的产物，所以逐条有单测钉死。
 - 模型（`lc_model` / `lc_field`）是**代码生成器的输入（期望态）**，不是"模型管理"业务功能；判据：「这段逻辑能不能只靠字段名 + 类型推导出来？」能 → 进模型生成，不能 → 进 C 档扩展点手写。页面与模型的耦合只在 `field_code`。
 - 接口生成边界：标准 CRUD 六端点由模型直接推导；自定义接口（状态流转、批量、聚合、跨实体）一律走扩展点不生成；**flow / 流程编排 / 状态机元数据化本期不做**。
 - 版本与回滚：每次发布打 tag，支持文件级 / 页面级 / 发布级三级回滚，一律以 `revert` 新提交实现，不倒带分支历史。
 
-**当前阶段**：P0-A 多租户地基（`lc_tenant`、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）与 **P0-B 租户隔离收口**（租户 SQL 拦截器、`super_admin` 切换租户旁路、`lc_tenant_config`、`scaffold-lowcode` 模块与租户管理 / 租户参数页面）均已完成，含**租户自助注册**：登录页可切换到注册表单，提交即开通租户（建租户 + 管理员账号 + `tenant_admin` 角色 + 复制平台业务菜单 / 字典 / 参数）并直接进入。P1（PR 3）进行中：**PR 3a 项目管理已完成**（`lc_project` + 仓库地址白名单 + 项目管理页面 + 已有租户的「补齐资产」入口），下一步 PR 3b（`lc_model` / `lc_field` 与模型、字段配置页面）与 PR 3c（手工新增租户的开通分支）。
+**当前阶段**：P0-A 多租户地基（`lc_tenant`、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）与 **P0-B 租户隔离收口**（租户 SQL 拦截器、`super_admin` 切换租户旁路、`lc_tenant_config`、`scaffold-lowcode` 模块与租户管理 / 租户参数页面）均已完成，含**租户自助注册**：登录页可切换到注册表单，提交即开通租户（建租户 + 管理员账号 + `tenant_admin` 角色 + 复制平台业务菜单 / 字典 / 参数）并直接进入。P1（PR 3）也已完成：`lc_project` + 仓库地址协议白名单 + 项目管理页面、`lc_model` / `lc_field` + 模型与字段配置页面（字段类型 → Java / 列类型映射的唯一事实源是 `FieldType` 枚举），手工新增租户时填了管理员就走同一套开通流程。下一步 PR 4 —— JGit 接入、仓库连通性检查与初始化快照推送。
 
 ## 开发入口
 

@@ -7,6 +7,7 @@ import com.scaffold.common.export.CsvUtils;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.project.domain.ProjectStatusRequest;
 import com.scaffold.lowcode.project.domain.ProjectWriteRequest;
+import com.scaffold.lowcode.model.mapper.LcModelMapper;
 import com.scaffold.lowcode.project.mapper.LcProjectMapper;
 import com.scaffold.lowcode.repo.RepoUrlValidator;
 import org.springframework.stereotype.Service;
@@ -27,9 +28,11 @@ public class LcProjectService {
     private static final String DEFAULT_GEN_BRANCH = "platform-generated";
 
     private final LcProjectMapper mapper;
+    private final LcModelMapper modelMapper;
 
-    public LcProjectService(LcProjectMapper mapper) {
+    public LcProjectService(LcProjectMapper mapper, LcModelMapper modelMapper) {
         this.mapper = mapper;
+        this.modelMapper = modelMapper;
     }
 
     public PageResult<Map<String, Object>> projects(PageQuery query, String keyword, Integer status) {
@@ -114,7 +117,9 @@ public class LcProjectService {
     @Transactional
     public void delete(Long id) {
         requireProject(id);
-        // PR 3b 起这里还要拦「项目下还有模型」：模型是生成物的来源，删了项目就成了孤儿
+        if (modelMapper.countModelsByProject(id) > 0) {
+            throw new BusinessException("项目下还有模型，请先删除模型");
+        }
         if (mapper.softDeleteProject(id, operator()) == 0) {
             throw new BusinessException("项目不存在或已删除");
         }

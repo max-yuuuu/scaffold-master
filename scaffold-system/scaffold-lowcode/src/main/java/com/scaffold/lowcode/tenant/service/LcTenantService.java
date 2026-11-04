@@ -87,7 +87,16 @@ public class LcTenantService {
         tenantMapper.insertTenant(row, operator);
         long id = numberAsLong(row.get("id"));
         seedDefaultConfigs(id, operator);
-        return Map.of("id", id);
+        String adminUsername = trimToNull(request.getAdminUsername());
+        if (adminUsername == null) {
+            return Map.of("id", id);
+        }
+        // 填了管理员就顺带把租户开通：复制菜单 / 字典 / 参数，建内置管理员角色与账号
+        Map<String, Object> assets = provisionService.syncAssets(id, operator);
+        long roleId = ((Number) assets.get("roleId")).longValue();
+        long userId = provisionService.createAdminUser(id, adminUsername, adminPassword(request), roleId, operator);
+        provisionService.recordRegistration(id, adminUsername);
+        return Map.of("id", id, "userId", userId, "menuAdded", assets.get("menuAdded"));
     }
 
     @Transactional
@@ -149,6 +158,23 @@ public class LcTenantService {
         row.put("builtin", 1);
         row.put("remark", null);
         configMapper.insertForTenant(row, operator);
+    }
+
+    /** 初始密码留空时用系统参数 sys.user.initPassword，与「用户管理-新增用户」的口径一致 */
+    private String adminPassword(TenantWriteRequest request) {
+        String provided = trimToNull(request.getAdminPassword());
+        if (provided != null) {
+            return provided;
+        }
+        return defaultInitPassword();
+    }
+
+    private String defaultInitPassword() {
+        String value = configMapper.selectConfigValue("sys.user.initPassword");
+        if (value == null || value.isBlank()) {
+            throw new BusinessException("系统参数 sys.user.initPassword 缺失，请显式填写管理员初始密码");
+        }
+        return value;
     }
 
     private static String statusText(Object value) {

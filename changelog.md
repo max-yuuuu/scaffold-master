@@ -1,6 +1,22 @@
 # Changelog
 
-## 2026-11-04（PR 3a：lc_project 建表、项目管理页面与「补齐租户资产」）
+## 2026-11-04（PR 3b / 3c：模型与字段配置、类型映射单一事实源、手工新增租户的开通分支）
+
+接 PR 3a 继续 P1：`lc_model` / `lc_field` 建表与配置页面，以及方案 §10.3 PR 3 验收项「字段类型 → Java 类型/列类型映射表有单测」。
+
+- **`lc_model` / `lc_field`（V6）**：模型归属项目、字段归属模型，唯一键分别是 `(project_id, model_code)` 与 `(model_id, field_code)`。方案 §2.2 里的 `lc_model.config` / `version` 本期**不建** —— config 没有读取方，版本历史属于页面侧（`lc_page_version`），模型自己的历史靠发布 diff 看。`lc_model` 补 `deleted`（模型下线要留痕，页面可能还在引用它的字段），`lc_field` 补齐 create_by/update_by 与 AGENTS.md 的业务表四字段约定一致。两张表都登记进租户拦截器白名单。
+- **类型映射的唯一事实源是代码里的 `FieldType` 枚举**，不在库里再存一份映射表：`STRING/TEXT/INTEGER/DECIMAL/DATE/DATETIME/ENUM/FILE/REF` 各自定 Java 类型、列类型与默认控件，保存时把算出来的 `java_type` / `column_type` 落库（模板生成时直接读，不再二次推导），前端通过 `GET /api/lowcode/models/meta` 取同一份表渲染。`FieldTypeTest` 逐条钉死这张表 —— 改它等于改所有已生成项目未来发布的产物。
+- **一处对方案枚举的扩充**：`field_type` 增加 `TEXT`。§2.2 原本只有 `STRING`，而后台系统里备注 / 说明 / 富文本是最高频字段，只靠 varchar 撑到几 K 会让生成的列类型与底座不一致。已回写进 §2.2。
+- **规则**：自增主键固定升级为 `bigint` / `Long`（底座主键一律 BIGINT）；`ENUM` 必须挂字典且字典要在**当前租户**真实存在（否则生成出一个空下拉）；`REF` 必须指向**同项目**的模型（指向自身合法，树表的 `parent_id` 就是这样）；一个模型最多一个主键；自增必须是主键；主键不可空且自动必填；`RADIO`/`CHECKBOX` 要么挂字典要么给固定选项；查询方式只认 `QueryType` 枚举值，认不出来回落到等于，**不让任意字符串进 SQL 片段**。列名只由字段编码派生，不给单独改列名的入口（改了列名历史数据与生成物就对不上）。
+- **`Naming`**：`snake` / `pascal` / `camel` 对 `orderService`、`OrderService`、`order_service` 三种写法幂等（先按分隔符切、再按大小写边界切，`HTTPServer` → `http_server`）。第一版没切下划线导致 `pascal` 不幂等，是单测抓出来的。
+- **PR 3c 手工开通租户**：`TenantWriteRequest` 增加可选 `adminUsername` / `adminPassword` —— 填了就顺带走 `TenantProvisionService` 的同一套开通流程（复制菜单 / 字典 / 参数 + 建内置 `tenant_admin` 角色 + 建管理员账号），留空只建租户记录。初始密码留空时读系统参数 `sys.user.initPassword`，与「用户管理-新增用户」同口径。这关掉了 PR 2 遗留的「手工新增租户进去是空菜单」。
+- **前端**：新增 `views/lowcode/models.vue` —— 列表按项目过滤，字段配置走右侧 `Drawer`（与「字典管理」的主从形态一致，不额外开菜单路由），字段表单里选类型后实时显示 `生成结果 → Long · bigint` 这类映射预览；固定选项用每行「标签:值」的文本域与后端 `form_options` 互转。`api/platform.ts` 补 `models` 组与 `ModelMeta` 等类型。
+- **项目删除加了拦截**：项目下还有模型时不许删（`LcProjectService.delete`），否则模型会指向一个不存在的项目。
+- 验证：后端 100 个测试全绿（新增 `ModelApiTest` 5 例覆盖派生与不可改、类型映射与默认值、非法定义拒绝、meta 单一来源、跨租户隔离；`FieldTypeTest` 7 例；`TenantIsolationApiTest` 加手工开通 1 例，共 11 例）；`vue-tsc` + `vite build` 通过；浏览器实测新建 `uidemo` 项目 → 建 `order_detail` 模型（表名/类名自动派生）→ 抽屉里加 INTEGER 主键并勾自增，预览从 `Integer · int` 变成 `Long · bigint`，保存后字段行显示 `bigint / Long`。
+- **测试夹具补了兜底清理**：`ModelApiTest` 之前只在拿到 id 后才登记删除，断言在解析响应前失败会留残留（实测漏了三个 `mproj*` 项目），现在额外按编码前缀兜一遍。
+- **未做（PR 4）**：仓库连通性检查（`ls-remote`）与初始化快照推送；`sync_status` 的推进、`workspace_path` / `base_scaffold_sha` 的写入都在那里。
+
+#### 2026-11-04（PR 3a：lc_project 建表、项目管理页面与「补齐租户资产」）
 
 按方案 §10.3 开 PR 3（P1 上）。本单元先做项目侧：建表、后端 CRUD、仓库地址白名单、项目管理页面，以及一个 PR 2 遗留问题的收口 —— 已有租户拿不到迁移新增的租户可见菜单。
 

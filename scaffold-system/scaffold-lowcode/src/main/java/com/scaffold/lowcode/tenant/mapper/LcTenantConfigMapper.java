@@ -57,6 +57,10 @@ public interface LcTenantConfigMapper {
                                             @Param("offset") int offset,
                                             @Param("pageSize") int pageSize);
 
+    /** 读当前租户的系统参数值（sys_config），用于取管理员初始密码 */
+    @Select("SELECT config_value FROM sys_config WHERE config_key = #{configKey} LIMIT 1")
+    String selectConfigValue(@Param("configKey") String configKey);
+
     @Select("SELECT COUNT(*) FROM lc_tenant_config WHERE config_key = #{configKey} AND (#{excludeId} IS NULL OR id <> #{excludeId})")
     long countConfigKey(@Param("configKey") String configKey, @Param("excludeId") Long excludeId);
 

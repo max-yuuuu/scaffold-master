@@ -44,6 +44,7 @@
 | 日志统计与当日泳道 | 同上 | `service/MonitorStatsService.java` | `mapper/MonitorStatsMapper.java`；两类日志（只读） | 已确认 |
 | 代码生成 | `scaffold-generator/src/main/java/com/scaffold/generator/controller/GeneratorController.java` | `service/GeneratorService.java` | `mapper/GeneratorMapper.java`；`information_schema`、两张生成配置表 | 已确认 |
 | 健康检查 | `scaffold-admin/src/main/java/com/scaffold/admin/controller/HealthController.java` | 无独立业务服务 | 无数据库写入 | 已确认 |
+| 低代码平台 · 模型与字段 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/model/controller/LcModelController.java` | `service/LcModelService.java`、`service/LcFieldService.java`；类型映射在 `model/FieldType.java`、命名派生在 `model/Naming.java` | `mapper/LcModelMapper.java`、`mapper/LcFieldMapper.java`；`lc_model` / `lc_field`（带 tenant_id，走拦截器） | 已确认 |
 | 低代码平台 · 项目 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/project/controller/LcProjectController.java` | `service/LcProjectService.java`；`scaffold-lowcode/src/main/java/com/scaffold/lowcode/repo/RepoUrlValidator.java`（仓库地址白名单） | `mapper/LcProjectMapper.java`；`lc_project`（带 tenant_id，走拦截器） | 已确认 |
 | 低代码平台 · 租户资产开通 | 同上 `LcTenantController` 的 `/{id}/assets/sync` | `service/TenantProvisionService.java`（菜单 / 字典 / 参数 / 内置管理员角色，注册与补齐共用） | `mapper/LcProvisionMapper.java`；`sys_menu` / `sys_role` / `sys_role_menu` / `sys_dict_type` / `sys_dict_data` / `sys_config`，全部显式带 tenant_id | 已确认 |
 | 低代码平台 · 租户注册开通 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/tenant/controller/TenantRegisterController.java` | `service/TenantRegistrationService.java`（建租户 → 复制菜单树 → 建 `tenant_admin` 角色 → 建管理员 → 回令牌，单事务） | `mapper/LcProvisionMapper.java`；`sys_menu` / `sys_role` / `sys_role_menu` / `sys_user` / `sys_user_role` / `sys_login_log`，全部显式带 `tenant_id` | 已确认 |
@@ -65,6 +66,7 @@
 | 租户管理（列表 / 新增 / 编辑 / 启停 / 进入该租户） | `/platform/tenant` | `views/lowcode/tenants.vue` | `api/platform.ts` 的 `platformApi.tenants`；切换租户走 `composables/auth.ts` 的 `switchTenant` | 已确认 |
 | 租户参数（当前会话租户的键值参数） | `/platform/tenant-config` | `views/lowcode/tenant-configs.vue` | `api/platform.ts` 的 `platformApi.tenantConfigs` | 已确认 |
 | 项目管理（列表 / 新增 / 编辑 / 启停 / 删除，分支列显示发布分支 → 主干） | `/lowcode/project` | `views/lowcode/projects.vue` | `api/platform.ts` 的 `platformApi.projects` | 已确认 |
+| 模型管理（列表 + 右侧抽屉配字段，选类型实时预览 Java / 列类型） | `/lowcode/model` | `views/lowcode/models.vue` | `api/platform.ts` 的 `platformApi.models`；字典下拉读 `systemApi.dictTypes`（无权限时留空，保存由后端校验） | 已确认 |
 | 操作日志（横带：概览 / 趋势或泳道 / 明细，抽屉级联） | `/monitor/oper-log` | `views/monitor/OperLog.vue` | `api/system.ts`；日志与统计 | 已确认 |
 | 登录日志（横带：概览 / 趋势或热力 / 异常 / 明细） | `/monitor/login-log` | `views/monitor/LoginLog.vue` | 同上 + `login-logs/heatmap` | 已确认 |
 | 代码生成（三步流水线抽屉） | `/tool/generator` | `views/tool/Generator.vue` + `components/business/GeneratorPipeline.vue` | `api/portal.ts`；生成器 | 已确认 |
@@ -119,6 +121,8 @@
 | 租户自助注册 | `POST /auth/register`（匿名 + 验证码；`tenantCode` / `tenantName` / `adminUsername` / `password`；成功直接回 `token`、`expiresIn`、`tenantId`、`tenantCode`、`menuCount`） | `TenantRegisterController`（`scaffold-lowcode`） | 已确认 |
 | 切换租户 | `POST /auth/switch-tenant {tenantId}`（仅 `super_admin`；`tenantId` 为空回到自己的平台租户；重签 JWT 并吊销旧令牌） | `AuthController` | 已确认 |
 | 租户管理 | `GET/POST /platform/tenants`（列表含 `userCount`）、`PUT /platform/tenants/{id}`、`PUT /platform/tenants/{id}/status`、`GET /platform/tenants/export` | `LcTenantController`（`platform:tenant:list/add/edit`） | 已确认 |
+| 模型 | `GET/POST /lowcode/models`（`projectId` / `keyword` / `status` 过滤）、`PUT/DELETE /lowcode/models/{id}`、`PUT /lowcode/models/{id}/status`、`GET /lowcode/models/options`、`GET /lowcode/models/meta`（类型映射表） | `LcModelController`（`lowcode:model:*`） | 已确认 |
+| 字段 | `GET/POST /lowcode/models/{id}/fields`、`GET /lowcode/models/{id}/field-options`、`PUT/DELETE /lowcode/fields/{id}` | 同上（读用 `lowcode:model:list`，写用 `lowcode:field:*`） | 已确认 |
 | 项目管理 | `GET/POST /lowcode/projects`、`PUT/DELETE /lowcode/projects/{id}`、`PUT /lowcode/projects/{id}/status`、`GET /lowcode/projects/options`（精简列表）、`GET /lowcode/projects/export` | `LcProjectController`（`lowcode:project:*`） | 已确认 |
 | 补齐租户资产 | `POST /platform/tenants/{id}/assets/sync`（按平台模板补缺少的菜单 / 字典 / 参数并授权内置管理员角色，幂等） | `LcTenantController`（`platform:tenant:edit`） | 已确认 |
 | 租户参数 | `GET /platform/tenant-configs`（分页，`keyword` 命中参数键 / 名称 / 备注）、`GET /platform/tenant-configs/export`、`PUT /platform/tenant-configs`（`{id?, configKey, configValue, remark}`）、`DELETE /platform/tenant-configs/{id}` | `LcTenantConfigController`（`platform:config:list/edit`）；只作用于当前会话租户 | 已确认 |
@@ -179,6 +183,7 @@
 | 租户管理 | `platform:tenant:list/add/edit` | 查询导出 / 新增租户 / 编辑与启停（平台运营职责，只下发给 `super_admin`） |
 | 租户参数 | `platform:config:list/edit` | 当前会话租户的键值参数读写；内置参数不可删除 |
 | 项目管理 | `lowcode:project:list/add/edit/remove` | 项目查询导出 / 新增 / 编辑与启停 / 删除（租户自己的开发功能，下发给租户内置管理员） |
+| 模型与字段 | `lowcode:model:list/add/edit/remove`、`lowcode:field:add/edit/remove` | 模型查询与字段读取 / 新增 / 编辑与启停 / 删除；字段的增删改单独三个码 |
 
 - 超级管理员角色编码为 `super_admin`，后端操作权限直接放行，菜单按启用和显示状态读取。
 - 业务字典选项仅需已登录；字典管理数据和写入仍使用对应权限。
@@ -189,6 +194,9 @@
 
 - **多租户地基（PR 1，2026-11-03）**：`TenantContext`（`scaffold-common`，纯 ThreadLocal）+ `TenantFilter`（`scaffold-framework`，`SecurityConfig` 用 `.addFilterAfter(tenantFilter, JwtAuthenticationFilter.class)` 注册）+ `LoginUser.tenantId` + JWT `tenantId` claim 已打通登录链路：`AuthService.login` 依次校验账号密码 → 用户状态 → 租户状态（`AuthMapper.countActiveTenant`），签发 token 携带 `user.getTenantId()`；`SecurityUtils.getTenantId()` 在使用点抛 401。11 张 `sys_*` 表带 `tenant_id NOT NULL DEFAULT 1`；跨租户唯一键改为 `(tenant_id, 原键)`。旧令牌（无 `tenantId` claim）解析出 `tenantId = null`，`TenantFilter` 不抛错，业务层决定是否拒绝。
 - **Mapper 里带 `OR` 的关键词条件必须整体加括号**：租户拦截器补的是「原 WHERE `AND tenant_id = ?`」，而 SQL 中 `AND` 优先级高于 `OR`。写成 `WHERE #{kw} IS NULL OR #{kw} = '' OR a LIKE .. OR b LIKE ..` 时，注入的租户条件只绑到最后一个 `OR` 分支，带关键词的查询会漏出别的租户数据（`LcTenantConfigMapper` 初版就踩了这一点，已修并补越权用例）。正确写法是 `WHERE (#{kw} IS NULL OR ... OR b LIKE ..)`，底座既有 Mapper 全部是这个形态。
+- **字段类型映射只有一份**：`com.scaffold.lowcode.model.FieldType` 定义「类型 → Java 类型 / 列类型 / 默认控件」，保存时把算好的 `java_type` / `column_type` 落库，模板生成直接读库值，前端读 `GET /api/lowcode/models/meta` —— 库里和前端都不另存映射表。`FieldTypeTest` 逐条钉死这张表，改它等于改所有已生成项目未来发布的产物。连带约束：自增主键固定 `bigint` / `Long`；`ENUM` 必须挂当前租户真实存在的字典；`REF` 必须指向同项目模型（指向自身合法）；一个模型最多一个主键；`RADIO`/`CHECKBOX` 要么挂字典要么给固定选项；查询方式只认 `QueryType` 枚举，认不出来回落等于，任意字符串不得进 SQL 片段。
+- **`Naming` 的三种写法幂等**：`snake` / `pascal` / `camel` 先按分隔符（空格 `.` `-` `_`）切，再按大小写边界切（`HTTPServer` → `http_server`），所以 `orderService`、`OrderService`、`order_service` 得到同一组词；表名 / 类名 / 列名 / 包名都由它派生，列名不给单独改的入口。
+- **PR 5 待办**：`GeneratorService.javaType()` 是「导入已有表 → Java 类型」的反向映射，目前把 `date` 也算成 `LocalDateTime`，模板改造时必须与 `FieldType` 对齐，否则同一个 `date` 列在两条链路得到不同答案。
 - **权限码前缀是口径**：`platform:` = 平台运营专属（租户管理、租户参数），不下发给普通租户；`lowcode:` = 租户自己的开发功能（项目、模型、页面），随菜单模板复制给每个租户。菜单模板的排除条件按语义写：`path LIKE '/platform%' OR permission LIKE 'platform:%'`，不硬编码菜单 ID。
 - **平台新增租户可见菜单后要「补齐租户资产」**：迁移脚本只往平台租户插菜单，已有租户不会自动获得（`sys_menu` 是租户各一份）。用租户管理里的「补齐租户资产」或 `POST /api/platform/tenants/{id}/assets/sync`；菜单按身份键判重（`permission` → `path` → `menu_type + menu_name`），`sys_dict_data` 无唯一键只能按 `(dict_type, dict_value)` 反查去重。
 - **租户注册即开通**：`POST /api/auth/register` 在一个事务里建租户 + 复制平台菜单树（排除 `path LIKE '/platform%'` 或 `permission LIKE 'platform:%'` 的段）+ 建内置 `tenant_admin` 角色全量授权 + 建管理员账号，并直接回登录令牌。**注册要求管理员账号全局唯一**（严于 `sys_user` 的 `(tenant_id, username)` 唯一键），否则同名账号会让别人登录时必须多填租户编码。注册是匿名请求，开通用的写入全部显式带 `tenant_id` 并标 `@InterceptorIgnore`。
@@ -230,7 +238,7 @@
 | 新业务数据权限 | 当前接入用户列表与导出，其他新增业务不会自动具备数据范围 | 按业务表的部门 / 创建人字段接入公共能力 |
 | 文件业务与防重复提交 | 文件表已保留，统一上传及防重复提交能力未提供完整业务闭环；`Upload` 组件与 `composables/upload.ts` 已按统一鉴权就绪，只缺后端上传接口 | 有实际需求时扩展公共能力 |
 | 资源监测的历史曲线 | 只回传单次快照，近 5 分钟折线由页面自身采样累积，离开页面即丢弃；不落库、不建表 | 需要跨重启的趋势与告警时再设计留存表与采集任务 |
-| 手工新增租户 | 平台管理员在「租户管理」手工新增租户仍只建租户与默认参数，不建管理员账号（自助注册路径会建） | PR 3c 复用 `TenantProvisionService` 补这一分支 |
+| 模型没有版本历史 | 模型改动只体现在下次发布的 diff 里，库里不留版本（`lc_model.version` / `config` 本期不建） | 需要「回滚某个模型定义」时再设计，别和 `lc_page_version` 混为一谈 |
 | 仓库连通性 | 本期只校验 `repo_url` 形态（协议白名单），没有真的连过仓库 | PR 4 接 JGit 后做 `ls-remote` 连通性检查与初始化快照推送 |
 | 租户开通流程 | 自助注册路径已交付（建租户 + 管理员 + 角色 + 菜单树）；平台管理员在「租户管理」里手工新增租户仍只建租户与默认参数，不建账号 | PR 3 补手工新增的开通选项，并把菜单模板从「复制平台租户」升级为可维护的模板 |
 | 注册接口默认公开 | 任何能访问前端的人都能自助开出租户，只靠验证码与编码/账号唯一性挡 | 对外暴露前先决定是否加审核开关或白名单 |

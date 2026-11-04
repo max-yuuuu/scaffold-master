@@ -4,6 +4,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 /**
  * 租户新增与编辑请求（lc_tenant）。
@@ -39,6 +40,17 @@ public class TenantWriteRequest {
     /** 备注（lc_tenant.remark） */
     private String remark;
 
+    /**
+     * 管理员账号（sys_user.username）：填了就连租户一起开通（建管理员、内置 tenant_admin 角色、
+     * 复制菜单与字典）；留空则只建租户记录，账号后续再开。仅新增时生效，编辑时忽略。
+     */
+    @Pattern(regexp = "^$|^[A-Za-z][A-Za-z0-9_]{2,31}$", message = "字母开头，仅含字母、数字、下划线，长度 3-32")
+    private String adminUsername;
+
+    /** 管理员初始密码：与 adminUsername 一起填；为空时用系统参数里的账号初始密码 */
+    @Size(max = 64, message = "长度不能超过 64")
+    private String adminPassword;
+
     public String getTenantCode() { return tenantCode; }
     public void setTenantCode(String tenantCode) { this.tenantCode = tenantCode; }
     public String getTenantName() { return tenantName; }
@@ -53,6 +65,10 @@ public class TenantWriteRequest {
     public void setExpireDate(String expireDate) { this.expireDate = expireDate; }
     public Integer getStatus() { return status; }
     public void setStatus(Integer status) { this.status = status; }
+    public String getAdminUsername() { return adminUsername; }
+    public void setAdminUsername(String adminUsername) { this.adminUsername = adminUsername; }
+    public String getAdminPassword() { return adminPassword; }
+    public void setAdminPassword(String adminPassword) { this.adminPassword = adminPassword; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
 }
