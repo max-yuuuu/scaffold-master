@@ -4,10 +4,12 @@ import com.scaffold.common.domain.PageQuery;
 import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.export.CsvUtils;
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.common.tenant.TenantContext;
 import com.scaffold.framework.datascope.DataScope;
 import com.scaffold.framework.datascope.DataScopeContext;
 import com.scaffold.framework.datascope.DataScopeCriteria;
 import com.scaffold.framework.security.LoginUser;
+import com.scaffold.framework.security.PlatformBoundary;
 import com.scaffold.system.domain.dto.ConfigWriteRequest;
 import com.scaffold.system.domain.dto.DeptWriteRequest;
 import com.scaffold.system.domain.dto.DictDataWriteRequest;
@@ -434,6 +436,8 @@ public class SystemManagementService {
     public IdResponse createRole(RoleWriteRequest request) {
         String name = required(request.getName(), "角色名称不能为空");
         String code = required(request.getCode(), "角色编码不能为空");
+        // 保留码先于唯一性判断：租户内已存在内置角色，撞名信息会把真正的原因盖掉
+        PlatformBoundary.checkRoleCode(TenantContext.getTenantId(), code);
         if (mapper.countRoleCode(code, null) > 0) {
             throw new BusinessException("角色编码已存在");
         }
@@ -526,6 +530,7 @@ public class SystemManagementService {
     @Transactional
     public IdResponse createMenu(MenuWriteRequest request) {
         String name = required(request.getName(), "菜单名称不能为空");
+        PlatformBoundary.checkMenu(TenantContext.getTenantId(), request.getPath(), request.getPermission());
         Long parentId = request.getParentId() == null ? 0L : request.getParentId();
         if (parentId != 0L && mapper.selectMenuIdsInTenant(List.of(parentId)).isEmpty()) {
             throw new BusinessException("上级菜单不存在或不属于当前租户");
@@ -548,6 +553,7 @@ public class SystemManagementService {
 
     @Transactional
     public void updateMenu(Long id, MenuWriteRequest request) {
+        PlatformBoundary.checkMenu(TenantContext.getTenantId(), request.getPath(), request.getPermission());
         Long parentId = request.getParentId();
         if (parentId != null && parentId != 0L && id.equals(parentId)) {
             throw new BusinessException("上级菜单不能是自身");

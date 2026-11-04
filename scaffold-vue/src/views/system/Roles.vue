@@ -300,7 +300,7 @@ async function savePermission() {
           <PermissionButton perm="system:role:edit" icon-only icon="shield" label="分配权限" @click="openPermission(row)" />
           <PermissionButton perm="system:role:remove" icon-only icon="trash" label="删除" danger @click="remove(row)" />
         </template>
-        <span v-else class="faint" style="font-size: 12px" title="内置角色拥有全部权限，不可修改">全部权限</span>
+        <span v-else class="faint" style="font-size: 12px" title="内置角色的权限由平台开通流程维护，不可在此修改">内置授权</span>
       </div>
     </template>
 

@@ -4,6 +4,7 @@ import com.scaffold.common.exception.BusinessException;
 import com.scaffold.common.tenant.TenantContext;
 import com.scaffold.framework.security.JwtService;
 import com.scaffold.framework.security.LoginUser;
+import com.scaffold.framework.security.PlatformBoundary;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.framework.security.TokenStore;
 import com.scaffold.system.domain.AuthUserRow;
@@ -28,7 +29,6 @@ import java.util.Map;
 @Service
 public class AuthService {
 
-    private static final String SUPER_ADMIN = "super_admin";
     /** 账号无法定位到唯一租户时登录日志的归属占位租户 */
     private static final Long UNATTRIBUTED_TENANT = TenantContext.PLATFORM_TENANT_ID;
     /** 账号或租户定位失败时统一回给前端的提示，避免暴露租户是否存在 */
@@ -85,7 +85,7 @@ public class AuthService {
         if (self == null || self.getStatus() == null || self.getStatus() != 1) {
             throw new BusinessException(401, "未认证或登录已过期");
         }
-        if (!authMapper.selectRoleCodes(self.getId()).contains(SUPER_ADMIN)) {
+        if (!PlatformBoundary.isSuperAdmin(self.getTenantId(), authMapper.selectRoleCodes(self.getId()))) {
             throw new BusinessException(403, "只有平台管理员可以切换租户");
         }
         long homeTenantId = self.getTenantId() == null ? TenantContext.PLATFORM_TENANT_ID : self.getTenantId();
@@ -135,14 +135,15 @@ public class AuthService {
                 tenant == null ? null : String.valueOf(tenant.get("tenantName")),
                 user.getTenantId(),
                 roleCodes,
-                roleCodes.contains(SUPER_ADMIN) ? authMapper.selectAllPermissions() : authMapper.selectPermissions(user.getId())
+                PlatformBoundary.isSuperAdmin(user.getTenantId(), roleCodes)
+                        ? authMapper.selectAllPermissions() : authMapper.selectPermissions(user.getId())
         );
     }
 
     public Map<String, Object> routes() {
         AuthUserRow user = currentUserRow();
         // 超级管理员不受角色菜单分配限制，新增菜单无需再授权即可见；菜单集仍按当前租户取
-        List<MenuRow> menus = authMapper.selectRoleCodes(user.getId()).contains(SUPER_ADMIN)
+        List<MenuRow> menus = PlatformBoundary.isSuperAdmin(user.getTenantId(), authMapper.selectRoleCodes(user.getId()))
                 ? authMapper.selectAllRouteMenus()
                 : authMapper.selectRouteMenus(user.getId());
         return Map.of("routes", buildRoutes(menus));
