@@ -172,11 +172,15 @@ public class ProjectRepositoryService {
                         baseScaffoldSha, mainBranch, genBranch);
                 commitSha = gateway.commitAll(workspace, commitMessage(project, "同步底座固定代码"));
                 if (commitSha == null) {
-                    // 与远端完全一致：不制造空提交，也不谎称推送过
-                    update(projectId, ProjectSyncStatus.READY, "固定代码与远端一致，无需提交", relativePath,
-                            baseScaffoldSha, remoteSha(refs, genBranch), false, operator);
-                    return result(project, ProjectSyncStatus.READY, "内容与远端一致，未产生提交",
-                            relativePath, fileCount, remoteSha(refs, genBranch));
+                    // 与远端完全一致：不制造空提交，也不谎称推送过。此时仓库里已有的那份内容就是
+                    // 平台认下的 A 档快照，底座标记打在它上面（发布分支优先，没有就落在主干）
+                    String delivered = remoteSha(refs, genBranch) != null
+                            ? remoteSha(refs, genBranch) : remoteSha(refs, mainBranch);
+                    String tagWarning = stampBaseTag(workspace, baseScaffoldSha, delivered, refs);
+                    update(projectId, ProjectSyncStatus.READY, "固定代码与远端一致，无需提交" + tagWarning,
+                            relativePath, baseScaffoldSha, remoteSha(refs, genBranch), false, operator);
+                    return result(project, ProjectSyncStatus.READY, "内容与远端一致，未产生提交" + tagWarning,
+                            relativePath, fileCount, remoteSha(refs, genBranch), baseScaffoldSha);
                 }
             }
 
@@ -184,15 +188,18 @@ public class ProjectRepositoryService {
             gateway.pushBranch(workspace, genBranch);
 
             // 回读校验：远端 ref 确实指向这个提交才算就绪（§6.3）
-            String confirmed = remoteSha(gateway.lsRemote(repoUrl), genBranch);
+            List<RemoteRef> afterPush = gateway.lsRemote(repoUrl);
+            String confirmed = remoteSha(afterPush, genBranch);
             if (confirmed == null || !confirmed.equals(commitSha)) {
                 throw new WorkspaceGitException(ProjectSyncStatus.DIVERGED,
                         "推送后回读远端 " + genBranch + " 得到的提交是 " + confirmed + "，与本次提交 " + commitSha + " 不一致");
             }
+            String tagWarning = stampBaseTag(workspace, baseScaffoldSha, commitSha, afterPush);
             update(projectId, ProjectSyncStatus.READY,
-                    "固定代码已推送到 " + genBranch + (pruned > 0 ? "，并清理快照外旧文件 " + pruned + " 个" : ""),
+                    "固定代码已推送到 " + genBranch + (pruned > 0 ? "，并清理快照外旧文件 " + pruned + " 个" : "") + tagWarning,
                     relativePath, baseScaffoldSha, commitSha, true, operator);
-            return result(project, ProjectSyncStatus.READY, "初始化完成", relativePath, fileCount, commitSha);
+            return result(project, ProjectSyncStatus.READY, "初始化完成" + tagWarning, relativePath, fileCount,
+                    commitSha, baseScaffoldSha);
         } catch (WorkspaceGitException e) {
             update(projectId, e.getSyncStatus(), e.getMessage(), null, null, null, false, operator);
             if (createdHere) {
@@ -224,19 +231,28 @@ public class ProjectRepositoryService {
         result.put("genBranch", genBranch);
         result.put("syncStatus", project.get("syncStatus"));
         result.put("syncStatusText", ProjectSyncStatus.text(number(project.get("syncStatus"), ProjectSyncStatus.UNINITIALIZED)));
+        String baseSha = text(project.get("baseScaffoldSha"));
+        String baseTag = baseSha == null || baseSha.isBlank() ? null : PlatformBaseTag.name(baseSha);
+        result.put("baseScaffoldSha", baseSha);
+        result.put("baseTag", baseTag);
         if (!exists) {
             result.put("dirty", false);
             result.put("unpushed", false);
             result.put("localSha", null);
             result.put("remoteSha", null);
+            // 没有工作区就不去问远端：底座标记是否推上去留 null 表示「未核对」，
+            // 前端按三态显示，不要当成「缺失」
+            result.put("baseTagExists", null);
             result.put("message", "工作区尚未创建，初始化或重建后才有内容");
             return result;
         }
+        List<RemoteRef> remoteRefs = RepoUrlValidator.isBlank(repoUrl) ? List.of() : gateway.lsRemote(repoUrl);
         String localSha = gateway.localBranchSha(workspace, genBranch);
-        String remoteSha = RepoUrlValidator.isBlank(repoUrl) ? null : remoteSha(gateway.lsRemote(repoUrl), genBranch);
+        String remoteSha = remoteSha(remoteRefs, genBranch);
         result.put("dirty", gateway.isDirty(workspace));
         result.put("localSha", localSha);
         result.put("remoteSha", remoteSha);
+        result.put("baseTagExists", baseTag != null && remoteTagName(remoteRefs, baseTag) != null);
         // 本地有提交而远端没有对应提交，就是未推送：平台重建工作区前必须把这个问清楚
         result.put("unpushed", localSha != null && !localSha.equals(remoteSha));
         return result;
@@ -354,7 +370,7 @@ public class ProjectRepositoryService {
     }
 
     private Map<String, Object> result(Map<String, Object> project, int syncStatus, String message,
-                                       String path, int fileCount, String commitSha) {
+                                       String path, int fileCount, String commitSha, String baseScaffoldSha) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("projectId", project.get("id"));
         result.put("path", path);
@@ -362,8 +378,53 @@ public class ProjectRepositoryService {
         result.put("syncStatusText", ProjectSyncStatus.text(syncStatus));
         result.put("files", fileCount);
         result.put("commitSha", commitSha);
+        result.put("baseScaffoldSha", baseScaffoldSha);
+        result.put("baseTag", baseScaffoldSha == null || baseScaffoldSha.isBlank()
+                ? null : PlatformBaseTag.name(baseScaffoldSha));
         result.put("message", message);
         return result;
+    }
+
+    /**
+     * 打底座标记 tag（方案 §5.2：三方合并的 base 侧留痕）。
+     *
+     * <p>三条口径：只创建不移动（同名 tag 已存在就原样留着）；失败只告警不回滚（分支已经推上去了，
+     * 不该因为一个 tag 让整次初始化失败并删掉工作区）；拿不到底座提交号时必须喊出来 —— 那等于这个
+     * 项目以后做不了三方底座升级，静默过去会让人以为一切正常。
+     *
+     * @return 需要拼进就绪消息的告警；一切正常返回空串
+     */
+    private String stampBaseTag(Path workspace, String baseScaffoldSha, String snapshotCommit, List<RemoteRef> remoteRefs) {
+        if (baseScaffoldSha == null || baseScaffoldSha.isBlank()) {
+            return "；底座 checkout 读不到提交号（挂进来的可能不是 git 仓库），未打底座标记 tag："
+                    + "该项目后续无法做三方底座升级，请把带 .git 的底座仓库挂给平台后重建工作区再初始化";
+        }
+        if (snapshotCommit == null) {
+            return "";
+        }
+        String tagName = PlatformBaseTag.name(baseScaffoldSha);
+        if (remoteTagName(remoteRefs, tagName) != null) {
+            return "";
+        }
+        try {
+            if (!gateway.tagCommit(workspace, tagName, snapshotCommit, PlatformBaseTag.message(baseScaffoldSha))) {
+                return "";
+            }
+            gateway.pushTag(workspace, tagName);
+        } catch (RuntimeException e) {
+            return "；底座标记 tag " + tagName + " 没推上去（初始化本身已完成，但补上这个 tag 之前"
+                    + "该项目做不了三方底座升级）：" + e.getMessage();
+        }
+        return "";
+    }
+
+    private static String remoteTagName(List<RemoteRef> refs, String tagName) {
+        for (RemoteRef ref : refs) {
+            if (tagName.equals(ref.tagName())) {
+                return ref.sha();
+            }
+        }
+        return null;
     }
 
     private static Set<String> branchNames(List<RemoteRef> refs) {

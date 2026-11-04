@@ -101,6 +101,12 @@ export interface WorkspaceStatus {
   localSha?: string | null
   remoteSha?: string | null
   unpushed?: boolean
+  /** 交付时的底座提交号；为空说明当时读不到，该项目做不了三方底座升级 */
+  baseScaffoldSha?: string | null
+  /** 项目仓库里的底座标记 tag 名（yuanda/platform-base/{底座提交号}） */
+  baseTag?: string | null
+  /** 标记 tag 是否已在远端：true 有、false 缺、null 未核对（工作区不在时不去问远端） */
+  baseTagExists?: boolean | null
   message?: string
 }
 
@@ -113,6 +119,9 @@ export interface InitializeResult {
   /** 本次写入交付清单的文件数 */
   files: number
   commitSha: string | null
+  /** 本次交付对应的底座提交号与打好的底座标记 tag；读不到底座提交号时两者都为空 */
+  baseScaffoldSha?: string | null
+  baseTag?: string | null
   message: string
 }
 

@@ -260,6 +260,17 @@ function shortSha(sha?: string | null) {
   return sha ? sha.slice(0, 10) : '—'
 }
 
+/** 底座标记 tag 是后续「底座升级」三方合并的 base 侧，缺了就升不了级，所以三态都要说清楚：
+    远端已有 / 远端缺 / 工作区不在时没去核对（后端返回 null） */
+const baseTagText = computed(() => {
+  const tag = workspace.value?.baseTag
+  if (!tag) return '未记录底座提交号，该项目做不了三方底座升级（底座 checkout 需要带 .git）'
+  const exists = workspace.value?.baseTagExists
+  if (exists === true) return `${tag}（已在远端）`
+  if (exists === false) return `${tag}（远端缺失，补上之前做不了三方底座升级）`
+  return `${tag}（工作区不在，未核对远端）`
+})
+
 async function remove(row: ProjectRow) {
   const ok = await confirm({
     title: '删除项目',
@@ -401,6 +412,7 @@ async function remove(row: ProjectRow) {
         <DescriptionsItem label="本地提交">{{ shortSha(workspace?.localSha) }}</DescriptionsItem>
         <DescriptionsItem label="远端提交">{{ shortSha(workspace?.remoteSha) }}</DescriptionsItem>
         <DescriptionsItem label="未推送提交">{{ workspace?.exists ? (workspace.unpushed ? '有，禁止清空工作区' : '无') : '—' }}</DescriptionsItem>
+        <DescriptionsItem label="底座标记 tag" :span="2">{{ baseTagText }}</DescriptionsItem>
       </Descriptions>
       <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
 

@@ -9,6 +9,7 @@ package com.scaffold.lowcode.workspace;
 public record RemoteRef(String name, String sha) {
 
     private static final String HEADS_PREFIX = "refs/heads/";
+    private static final String TAGS_PREFIX = "refs/tags/";
 
     public String branchName() {
         return name.startsWith(HEADS_PREFIX) ? name.substring(HEADS_PREFIX.length()) : null;
@@ -16,5 +17,13 @@ public record RemoteRef(String name, String sha) {
 
     public boolean isBranch() {
         return branchName() != null;
+    }
+
+    /** tag 名，不是 tag 时返回 {@code null}；附注 tag 的 {@code ^{}} 解引用行同样返回 {@code null} */
+    public String tagName() {
+        if (!name.startsWith(TAGS_PREFIX) || name.endsWith("^{}")) {
+            return null;
+        }
+        return name.substring(TAGS_PREFIX.length());
     }
 }

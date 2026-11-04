@@ -55,4 +55,20 @@ public interface GitGateway {
 
     /** 读取一个 Git 仓库的 HEAD 提交号，用于记录 {@code base_scaffold_sha}；不是仓库时返回 {@code null} */
     String headSha(Path repoDir);
+
+    /**
+     * 给某个提交打附注 tag。同名 tag 已存在时原样保留、不移动（平台永不改写已交付的 base）。
+     *
+     * @return 本次真的创建了 tag 返回 {@code true}；同名 tag 已存在返回 {@code false}
+     */
+    boolean tagCommit(Path dir, String tagName, String sha, String message);
+
+    /**
+     * 推送 tag，refspec 不带 {@code +}：远端已有同名 tag 时如实报错，不强推。
+     *
+     * <p>失败抛 {@link com.scaffold.common.exception.BusinessException} 而不是
+     * {@link WorkspaceGitException}：tag 推不上去不代表项目仓库与平台分歧，
+     * 调用方只该把它当告警，不该拿它改 {@code sync_status}。
+     */
+    void pushTag(Path dir, String tagName);
 }
