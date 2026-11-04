@@ -1,7 +1,8 @@
 <#import "../_shared/auditFields.ftl" as auditFields>
+<#import "../_shared/pojo.ftl" as pojo>
 package com.scaffold.business.${module}.domain;
 
-<#list imports as type>
+<#list entityImports as type>
 import ${type};
 </#list>
 
@@ -13,18 +14,11 @@ import ${type};
  */
 public class ${className} {
 
-<#list fields as f>
-    /** ${f.desc}（列 {@code ${f.column}}，类型 {@code ${f.columnType}}） */
-    private ${f.javaType} ${f.javaField};
-
-</#list>
+<@pojo.fields items=fields withColumn=true />
 <#if audit>
 <@auditFields.declarations />
 </#if>
-<#list fields as f>
-    public ${f.javaType} get${f.javaField?cap_first}() { return ${f.javaField}; }
-    public void set${f.javaField?cap_first}(${f.javaType} ${f.javaField}) { this.${f.javaField} = ${f.javaField}; }
-</#list>
+<@pojo.accessors items=fields />
 <#if audit>
 <@auditFields.accessors />
 </#if>

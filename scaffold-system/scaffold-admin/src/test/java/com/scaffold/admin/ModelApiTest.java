@@ -70,6 +70,10 @@ class ModelApiTest {
             assertThat(messageOf(post("/api/lowcode/models", withTableName(modelBody(projectId, "other_code", "换个编码"), "order_detail"), admin)))
                     .contains("已存在同名数据表");
 
+            // 表名原样进生成的 SQL（不加反引号），MySQL 保留字必须在建模时就拦住
+            assertThat(messageOf(post("/api/lowcode/models", modelBody(projectId, "order", "订单"), admin)))
+                    .contains("MySQL 保留字");
+
             // 项目下有模型时不许删项目
             assertThat(messageOf(delete("/api/lowcode/projects/" + projectId, admin))).contains("项目下还有模型");
         } finally {
@@ -139,6 +143,9 @@ class ModelApiTest {
                     .contains("要么挂字典，要么给出固定选项");
             assertThat(messageOf(post("/api/lowcode/models/" + modelId + "/fields", field("kind", "类别", "NOT_A_TYPE", Map.of()), admin)))
                     .contains("不支持的字段类型");
+            // 列名同样不能是保留字：desc 派生出的列写进生成的 SQL 直接语法错
+            assertThat(messageOf(post("/api/lowcode/models/" + modelId + "/fields", field("desc", "描述", "STRING", Map.of()), admin)))
+                    .contains("MySQL 保留字").contains("description");
 
             // 同项目内的 REF 合法，且能指定展示字段
             long sameProjectModel = fx.model(admin, projectId, "goods");

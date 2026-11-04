@@ -5,6 +5,7 @@ import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.model.Naming;
+import com.scaffold.lowcode.model.SqlIdentifiers;
 import com.scaffold.lowcode.model.domain.ModelWriteRequest;
 import com.scaffold.lowcode.model.mapper.LcFieldMapper;
 import com.scaffold.lowcode.model.mapper.LcModelMapper;
@@ -78,7 +79,7 @@ public class LcModelService {
         row.put("enableDataScope", flag(request.getEnableDataScope(), 0));
         row.put("enableAuditField", flag(request.getEnableAuditField(), 1));
         row.put("status", flag(request.getStatus(), 1));
-        requireUniqueTable(projectId, row, null);
+        requireUsableTable(projectId, row, null);
         modelMapper.insertModel(row, operator());
         return Map.of("id", row.get("id"));
     }
@@ -105,7 +106,7 @@ public class LcModelService {
         row.put("enableDataScope", request.getEnableDataScope());
         row.put("enableAuditField", request.getEnableAuditField());
         row.put("status", request.getStatus());
-        requireUniqueTable(numberAsLong(existing.get("projectId")), row, id);
+        requireUsableTable(numberAsLong(existing.get("projectId")), row, id);
         if (modelMapper.updateModel(id, row, operator()) == 0) {
             throw new BusinessException("模型不存在或已删除");
         }
@@ -135,11 +136,16 @@ public class LcModelService {
         }
     }
 
-    private void requireUniqueTable(long projectId, Map<String, Object> row, Long excludeId) {
+    /**
+     * 表名两条硬检查：不能撞 MySQL 保留字（生成物的 SQL 不给表名加反引号），
+     * 且在同一项目内唯一（两张模型表撞名会共用一张物理表，发布时互相覆盖）。
+     */
+    private void requireUsableTable(long projectId, Map<String, Object> row, Long excludeId) {
         Object tableName = row.get("tableName");
         if (tableName == null) {
             return;
         }
+        SqlIdentifiers.requireTableName(String.valueOf(tableName));
         if (modelMapper.countModelTable(projectId, String.valueOf(tableName), excludeId) > 0) {
             throw new BusinessException("该项目下已存在同名数据表");
         }

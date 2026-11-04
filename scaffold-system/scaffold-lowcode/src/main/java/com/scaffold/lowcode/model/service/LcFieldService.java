@@ -9,6 +9,7 @@ import com.scaffold.lowcode.model.FieldType;
 import com.scaffold.lowcode.model.FormType;
 import com.scaffold.lowcode.model.Naming;
 import com.scaffold.lowcode.model.QueryType;
+import com.scaffold.lowcode.model.SqlIdentifiers;
 import com.scaffold.lowcode.model.domain.FieldWriteRequest;
 import com.scaffold.lowcode.model.mapper.LcFieldMapper;
 import com.scaffold.lowcode.model.mapper.LcModelMapper;
@@ -135,7 +136,10 @@ public class LcFieldService {
         row.put("fieldType", type.code());
         row.put("javaType", type.javaType(autoIncrement));
         // 列名只由字段编码派生，不给单独改列名的入口：改了列名，历史数据与生成物就对不上了
-        row.put("columnName", request.getFieldCode() == null ? null : Naming.snake(request.getFieldCode()));
+        String columnName = request.getFieldCode() == null ? null : Naming.snake(request.getFieldCode());
+        // 生成物的 SQL 不给列名加反引号（加了每行都读不动），所以保留字在这里就拦住
+        SqlIdentifiers.requireColumnName(columnName);
+        row.put("columnName", columnName);
         row.put("columnLength", type == FieldType.DECIMAL ? null : request.getColumnLength());
         row.put("columnPrecision", type == FieldType.DECIMAL ? request.getColumnPrecision() : null);
         row.put("columnScale", type == FieldType.DECIMAL ? request.getColumnScale() : null);
