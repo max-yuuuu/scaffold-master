@@ -380,6 +380,9 @@
 /* ── 抽屉内工具条 / 数据范围 ─────────────────────────────────── */
 .drawer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
 
+/* 抽屉工具条右侧的动作组：按钮挨着排，少一个就少一个，不会被 space-between 拉出空洞 */
+.drawer-toolbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
 .scope-list { display: flex; flex-direction: column; gap: 8px; }
 .scope-option {
   display: flex;

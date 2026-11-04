@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import { Descriptions, DescriptionsItem, Drawer, Field, SectionLabel, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@/components/ui'
+import { computed, reactive, ref } from 'vue'
+import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton } from '@/components/business'
 import Icon from '@/components/Icon.vue'
 import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
@@ -135,6 +135,9 @@ async function toggleStatus(row: ProjectRow) {
 /* ============================================================
    仓库与工作区（PR 4）。项目能不能开始建模，取决于固定代码有没有推到发布分支：
    检查只读远端引用，初始化才会写工作区并推送；重建在有未推送提交时会被后端拒绝。
+
+   动作按生命周期状态给，不是全铺：就绪之后「初始化固定代码」已无意义（平台不覆盖 A 档），
+   工作区还没建时「清空工作区」也只是让人点了拿一句报错，所以都不显示。
    ============================================================ */
 const repo = ref<ProjectRow | null>(null)
 const checking = ref(false)
@@ -221,6 +224,24 @@ async function runReset() {
     resetting.value = false
   }
 }
+
+const syncState = computed(() => repo.value?.syncStatus ?? 0)
+
+/** 未初始化与上次不可达都可以推固定代码；就绪与初始化中不行 */
+const canInitialize = computed(() => syncState.value === 0 || syncState.value === 5)
+
+/** 只有工作区真的存在才给「清空工作区」入口 */
+const canResetWorkspace = computed(() => Boolean(workspace.value?.exists))
+
+/** 顶部一句话说清当前能做什么，比让人对着按钮猜 */
+const statusHint = computed(() => {
+  if (syncState.value === 1) return '正在读写远端仓库，这一步完成前不要再触发其他仓库动作'
+  if (syncState.value === 2) return '固定代码已在发布分支上；平台不再覆盖 A 档文件，要重来先清空工作区'
+  if (syncState.value === 3) return '平台工作区有未提交改动，先处理掉再推，平台不会覆盖它们'
+  if (syncState.value === 4) return '远端与本地不一致（分支保护或历史分叉），需在仓库侧处理后重试'
+  if (syncState.value === 5) return '上次没能连上仓库，按下面的原因处理后重试'
+  return '平台只写发布分支，主干由您在仓库侧掌控；绑定后可先检查连通性'
+})
 
 function syncTone(status: number) {
   if (status === 2) return 'ok'
@@ -319,44 +340,54 @@ async function remove(row: ProjectRow) {
       @close="repo = null"
     >
       <div class="drawer-toolbar">
-        <span class="soft repo-hint">平台只写发布分支，主干由您在仓库侧掌控</span>
-        <PermissionButton perm="lowcode:project:sync" size="sm" icon="refresh" :loading="checking" @click="runCheck">检查连通性</PermissionButton>
-        <PermissionButton
-          v-if="repo && repo.syncStatus !== 2"
-          perm="lowcode:project:sync"
-          variant="primary"
-          size="sm"
-          icon="upload"
-          :loading="initializing"
-          @click="runInitialize"
-        >初始化固定代码</PermissionButton>
-        <PermissionButton perm="lowcode:project:sync" size="sm" icon="trash" :loading="resetting" :danger="true" @click="runReset">清空工作区</PermissionButton>
+        <span class="repo-state">
+          <Tag :tone="syncTone(syncState)">{{ repo?.syncStatusText }}</Tag>
+          <span class="soft repo-hint">{{ statusHint }}</span>
+        </span>
+        <span class="drawer-toolbar-actions">
+          <PermissionButton
+            perm="lowcode:project:sync"
+            size="sm"
+            icon="refresh"
+            :loading="checking"
+            :disabled="initializing"
+            @click="runCheck"
+          >检查连通性</PermissionButton>
+          <PermissionButton
+            v-if="canInitialize"
+            perm="lowcode:project:sync"
+            variant="primary"
+            size="sm"
+            icon="upload"
+            :loading="initializing"
+            :disabled="checking"
+            @click="runInitialize"
+          >初始化固定代码</PermissionButton>
+          <PermissionButton
+            v-if="canResetWorkspace"
+            perm="lowcode:project:sync"
+            size="sm"
+            icon="trash"
+            :loading="resetting"
+            danger
+            @click="runReset"
+          >清空工作区</PermissionButton>
+        </span>
       </div>
+      <p v-if="repo?.syncMessage" class="repo-action" :class="{ 'is-error': syncState === 4 || syncState === 5 }">
+        <Icon :name="syncState === 4 || syncState === 5 ? 'alert' : 'info'" :size="14" />
+        <span>{{ repo.syncMessage }}</span>
+      </p>
 
-      <SectionLabel>仓库绑定</SectionLabel>
       <Descriptions :column="2">
         <DescriptionsItem label="仓库地址" :span="2">{{ repo?.repoUrl }}</DescriptionsItem>
         <DescriptionsItem label="主干分支">{{ repo?.mainBranch }}</DescriptionsItem>
         <DescriptionsItem label="发布分支">{{ repo?.genBranch }}</DescriptionsItem>
-        <DescriptionsItem label="同步状态">{{ repo?.syncStatusText }}</DescriptionsItem>
         <DescriptionsItem label="初始化时间">{{ repo?.initTime || '—' }}</DescriptionsItem>
         <DescriptionsItem label="底座提交">{{ shortSha(repo?.baseScaffoldSha) }}</DescriptionsItem>
         <DescriptionsItem label="最后推送提交">{{ shortSha(repo?.lastCommitSha) }}</DescriptionsItem>
-        <DescriptionsItem label="最近一次动作" :span="2">{{ repo?.syncMessage || '尚无仓库动作' }}</DescriptionsItem>
       </Descriptions>
 
-      <SectionLabel>连通性检查</SectionLabel>
-      <div v-if="!check" class="m-surface panel padded">
-        <span class="muted">还没检查过。检查只读远端引用，不改动项目状态，也不推任何东西。</span>
-      </div>
-      <Descriptions v-else :column="2">
-        <DescriptionsItem label="能否访问">{{ check.reachable ? '可访问' : '不可访问' }}</DescriptionsItem>
-        <DescriptionsItem label="仓库是否为空">{{ check.empty === undefined ? '—' : (check.empty ? '空仓库' : '已有内容') }}</DescriptionsItem>
-        <DescriptionsItem label="远端分支" :span="2">{{ check.branches?.length ? check.branches.join('、') : '—' }}</DescriptionsItem>
-        <DescriptionsItem label="下一步">{{ check.message || check.action || '—' }}</DescriptionsItem>
-      </Descriptions>
-
-      <SectionLabel>平台工作区</SectionLabel>
       <Descriptions :column="2">
         <DescriptionsItem label="工作区路径" :span="2">{{ workspace?.path || '—' }}</DescriptionsItem>
         <DescriptionsItem label="是否已建">{{ workspace?.exists ? '已建立' : '未建立' }}</DescriptionsItem>
@@ -366,6 +397,14 @@ async function remove(row: ProjectRow) {
         <DescriptionsItem label="未推送提交">{{ workspace?.exists ? (workspace.unpushed ? '有，禁止清空工作区' : '无') : '—' }}</DescriptionsItem>
       </Descriptions>
       <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
+
+      <p v-if="!check" class="hint">还没检查过：检查连通性只读远端引用，不改动项目状态，也不推任何东西。</p>
+      <Descriptions v-else :column="2">
+        <DescriptionsItem label="能否访问">{{ check.reachable ? '可访问' : '不可访问' }}</DescriptionsItem>
+        <DescriptionsItem label="仓库是否为空">{{ check.empty === undefined ? '—' : (check.empty ? '空仓库' : '已有内容') }}</DescriptionsItem>
+        <DescriptionsItem label="远端分支" :span="2">{{ check.branches?.length ? check.branches.join('、') : '—' }}</DescriptionsItem>
+        <DescriptionsItem label="下一步">{{ check.message || check.action || '—' }}</DescriptionsItem>
+      </Descriptions>
     </Drawer>
 
     <FormDialog :open="dialog" :title="editing() ? '编辑项目' : '新增项目'" :saving="saving" @close="dialog = false" @submit="submit">
@@ -406,12 +445,47 @@ async function remove(row: ProjectRow) {
 .sync-alert {
   color: var(--warn);
 }
+/* 三块读数之间留口气：Descriptions 的根是 .desc（.kv-grid 在它里面），单行提示是 .hint */
+.desc + .desc,
+.desc + .hint,
+.drawer-note + .desc,
+.drawer-note + .hint {
+  margin-top: 16px;
+}
+.repo-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .repo-hint {
   font-size: 12px;
 }
 .drawer-note {
   margin: 8px 0 0;
   font-size: 12px;
+}
+.repo-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: -4px 0 14px;
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.repo-action.is-error {
+  border-color: transparent;
+  background: var(--red-soft);
+  color: var(--red-text);
+}
+.repo-action svg {
+  flex: none;
+  margin-top: 2px;
 }
 .project-desc {
   font-size: 12px;
