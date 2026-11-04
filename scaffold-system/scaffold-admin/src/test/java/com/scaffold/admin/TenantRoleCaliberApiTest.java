@@ -251,6 +251,37 @@ class TenantRoleCaliberApiTest {
         }
     }
 
+    @Test
+    void 内置角色是租户私有物料超管要切进去才管得到() {
+        Fixture fixture = registerTenant("超管看角色");
+        try {
+            String admin = platformToken();
+            // 平台租户里既没有 tenant_admin 也没有 tenant_member：角色表按会话租户注入条件，各租户一份
+            assertThat(roleCodesFromApi(admin)).doesNotContain("tenant_admin", "tenant_member");
+
+            // 要管某个租户的角色，走租户管理的「进入该租户」，切进去之后视图就是那个租户的
+            String inTenant = switchTenant(admin, fixture.tenantId());
+            assertThat(roleCodesFromApi(inTenant)).contains("tenant_admin", "tenant_member");
+
+            long member = roleId(fixture.tenantId(), "tenant_member");
+            String memberName = fixture.adminUsername() + "_sw";
+            assertThat(post("/api/system/users", Map.of(
+                    "username", memberName,
+                    "nickname", "切进去建的用户",
+                    "password", "Switch@12345",
+                    "roleIds", List.of(member)), inTenant).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            // 但仍不能拿着别租户的角色码在平台租户里给人授权（既有隔离口径）
+            String backHome = switchTenant(inTenant, null);
+            assertThat(post("/api/system/users", Map.of(
+                    "username", memberName + "_x",
+                    "nickname", "跨租户授权",
+                    "roleIds", List.of(member)), backHome).getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        } finally {
+            purge(fixture.tenantId());
+        }
+    }
+
     /** 注册一个租户，返回它的编码、管理员账号与登录令牌 */
     private Fixture registerTenant(String tenantName) {
         String suffix = String.valueOf(System.nanoTime() % 1_000_000);
@@ -345,6 +376,20 @@ class TenantRoleCaliberApiTest {
 
     private String platformToken() {
         return TestAuthClient.login(restTemplate, "admin", "admin123", "platform");
+    }
+
+    /** 角色列表按会话租户注入条件，这里读的是「当前这个令牌看得见哪些角色」 */
+    private List<String> roleCodesFromApi(String token) {
+        return rowsOf(dataOf(get("/api/system/roles?pageNum=1&pageSize=100", token))).stream()
+                .map(row -> String.valueOf(row.get("code")))
+                .toList();
+    }
+
+    /** 切换会话租户：重签一张令牌，旧令牌当场失效（见 AuthService.switchTenant） */
+    private String switchTenant(String token, Long targetTenantId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantId", targetTenantId);
+        return String.valueOf(dataOf(post("/api/auth/switch-tenant", body, token).getBody()).get("token"));
     }
 
     private ResponseEntity<Map<String, Object>> post(String path, Map<String, Object> body, String token) {
