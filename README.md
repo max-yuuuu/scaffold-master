@@ -19,7 +19,7 @@
 - 代码生成用 FreeMarker 模板替换现有 `GeneratorService` 的 StringBuilder 拼接，生成**完整可运行 CRUD**（Controller / Service / Mapper / Vue 页面 / API / 菜单 SQL），而非当前的 7 份骨架文件。生成物按所有权分三档：A 固定（初始化后平台不碰）、B 纯生成（每次覆盖、约定人工不改）、C 扩展点（生成一次骨架后平台不碰，业务逻辑写这里）。原 `CUSTOM-START/END` 文本级合并机制取消。
 - 页面设计器采用拖拽 + 配置融合：流式布局画布摆放容器与控件、支持嵌套、右侧属性面板配样式和数据绑定，产出结构化 JSON；**自研，不引 LowCodeEngine**（选型依据见方案 §3.6）。
 - 增量发布：文件哈希对比只写变更文件；路由通过 `sys_menu` + `import.meta.glob` 自动注册，无需改前端代码。
-- 组件物料：抽 **`@scaffold/ui`** 包（本仓库 `packages/scaffold-ui` + npm workspaces），平台与每个生成项目共用同一个包 —— 组件源码不再拷进项目，升级从搬 diff 降为 bump 版本号。带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`）靠 `installScaffoldUi(app, {http, permission, dict})` 注入宿主能力，需先解 28 处对 `@/api`、`@/data`、`@/directives` 的 import。发布走 GitHub git tag 依赖。不存在 fork：平台前端就是 scaffold-vue 宿主，低代码视图进 `src/views/lowcode/**`。
+- 组件物料：抽 **`@scaffold/ui`** 包（本仓库 `packages/scaffold-ui` + npm workspaces），平台与每个生成项目共用同一个包 —— 组件源码不再拷进项目，升级从搬 diff 降为 bump 版本号。带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`）靠 `installScaffoldUi({http, permission, dict})` 注入宿主能力。**已完成**：物料迁入包、包内 21 处对 `@/api`、`@/directives`、宿主 `auth.ts` 的 import 全部改为注入，包内 `@/` 与 `import.meta.env` 归零。**待落地**：发布到 npm registry（生成项目按版本号依赖，不走 GitHub git tag），以及交付快照的裁剪清单同步。不存在 fork：平台前端就是 scaffold-vue 宿主，低代码视图进 `src/views/lowcode/**`。
 - 每个生成项目只有一个业务模块 `scaffold-business`（初始化时预置进 pom），生成代码进它的子包 —— 否则每次发布都要改 A 档 pom，"固定代码不随发布变动"就破了。
 - 字段类型映射只有一份：`com.scaffold.lowcode.model.FieldType` 定义类型 → Java 类型 / 列类型 / 默认控件，保存时算好落库，前端读 `/api/lowcode/models/meta`，改这张表等于改所有已生成项目未来发布的产物，所以逐条有单测钉死。
 - 模型（`lc_model` / `lc_field`）是**代码生成器的输入（期望态）**，不是"模型管理"业务功能；判据：「这段逻辑能不能只靠字段名 + 类型推导出来？」能 → 进模型生成，不能 → 进 C 档扩展点手写。页面与模型的耦合只在 `field_code`。
@@ -42,7 +42,8 @@
 | 目录 | 用途 | 技术栈 |
 | --- | --- | --- |
 | `scaffold-system` | 后端 Maven 多模块工程 | Java 17+、Spring Boot 3.5、MyBatis、MySQL、Redis、JWT |
-| `scaffold-vue` | 管理后台 | Vue 3、TypeScript、Vite 6、Vue Router 4、GSAP 3，自有组件库 |
+| `scaffold-vue` | 管理后台（宿主 app） | Vue 3、TypeScript、Vite 6、Vue Router 4、GSAP 3；外壳、路由、登录与业务页面 |
+| `packages/scaffold-ui` | 前端物料包 `@scaffold/ui` | 67 个组件 + 16 个 composable + 工具 + 珍珠玻璃主题（`theme.css`），npm workspaces 成员，宿主与生成项目共用 |
 | `scaffold-system/sql` | 首次初始化脚本 | `V1__init_schema.sql` 建表，`V2__seed_data.sql` 初始化数据，`V3__system_resource_menu.sql` 补资源监测菜单，`V4__platform_tenant.sql` 补租户参数表与平台管理菜单（含存量库的 `sys_menu` 自增迁移）；`sql/verify/` 是双租户验收数据，**不自动导入** |
 | `docs` | 当前架构说明 | 后端架构、前后端接口约定和前端组件架构 |
 
@@ -84,7 +85,7 @@ java -jar scaffold-admin/target/scaffold-admin-0.1.0-SNAPSHOT.jar
 ```
 
 ```bash
-# 在 scaffold-vue 目录启动前端；首次使用先 npm ci
+# 前端命令一律在仓库根执行（npm workspaces）；首次使用先 npm install
 npm run dev
 ```
 
@@ -123,11 +124,11 @@ mvn -pl scaffold-admin -am test
 ```
 
 ```bash
-# 在 scaffold-vue 目录
+# 在仓库根：test:unit 会分别进 packages/scaffold-ui 与 scaffold-vue 各跑一遍
 npm run test:unit
 npm run build
 # 已安装 Python Playwright 与 Chromium 时，可验证真实浏览器会话与权限
-python3 scripts/session-regression.py
+python3 scaffold-vue/scripts/session-regression.py
 ```
 
 浏览器回归脚本只创建并删除自己生成的测试角色和用户，不清空表（用户与角色按逻辑删除，行会留在表里、`deleted` 置 1）；管理员密码可通过 `SCAFFOLD_TEST_PASSWORD` 覆盖。脚本无法读验证码图片，因此**要求后端以 `CAPTCHA_ENABLED=false` 启动**（与 `scaffold-admin` 的 surefire 同一口径），否则登录第一步就会失败。测试与构建成功不能代替业务页面验收。

@@ -1,10 +1,10 @@
 import { ref, type Component } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
 import { ApiError, authApi, authSession, type CurrentUser, type LoginRequest, type LoginResponse, type RegisterRequest, type RouteItem } from '@/api'
-import { setPermissions } from '@/directives/permission'
+import { setPermissions } from '@/composables/permission'
 import type { NavGroup, NavLeaf } from '@/data'
-import { clearDictCache } from './dict'
-import { clearDeptCache } from './dept'
+import { clearDictCache } from '@scaffold/ui/composables/dict'
+import { clearDeptCache } from '@scaffold/ui/composables/dept'
 
 /* ============================================================
    登录态、权限与动态菜单。

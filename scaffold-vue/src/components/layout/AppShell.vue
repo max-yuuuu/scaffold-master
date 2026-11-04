@@ -7,9 +7,9 @@ import CommandPalette from './CommandPalette.vue'
 import AppearanceDialog from './AppearanceDialog.vue'
 import PasswordDialog from './PasswordDialog.vue'
 import { logout } from '@/composables/auth'
-import { appearance } from '@/composables/appearance'
-import { pageEnter, pageLeave, playShellEntrance } from '@/composables/motion'
-import { confirm } from '@/composables/confirm'
+import { appearance } from '@scaffold/ui/composables/appearance'
+import { pageEnter, pageLeave, playShellEntrance } from '@scaffold/ui/composables/motion'
+import { confirm } from '@scaffold/ui/composables/confirm'
 
 const route = useRoute()
 const router = useRouter()

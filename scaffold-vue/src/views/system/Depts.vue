@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Avatar, Field, Segmented, SpecPlate, StatusTag, Switch, TextInput, type Column } from '@/components/ui'
-import { DeptSelect, DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@/components/business'
-import OrgCanvas from '@/components/business/OrgCanvas.vue'
+import { Avatar, Field, Segmented, SpecPlate, StatusTag, Switch, TextInput, type Column } from '@scaffold/ui/components/ui'
+import { DeptSelect, DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@scaffold/ui/components/business'
+import OrgCanvas from '@scaffold/ui/components/business/OrgCanvas.vue'
 import { systemApi, type UserRow } from '@/api'
-import { useViewMode } from '@/composables/view'
-import { hasPermission } from '@/directives/permission'
-import { useTreeListPage } from '@/composables/list'
-import { confirm } from '@/composables/confirm'
-import { pushToast, toastError } from '@/composables/toast'
-import { collectDeptIds, reloadDepts } from '@/composables/dept'
+import { useViewMode } from '@scaffold/ui/composables/view'
+import { hasPermission } from '@/composables/permission'
+import { useTreeListPage } from '@scaffold/ui/composables/list'
+import { confirm } from '@scaffold/ui/composables/confirm'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
+import { collectDeptIds, reloadDepts } from '@scaffold/ui/composables/dept'
 import type { Dept } from '@/data'
-import { email, phone, required, validate } from '@/utils/validate'
+import { email, phone, required, validate } from '@scaffold/ui/utils/validate'
 
 const list = useTreeListPage<Dept, { keyword: string; status: string }>({
   query: { keyword: '', status: '' },

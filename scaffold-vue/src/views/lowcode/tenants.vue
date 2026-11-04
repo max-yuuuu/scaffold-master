@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { DateInput, Field, StatusTag, Switch, Tag, TextInput, type Column } from '@/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@/components/business'
+import { DateInput, Field, StatusTag, Switch, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
+import { DictSelect, FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
 import { platformApi, type TenantRow } from '@/api'
 import { currentUser, switchTenant } from '@/composables/auth'
-import { useListPage } from '@/composables/list'
-import { confirm } from '@/composables/confirm'
-import { pushToast, toastError } from '@/composables/toast'
-import { pattern, required, validate } from '@/utils/validate'
+import { useListPage } from '@scaffold/ui/composables/list'
+import { confirm } from '@scaffold/ui/composables/confirm'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
+import { pattern, required, validate } from '@scaffold/ui/utils/validate'
 
 /* ============================================================
    租户管理（平台侧）。lc_tenant 是平台表，平台管理员在本租户内直接

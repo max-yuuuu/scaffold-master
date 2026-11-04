@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/Icon.vue'
-import IconButton from '@/components/ui/IconButton.vue'
-import Avatar from '@/components/ui/Avatar.vue'
+import Icon from '@scaffold/ui/components/Icon.vue'
+import IconButton from '@scaffold/ui/components/ui/IconButton.vue'
+import Avatar from '@scaffold/ui/components/ui/Avatar.vue'
 import { currentUser, switchTenant } from '@/composables/auth'
-import { pushToast, toastError } from '@/composables/toast'
-import { overlayEnter, overlayLeave } from '@/composables/motion'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
+import { overlayEnter, overlayLeave } from '@scaffold/ui/composables/motion'
 
 const emit = defineEmits<{
   (e: 'toggle-rail'): void

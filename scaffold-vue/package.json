@@ -2,16 +2,19 @@
   "name": "scaffold-vue",
   "version": "1.0.0",
   "private": true,
-  "description": "通用后台管理脚手架前端（Vue 3 + Vite + TS，珍珠玻璃主题）",
+  "description": "通用后台管理脚手架前端宿主 app（Vue 3 + Vite + TS）：外壳、路由、登录与业务页面，物料依赖 @scaffold/ui",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "test:api": "node --test --experimental-strip-types src/api/__tests__/*.test.ts",
-    "test:unit": "node --test --experimental-strip-types src/api/__tests__/*.test.ts src/utils/__tests__/*.test.ts",
-    "build": "vue-tsc --noEmit && vite build",
+    "test:unit": "node --test --experimental-strip-types src/api/__tests__/*.test.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "bundle": "vite build",
+    "build": "npm run typecheck && npm run bundle",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@scaffold/ui": "*",
     "gsap": "^3.15.0",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0"

@@ -21,7 +21,9 @@ export interface HttpClient {
   downloadForm(path: string, form?: QueryParams): Promise<Blob>
 }
 
-export type QueryParams = Record<string, string | number | boolean | null | undefined>
+import type { QueryParams } from '@scaffold/ui/types'
+
+export type { QueryParams }
 
 export class ApiError extends Error {
   code: number
@@ -45,7 +47,7 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 }
 
 export function createHttpClient(options: HttpClientOptions = {}): HttpClient {
-  const baseUrl = normalizeBaseUrl(options.baseUrl ?? defaultBaseUrl())
+  const baseUrl = normalizeBaseUrl(options.baseUrl ?? apiBaseUrl())
   const tokenProvider = options.tokenProvider ?? authSession.token
   const fetcher = options.fetcher ?? fetch
 
@@ -112,7 +114,8 @@ function normalizeBaseUrl(value: string) {
   return value.endsWith('/') ? value.slice(0, -1) : value
 }
 
-function defaultBaseUrl() {
+/** 接口根地址：宿主 http 与物料包的上传、直连下载共用同一条口径 */
+export function apiBaseUrl() {
   return ((import.meta as ImportMeta & { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL) || '/api'
 }
 

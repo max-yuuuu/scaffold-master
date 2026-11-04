@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/Icon.vue'
+import Icon from '@scaffold/ui/components/Icon.vue'
 import { navGroups } from '@/composables/auth'
-import { appearance } from '@/composables/appearance'
-import { slideThumb } from '@/composables/motion'
+import { appearance } from '@scaffold/ui/composables/appearance'
+import { slideThumb } from '@scaffold/ui/composables/motion'
 import { APP } from '@/data'
 
 const emit = defineEmits<{ (e: 'navigate'): void }>()

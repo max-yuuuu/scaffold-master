@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { DataTable, Drawer, Field, Select, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@/components/business'
+import { DataTable, Drawer, Field, Select, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@scaffold/ui/components/ui'
+import { DictSelect, FormDialog, ListPage, PermissionButton } from '@scaffold/ui/components/business'
 import { platformApi, systemApi, type FieldRow, type FieldTypeMeta, type ModelMeta, type ModelRow, type ProjectOption } from '@/api'
-import { useListPage } from '@/composables/list'
-import { confirm } from '@/composables/confirm'
-import { pushToast, toastError } from '@/composables/toast'
-import { pattern, required, validate } from '@/utils/validate'
+import { useListPage } from '@scaffold/ui/composables/list'
+import { confirm } from '@scaffold/ui/composables/confirm'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
+import { pattern, required, validate } from '@scaffold/ui/utils/validate'
 
 /* ============================================================
    模型管理。模型是代码生成器的输入（方案 §1.4）：一张业务表 + 一套 CRUD 的期望态。

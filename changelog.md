@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-04（分支口径调整 + PR 4B：组件抽成 `@scaffold/ui` 物料包、注入点解耦）
+
+- **分支口径**：`feat/lowcode-pr3-model-field`（PR 3b/3c + PR 4 + 抽屉版式，4 个提交）快进并入 `main`，再从 `main` 拉出 `dev`；后续模块开发分支一律向 `dev` 合并 PR，`main` 只做阶段收口。远端仍未推。
+
+按方案 §10.3 开 PR 4B（P1.5 组件抽包），这是 PR 5 的硬前置：模板要先决定生成的 `.vue` 里写 `@/components/...` 还是 `@scaffold/ui`。
+
+- **workspace 骨架**：仓库根新增 `package.json`（`workspaces: ["packages/*", "scaffold-vue"]`）、`package-lock.json` 从 `scaffold-vue/` 上移到根，开发命令一律从根跑（`npm run dev|build|test:unit`，`build` 先分别 `vue-tsc` 包与宿主再 `vite build`）。npm **不支持 `workspace:*` 协议**（报 `EUNSUPPORTEDPROTOCOL`），宿主写 `"@scaffold/ui": "*"` 让 workspace 解析，装完 `node_modules/@scaffold/ui` 是指向 `packages/scaffold-ui` 的软链。
+- **物料迁入包**：67 个 `.vue`（`Icon` + `ui/**` + `business/**` + `charts/**`）、16 个 composable、8 个工具、7 层样式进 `packages/scaffold-ui`；样式合并成单一入口 `theme.css`（`@import` 顺序就是原来 `main.ts` 的七行顺序），宿主只留 `import '@scaffold/ui/theme.css'`。`data/icons.ts`（`ICON_PATHS` / `MENU_ICON_OPTIONS`）与 `AVATAR_TINTS` 属展示物料跟着走；`NavGroup/NavLeaf/BaseRow/Menu/Dept` 抽到包内 `types.ts`，宿主 `data/index.ts` 只剩品牌 `APP` 并按原路径 `export type`，页面继续从 `@/data` 取类型。
+- **边界按实际引用重判**（§6.4 那张「平台专属」表的三态落地）：进包 = `OrgCanvas` / `MenuStarMap` / `PermissionMatrix` / `PermissionTrace` / `DictSwatchbook` / `InsightPanel` / `AskDock` / `PostLadder`（部门、角色、菜单、字典、岗位五个基础页在用，剔掉交付项目编译不过）；留宿主 = 外壳 `components/layout/**`、`NeuralNet`、品牌配置、`composables/auth.ts`（登录态与动态路由是 app 的事），以及 `GeneratorPipeline` —— 移到 `scaffold-vue/src/components/platform/`，它只服务被裁剪的代码生成页。
+- **注入点 `installScaffoldUi({ http, permission, dict })`**：包内 14 个文件、21 处 `@/api` / `@/directives/permission` / 宿主 `auth.ts` 引用全部改走注入。`http` 只暴露物料真正用到的 `baseUrl / token / get / put / errorMessage`；`permission` = `has / pathOf / sessionVersion`；`dict` = `load(type)` 返回字典原始行，缓存与选项转换仍由包内 `useDict` 负责。宿主侧新增 `src/api/scaffold-providers.ts` 做适配，`main.ts` 在挂载前注入。包内新增 `api.ts`（`materialApi`）承载 7 个底座固定接口，`types.ts` 收走 `PageResult` / `QueryParams` / `UserRow` / `TimelineBlock` / `LoginHeatmap` / `PermissionGraph` 六个形状，宿主 `api/http.ts`、`api/system.ts` 改为按原路径转出，全仓只有一份定义。
+- **两处设计修正**：① 原设想 `installScaffoldUi(app, …)` 里注册 `v-permission`，实测**全仓零使用**（只有定义没有调用），于是指令删除、`app` 参数删除，权限状态留在宿主 `composables/permission.ts`（原 `directives/permission.ts`，目录名与内容终于一致）；② `provide/inject` 换成模块级单例注册表 `scaffoldUi()`，未安装直接抛错并指名安装入口 —— 宿主与包各装一份 vue 时 `inject` 会静默失配，单例不会。
+- **交付口径定稿**（回答「`@scaffold/ui` 放哪、生成项目从哪拿」）：包放本仓库 `packages/scaffold-ui`，**发布走 npm registry**，生成项目 `package.json` 里是普通版本号，`npm install` 不需要 GitHub 凭据；此前文档里的「GitHub git tag 依赖」作废，`max-yuuuu/lowcode-ai` 仓库也不必再建（GitHub 现在返回 Not Found）。未落地：`@scaffold` 组织归属（registry 上 `@scaffold/ui` 尚未被占用）、发布 token 只进主机 `~/.npmrc`、`files` 白名单与「源码直发 vs 补一层构建」的取舍。**因此交付快照的裁剪清单必须跟着改**（`packages/` 不进交付、根清单与锁不进交付、`scaffold-vue/package.json` 的依赖要写发布版本），这是下一步的 PR 4B-5，本期交付链尚未接上。
+- **构建链**：前端镜像的构建上下文从 `scaffold-vue` 上移到仓库根（先拷三份清单跑 `npm ci`，再 `npm --workspace scaffold-vue run build`），`docker-compose.yml` 的 `frontend.build` 相应改 `context: .` + `dockerfile`；新增根 `.dockerignore`（`node_modules` / `dist` / `target` / `.git` / `lowcode-workspace` 等），原 `scaffold-vue/.dockerignore` 已删 —— 上下文换到根之后只有根那一份生效，留着是误导。
+- **一个值得记的坑**：`env.d.ts` 里 `declare module '*.vue'` 的兜底声明会让 `vue-tsc` **看不见错误的 `.vue` 路径**。搬迁脚本把宿主自己的 `@/components/NeuralNet.vue` 也改写成了 `@scaffold/ui/components/NeuralNet.vue`，两次 typecheck 全绿，是 `vite build` 才报「Rollup failed to resolve」。改完加了一个逐说明符落点校验脚本（`@/` 与 `@scaffold/ui/*` 全部按 exports + 扩展名解析一遍），此后靠它而不是靠 tsc 兜。
+- 验证：
+  - 前端：`vue-tsc`（包 + 宿主各一遍）、`vite build`、24 个用例（宿主 api 10 + 包 utils 11 + 包注入点 3）全绿。新增 `packages/scaffold-ui/src/__tests__/providers.test.ts` 钉三件事 —— 未安装就取能力必须报错、`apiUrl` / `authHeaders` 走注入的 `baseUrl` / `token`、7 个物料接口的路径与查询串逐字不变。node 跑测试不认无扩展名的相对导入，包内 5 个运行时 `from '../providers'` 补成 `'../providers.ts'`。
+  - 后端：`mvn test` 全绿（common 8 / framework 17 / lowcode 29 / admin 76）。`ScaffoldSnapshotPlannerTest` 仍过 —— 它断言的是「平台的东西不进交付项目」，包搬走之后交付快照只是少了一批物料文件，**这正说明它对本期这个破坏无感知**，PR 4B-5 要补一条「交付前端的依赖可解析」断言。
+  - 浏览器真机（dev 5173 + 后端 8080 + 3316/6380，`admin` 登录，控制台无报错无 Vue 警告）：工作台/侧栏正常；`/system/user` 部门树出 4 个节点（`useDepts` → `materialApi.deptTree` → 注入 `http`）、列表 3 行、`新增用户` 按钮可见（`permission.has`）、「状态」下拉出 `正常 / 停用`（`dict.load`）；`/system/dept` 新增部门弹窗里负责人下拉出 3 个用户（`materialApi.usersPage`）；`/system/menu` 星图渲染出「导航 58 项 / 系统管理 8 个页面」（`loadPermissionGraph` + `pathOf`，并且 `sessionVersion` 的 watch 改成首次取数时才注册，避免模块加载早于 `installScaffoldUi`）；`:root` 上 `--ink` `--blue` 取到珍珠玻璃令牌值，`data-theme=light` / `data-density=regular` 由包内 `appearance` 在挂载前写入。
+
 ## 2026-11-04（PR 4：JGit 仓库接入、§6.4 裁剪清单代码化、空仓库首次初始化）
 
 按方案 §10.3 开 PR 4。本单元的落点是「项目不再只是一行数据库记录」：平台能把裁剪后的固定代码推到租户仓库的发布分支，并且**交付产物是脚手架减去平台自身**。

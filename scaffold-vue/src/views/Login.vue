@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/Icon.vue'
-import Button from '@/components/ui/Button.vue'
-import Field from '@/components/ui/Field.vue'
-import TextInput from '@/components/ui/TextInput.vue'
-import Checkbox from '@/components/ui/Checkbox.vue'
+import Icon from '@scaffold/ui/components/Icon.vue'
+import Button from '@scaffold/ui/components/ui/Button.vue'
+import Field from '@scaffold/ui/components/ui/Field.vue'
+import TextInput from '@scaffold/ui/components/ui/TextInput.vue'
+import Checkbox from '@scaffold/ui/components/ui/Checkbox.vue'
 import { ApiError, authApi, portalApi } from '@/api'
 import NeuralNet from '@/components/NeuralNet.vue'
 import { login, registerTenant } from '@/composables/auth'
-import { EASE, afterTwoFrames, gsap, motionSkipped, prefersReducedMotion, trackGlow } from '@/composables/motion'
-import { maxLength, pattern, required, validate } from '@/utils/validate'
+import { EASE, afterTwoFrames, gsap, motionSkipped, prefersReducedMotion, trackGlow } from '@scaffold/ui/composables/motion'
+import { maxLength, pattern, required, validate } from '@scaffold/ui/utils/validate'
 import { APP } from '@/data'
 
 const router = useRouter()

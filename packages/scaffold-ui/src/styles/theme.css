@@ -1,0 +1,8 @@
+/* 珍珠玻璃主题单一入口：导入顺序即层叠顺序，与宿主 main.ts 的旧写法保持一致。 */
+@import './tokens.css';
+@import './base.css';
+@import './materials.css';
+@import './components.css';
+@import './instruments.css';
+@import './layout.css';
+@import './pages.css';

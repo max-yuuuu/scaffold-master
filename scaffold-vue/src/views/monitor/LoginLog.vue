@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import Icon from '@/components/Icon.vue'
-import { Field, Metric, SectionLabel, Segmented, Select, Tag, TextInput, type Column } from '@/components/ui'
-import { ListPage, PermissionButton } from '@/components/business'
-import TrendChart from '@/components/charts/TrendChart.vue'
-import HeatGrid from '@/components/charts/HeatGrid.vue'
+import Icon from '@scaffold/ui/components/Icon.vue'
+import { Field, Metric, SectionLabel, Segmented, Select, Tag, TextInput, type Column } from '@scaffold/ui/components/ui'
+import { ListPage, PermissionButton } from '@scaffold/ui/components/business'
+import TrendChart from '@scaffold/ui/components/charts/TrendChart.vue'
+import HeatGrid from '@scaffold/ui/components/charts/HeatGrid.vue'
 import { systemApi, type LoginHeatmap, type LoginLogStats, type StatsRange } from '@/api'
-import { useViewMode } from '@/composables/view'
-import { revealCascade } from '@/composables/motion'
-import { useListPage } from '@/composables/list'
-import { confirm } from '@/composables/confirm'
-import { pushToast, toastError } from '@/composables/toast'
+import { useViewMode } from '@scaffold/ui/composables/view'
+import { revealCascade } from '@scaffold/ui/composables/motion'
+import { useListPage } from '@scaffold/ui/composables/list'
+import { confirm } from '@scaffold/ui/composables/confirm'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
 
 interface LoginRow { id: number; username: string; status: number; msg?: string; ip?: string; location?: string; browser?: string; os?: string; loginTime: string }
 

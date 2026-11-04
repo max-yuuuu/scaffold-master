@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import FormDialog from '@/components/business/FormDialog.vue'
-import Field from '@/components/ui/Field.vue'
-import TextInput from '@/components/ui/TextInput.vue'
+import FormDialog from '@scaffold/ui/components/business/FormDialog.vue'
+import Field from '@scaffold/ui/components/ui/Field.vue'
+import TextInput from '@scaffold/ui/components/ui/TextInput.vue'
 import { authApi } from '@/api'
-import { pushToast, toastError } from '@/composables/toast'
-import { required, validate } from '@/utils/validate'
+import { pushToast, toastError } from '@scaffold/ui/composables/toast'
+import { required, validate } from '@scaffold/ui/utils/validate'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()

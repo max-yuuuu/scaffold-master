@@ -1,0 +1,29 @@
+# 构建上下文是仓库根：只把源码交给镜像，本地产物与依赖一律不进（否则 npm ci 与 mvn package 会被脏数据带偏）
+.git
+.gitignore
+.idea/
+.vscode/
+.cursor/
+.claude/
+**/node_modules/
+**/dist/
+**/target/
+**/.npm-cache/
+**/.cache/
+**/logs/
+**/*.log
+**/.DS_Store
+**/*.tmp
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# 低代码平台在运行时写入的工作区（每个租户一目录），不属于镜像内容
+/lowcode-workspace/
+**/lowcode-workspace/
+
+# 交付与验收产物
+docs/superpowers/
+/promo-video/

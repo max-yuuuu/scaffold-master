@@ -91,7 +91,9 @@ services:
 
   frontend:
     build:
-      context: ./scaffold-vue
+      # 上下文是仓库根：npm workspaces 要把 packages/scaffold-ui 一起交给镜像构建
+      context: .
+      dockerfile: scaffold-vue/Dockerfile
     image: scaffold-frontend:latest
     restart: unless-stopped
     ports:

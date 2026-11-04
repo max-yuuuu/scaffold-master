@@ -1,0 +1,19 @@
+{
+  "name": "scaffold-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "元搭 · 低代码平台前端工作区：宿主 app（scaffold-vue）与组件物料包（packages/scaffold-ui）",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "scaffold-vue"
+  ],
+  "scripts": {
+    "dev": "npm --workspace scaffold-vue run dev",
+    "build": "npm run typecheck && npm --workspace scaffold-vue run bundle",
+    "typecheck": "npm --workspace @scaffold/ui run typecheck && npm --workspace scaffold-vue run typecheck",
+    "preview": "npm --workspace scaffold-vue run preview",
+    "test:unit": "npm --workspace @scaffold/ui run test:unit && npm --workspace scaffold-vue run test:unit"
+  },
+  "license": "MIT"
+}

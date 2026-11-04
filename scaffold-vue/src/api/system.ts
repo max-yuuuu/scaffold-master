@@ -1,28 +1,12 @@
 import type { HttpClient, QueryParams } from './http'
+import type { LoginHeatmap, PageResult, PermissionGraph, TimelineBlock, UserRow } from '@scaffold/ui/types'
 
-export interface PageResult<T> {
-  pageNum: number
-  pageSize: number
-  total: number
-  rows: T[]
-}
+/* 分页、用户行、泳道块、登录热力与权限图形状由 @scaffold/ui 统一定义（组件与接口共用一份），
+   这里按原路径转出，页面继续从 @/api 引用。 */
+export type { LoginHeatmap, PageResult, PermissionGraph, TimelineBlock, UserRow }
 
 export interface IdResponse {
   id: number
-}
-
-export interface UserRow {
-  id: number
-  username: string
-  nickname: string
-  phone: string
-  email: string
-  deptName: string
-  postName: string
-  roleName: string
-  status: number
-  createTime: string
-  lastLogin: string
 }
 
 export interface UserWriteRequest {
@@ -145,39 +129,11 @@ export interface LoginLogStats {
   series: StatsBucket[]
 }
 
-/** 泳道时间块：startSec / endSec 当日秒数，count 次数，failed 失败数，maxCost 最大耗时 ms，ids 日志 ID（最多 50 个） */
-export interface TimelineBlock {
-  startSec: number
-  endSec: number
-  count: number
-  failed: number
-  maxCost: number
-  ids: number[]
-}
-
 /** 当日操作泳道：nowSec 当前秒数（非当天为 null），lanes 按模块分道 */
 export interface OperTimeline {
   date: string
   nowSec: number | null
   lanes: Array<{ module: string; count: number; blocks: TimelineBlock[] }>
-}
-
-/** 登录热力：cells 星期（0 周一 … 6 周日）× 小时的登录 / 失败次数；anomalies 失败次数达到 threshold 的 IP（kind=ip，spread 尝试账号数）或账号（kind=user，spread 来源 IP 数） */
-export interface LoginHeatmap {
-  days: number
-  since: string
-  threshold: number
-  cells: Array<{ dow: number; hour: number; total: number; failed: number }>
-  anomalies: Array<{ kind: 'ip' | 'user'; key: string; failed: number; total: number; spread: number; firstTime: string; lastTime: string }>
-}
-
-/** 权限关系图：users 用户节点（无用户查询权限时为空），roles 角色（menuIds 授予的菜单），menus 菜单，userRoles [用户ID, 角色ID] 关联 */
-export interface PermissionGraph {
-  users: Array<{ id: number; username: string; nickname: string; deptName: string | null; status: number }>
-  roles: Array<{ id: number; name: string; code: string; dataScope: string; status: number; builtin: boolean; userCount: number; menuIds: number[] }>
-  menus: Array<{ id: number; parentId: number; name: string; type: 'dir' | 'menu' | 'btn'; icon: string | null; path: string | null; permission: string | null; sort: number; visible: number; status: number }>
-  userRoles: Array<[number, number]>
-  usersVisible: boolean
 }
 
 /**

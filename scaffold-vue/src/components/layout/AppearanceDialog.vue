@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import Modal from '@/components/ui/Modal.vue'
-import Segmented from '@/components/ui/Segmented.vue'
-import Button from '@/components/ui/Button.vue'
-import { appearance, type Density, type ThemeMode } from '@/composables/appearance'
+import Modal from '@scaffold/ui/components/ui/Modal.vue'
+import Segmented from '@scaffold/ui/components/ui/Segmented.vue'
+import Button from '@scaffold/ui/components/ui/Button.vue'
+import { appearance, type Density, type ThemeMode } from '@scaffold/ui/composables/appearance'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'close'): void }>()

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import Button from '@/components/ui/Button.vue'
-import EmptyState from '@/components/ui/EmptyState.vue'
+import Button from '@scaffold/ui/components/ui/Button.vue'
+import EmptyState from '@scaffold/ui/components/ui/EmptyState.vue'
 
 const router = useRouter()
 </script>

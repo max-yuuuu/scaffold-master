@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import ToastHost from '@/components/ui/ToastHost.vue'
-import ConfirmHost from '@/components/ui/ConfirmHost.vue'
+import ToastHost from '@scaffold/ui/components/ui/ToastHost.vue'
+import ConfirmHost from '@scaffold/ui/components/ui/ConfirmHost.vue'
 </script>
 
 <template>

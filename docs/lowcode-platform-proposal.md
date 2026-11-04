@@ -57,8 +57,13 @@ scaffold-master = ① 低代码平台自身（同一个 app）
 import { installScaffoldUi } from '@scaffold/ui'
 import '@scaffold/ui/theme.css'                       // 珍珠玻璃：tokens.css 及组件样式随包走
 
-installScaffoldUi(app, { http, permission, dict })    // 三个能力由宿主提供，包内 inject 取用
+installScaffoldUi({ http, permission, dict })         // 三个能力由宿主提供，包内统一经 scaffoldUi() 取用
 ```
+
+落地时的两处修正（PR 4B，2026-11-04）：
+
+- `installScaffoldUi` **不收 `app`**。原本设想的 `app.provide` + 组件内 `inject` 在「宿主与包各装一份 vue」时会静默失配，而且 `app` 参数除了登记一个全仓零使用的 `v-permission` 指令之外没有别的用处 —— 指令定义随之删除，权限判定只走 `permission.has`。
+- 注入契约的字段按真实调用面收敛：`http` 只有物料用到的 `baseUrl / token / get / put / errorMessage`（上传与直连下载用前两者拼地址与鉴权头，异常文案由宿主统一翻译）；`permission` = `has / pathOf / sessionVersion`；`dict` = `load(type)` 返回字典原始行，缓存与转选项仍由包内的 `useDict` 负责。**包内不再出现 `@/` 与 `import.meta.env`**（`vue-tsc` 用不带宿主 `paths` 桥的 tsconfig 校这一条，`src/__tests__/providers.test.ts` 另把 7 个物料接口路径钉死）。
 
 包面 = **AGENTS.md 那份「必须优先复用的组件清单」全量进包**（`ListPage`/`useListPage`/`DataTable`/`SearchForm`/`FormDialog`/`RowActions`/`PermissionButton`/`DictSelect`/`DeptTree`/`UserSelect`/`PermissionTree`/`TreeSelect`/`DateInput`/`Upload`/`Descriptions` 及 `usePopover`/`dateValue`/`upload` 等 composable）。带数据的组件也进包，靠注入点拿数据 —— 否则生成模板要替每个项目重写一篇 `DictSelect`，违背统一组件原则。
 
@@ -66,7 +71,9 @@ installScaffoldUi(app, { http, permission, dict })    // 三个能力由宿主�
 
 **不进包**（平台与演示专属，留在 scaffold-vue）：`GeneratorPipeline`、`OrgCanvas`、`MenuStarMap`、`PermissionMatrix`、`PermissionTrace`、`DictSwatchbook`、`AskDock`、`InsightPanel`，以及设计器画布/属性面板/组件面板/合并请求 diff 视图。这条边界在抽包时一并划清，否则生成项目装着一堆用不上的组件。
 
-**仓库与发布**：包放本仓库 `packages/scaffold-ui` + npm workspaces（**不新建仓库** —— 平台与包同步演进，跨仓库来回改代价大于收益）。发布走 **GitHub git tag 依赖**：`"@scaffold/ui": "github:max-yuuuu/lowcode-ai#v1.0.0"`，零 registry 运维，版本号即 tag，与 `lc_project.base_scaffold_sha` 天然对齐。凭据仍在主机 `~/.npmrc`，不进数据库。
+**仓库与发布**（2026-11-04 定稿，覆盖此前「GitHub git tag 依赖」的写法）：包放本仓库 `packages/scaffold-ui` + npm workspaces（**不新建仓库** —— 平台与包同步演进，跨仓库来回改代价大于收益）；宿主用 workspace 依赖，本地改完即时生效。**对外发布走 npm registry**：生成项目的 `package.json` 里是普通版本号 `"@scaffold/ui": "^1.0.0"`，`npm install` 直接从 registry 解析，不需要 GitHub 凭据，也不会把 npm 私有仓库的 token 带进客户的项目里。
+
+未落地项（发布渠道建设，PR 4B 收尾或后续单独一次改动）：npmjs 上 `@scaffold` 组织的归属与创建（`@scaffold/ui` 当前无人占用，registry 返回 404）、发布 token 只落主机 `~/.npmrc` 不进数据库、`files` 白名单与「源码直发（不做 build）」还是补一层 `d.ts`/产物构建的取舍 —— 消费方一律是 Vite + `@vitejs/plugin-vue`，源码直发可行，但一旦要支持非 Vite 项目就得先补构建。版本纪律：包版本与 `lc_project.base_scaffold_sha` 各自记各自的事实，升级项目时以「bump 依赖版本号」为主、目录 diff 为辅。
 
 **时机是硬约束**：抽包必须**先于 PR 5（FreeMarker 模板）**。模板要决定生成的 `.vue` 里写 `@/components/...` 还是 `@scaffold/ui`；先出模板再抽包，等于把所有历史项目的生成物再改一遍。
 
@@ -967,7 +974,7 @@ C 档扩展点是"业务逻辑唯一允许落笔的地方"，平台只在首次�
 ```
 packages/
 └── scaffold-ui          # 新增：@scaffold/ui 组件包（73 组件 + 17 composable + theme.css）
-                         #       导出 installScaffoldUi(app, {http, permission, dict}) 注入点
+                         #       导出 installScaffoldUi({http, permission, dict}) 注入点
                          #       npm workspaces 成员，平台与生成项目共用同一个包
 
 scaffold-system/         # 后端 Maven 聚合
@@ -985,7 +992,7 @@ scaffold-system/         # 后端 Maven 聚合
 
 **前端**：scaffold-vue 变成**宿主 app** —— 低代码视图进 `src/views/lowcode/**`，可复用组件与主题搬进 `packages/scaffold-ui`，两侧都通过包名引用。设计器专用组件（画布、属性面板、组件面板、diff 视图）留在宿主、**不进包**，且在 §6.4 被裁剪掉，不进任何生成项目。
 
-**为什么包不单独建仓库**：平台与组件同步演进，跨仓库来回改的摩擦大于收益；本仓库 `packages/scaffold-ui` + npm workspaces，宿主用 workspace 依赖（本地即时生效），生成项目用 git tag 依赖（发布产物）。
+**为什么包不单独建仓库**：平台与组件同步演进、跨仓库来回改的摩擦大于收益；本仓库 `packages/scaffold-ui` + npm workspaces，宿主用 workspace 依赖（本地即时生效），生成项目用发布到 npm registry 的版本号依赖（§〇「仓库与发布」）。
 
 ---
 
@@ -1266,7 +1273,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **P0-A：多租户地基** | — | `lc_tenant` 建表、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / `LoginUser.tenantId` / JWT claim / 登录三段校验 | ✅ 已完成（`be2145d`） |
 | **P0-B：租户隔离收口** | 2 周 | `TenantLineInnerInterceptor` 自动过滤（表白名单 + DDL 反向校验）、`super_admin` 切换租户旁路、登录 `tenantCode`、关联表写入归属校验、租户管理 UI、`lc_tenant_config` | ✅ 已完成（PR 2，2026-11-03；租户开通流程移入 P1） |
 | **P1：项目 + 模型** | 3 周 | `lc_project`（含 §2.2 新增的仓库字段）、`lc_model` / `lc_field`、项目管理与模型设计 UI、仓库绑定与连通性检查、租户开通流程的**手工新增分支**（PR 2 已交付自助注册即开通，平台管理员在租户管理里手工建租户时还不建账号） | ✅ 已完成（PR 3a / 3b / 3c，2026-11-04）；连通性与初始化的 Git 部分在 PR 4 交付 |
-| **P1.5：组件抽包 `@scaffold/ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable 迁入；**解 28 处 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 git tag 并让宿主改依赖 | 待做，**P2/P3 的硬前置** |
+| **P1.5：组件抽包 `@scaffold/ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；组件与 composable 迁入；**解 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 npm 包并让生成项目按版本号依赖 | **抽包与注入点已完成**（2026-11-04，PR 4B）；发布渠道（npm 组织、token、`files` 白名单）待落地，**P2/P3 的硬前置** |
 | **P2：可视化设计器** | 5 周 | 三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板；**第一期只覆盖列表页 + 表单弹窗两类模板**，看板/详情/流程后置 | 待做 |
 | **P3：代码生成升级** | 3 周 | FreeMarker 模板替换 `StringBuilder`、完整 CRUD 生成、A/B/C 文件分档与 C 档扩展点骨架、`renderFiles` 出参提为公共类型；**模板产物的 import 走 `@scaffold/ui`**；自定义接口只生成 `custom:{name}` 的 TODO handler 桩（§4.5） | 待做 |
 | **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化）已完成，只剩对真实租户仓库推一次固定代码的真机验证；tag、`lc_publish_log`、合并请求与回滚留给 PR 8 |
@@ -1296,7 +1303,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | 破坏性数据库变更随发布下发 | 严重 | 建表 SQL 只生成增量语句，禁止 `DROP` / `ALTER ... DROP COLUMN`；破坏性变更以提示形式列出，由人手写迁移 |
 | JGit 合并/diff 行为与原生 git 有偏差 | 轻 | 已知：重命名检测弱、不支持自定义 merge driver。合并前预检 + 冲突一律人工处理，不做单边自动取舍 |
 | 脚手架升级下发困难 | 版本碎片化 | 组件走 `@scaffold/ui` 包，升级 = bump 版本号；后端用 Maven BOM 管版本；`lc_project.base_scaffold_sha` 记录各项目落后多少。A 档 app 壳的差异仍走**合并请求**下发 |
-| 私有 git tag 依赖导致生成项目 `npm install` 拉不到包 | 中 | `~/.npmrc` 配 `_authToken`（主机级，不进 DB、不进仓库）；"裁剪后项目能编译能起能登录"的集成用例必须包含一次干净 `npm ci`，避免只在开发机凭缓存跑通 |
+| 生成项目 `npm install` 拉不到物料包 | 中 | 发布走 npm registry 后不需要 GitHub 凭据；私有包则把 `_authToken` 配在主机 `~/.npmrc`（不进 DB、不进仓库）；"裁剪后项目能编译能起能登录"的集成用例必须包含一次干净 `npm ci`，避免只在开发机凭缓存跑通 |
 | 抽包时组件行为回归 | 中（影响面大：148 处引用） | P1.5 分两次提交：先只搬路径与建 workspace（行为不变，`vue-tsc` + 现有测试守住），再改注入点解耦 28 处 app 依赖。不要一次做完 |
 | 裁剪清单遗漏，交付项目里带着设计器与代码生成入口 | 严重 | §6.4 的白/黑名单作为代码里的一份显式配置并配集成用例：裁剪后项目能编译、能起、能登录，且不含 `tool` 菜单与 `lc_*` 表 |
 
@@ -1314,8 +1321,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | 凭据 | 主机级 SSH 密钥，DB 只存 `repo_url` 与分支名 |
 | Git 实现 | JGit 纯 Java，不经 shell |
 | 组件物料 | **统一走 `@scaffold/ui` 包**（放本仓库 `packages/scaffold-ui`，npm workspaces），平台与生成项目共用；组件不再拷源码进生成项目。不存在 fork：平台前端就是 scaffold-vue 宿主 |
-| 包的发布渠道 | **GitHub git tag 依赖**（`"@scaffold/ui": "github:max-yuuuu/lowcode-ai#v1.0.0"`），零 registry 运维；token 走主机 `~/.npmrc` |
-| 包面 | AGENTS.md 那份组件清单**全量进包**，含带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`…），靠 `installScaffoldUi(app, {http, permission, dict})` 注入宿主能力；平台/演示专属组件不进包 |
+| 包的发布渠道 | **npm registry**（2026-11-04 定稿，取代早先的 GitHub git tag 方案）：生成项目按普通版本号依赖，构建不需要 Git 凭据；发布 token 只落主机 `~/.npmrc` |
+| 包面 | AGENTS.md 那份组件清单**全量进包**，含带数据的组件（`DictSelect`/`UserSelect`/`PermissionButton`…），靠 `installScaffoldUi({http, permission, dict})` 注入宿主能力；平台/演示专属组件不进包 |
 | 设计器引擎 | 自研，第一期只做列表页 + 表单弹窗；LCE 协议规范仅作 schema 参考 |
 | 部署形态 | 单主机自托管 docker-compose；泛域名 / OSS / 多副本 / K8S 属远期，见 §7.2 |
 | 代码存储 | Git 仓库（不存数据库 BLOB）；平台库存 `design_json` 与版本快照 |
@@ -1346,7 +1353,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 3a**<br>P1 上 | ✅ 已完成：`lc_project` 建表（`db_*` / `deploy_*` 等无读写方的列留到 PR 5 以 ALTER 补）、`RepoUrlValidator` 协议白名单、项目 CRUD 与 `ListPage` 版式的项目管理页面、500 段「低代码」菜单，以及「补齐租户资产」接口（已有租户获得迁移新增的菜单 / 字典 / 参数） | 项目从新增到软删全链路；非法仓库地址与同分支被拒；跨租户同名编码各自可见且改删被拒（`ProjectApiTest` 3 例 + `RepoUrlValidatorTest` 4 例） | PR 2 ✅ |
 | **PR 3b / 3c**<br>P1 上 | ✅ 已完成：`lc_model` / `lc_field` 建表与 CRUD、`FieldType` 作为类型映射的唯一事实源（库里存算好的 `java_type` / `column_type`，前端读 `/models/meta`）、字段配置走 `ListPage` + `Drawer` 主从形态；手工新增租户时填了管理员就走同一套开通流程 | 建模型、配字段；`FieldTypeTest` 7 例钉死映射表；`ModelApiTest` 5 例覆盖派生/约束/跨租户；手工开通的租户能用该账号登录并看到菜单 | PR 3a ✅ |
 | **PR 4**<br>P1 下 | ✅ 已完成（2026-11-04）：JGit 依赖只落 `scaffold-lowcode`（7.7.1 + `ssh.apache`）；`ls-remote` 连通性检查（只读，不改生命周期）；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单代码化**（`ScaffoldTrimPolicy` 路径白/黑名单 + `scaffold:platform-only` 标记块 + 交付产物的平台残留引用扫描）+ `scaffold-business` 空壳预置；空仓库首次初始化（未出生 HEAD、显式 `refs/heads/{gen_branch}`、推完回读校验）与 `sync_status` 推进、`sync_message` 失败原因（V7）。初始化同步执行，不引入异步任务表 | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止。**实测补记**：交付快照 282 个文件离线 `mvn package` 通过、前端 `npm ci` + `vite build` 通过、用交付侧 V1–V3 建新库能起能登录，菜单里没有 `/tool` 与 `/lowcode`；`lc_tenant` 因登录链路每次都要查租户状态而保留（§6.4 已回写）。**真机推送已完成（2026-11-04）**：对本机 → GitHub 真实空仓库推上 282 个文件、`sync_status=2`、主干未被写；顺带修掉「系统代理劫持 git-over-ssh」与「缺 BouncyCastle 时 ed25519 部署密钥报 no keys to try」两处 | PR 3 |
-| **PR 4B**<br>P1.5 | **抽 `@scaffold/ui`**：`packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi(app, {http, permission, dict})` 注入点；解 28 处 app 层 import；平台/演示专属组件划出包外；打 tag 发布，宿主与文档改依赖。**分两步提交**：先搬路径建 workspace（行为不变），再改注入点解耦 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）；148 处引用中不再有组件间 `@/` 互引；包被一个最小 demo app 以 git tag 依赖消费成功 | PR 3，**必须在 PR 5 之前** |
+| **PR 4B**<br>P1.5 | **抽 `@scaffold/ui`**：`packages/scaffold-ui` + npm workspaces（根 `package.json`、锁文件上移到根）；组件 + 16 composable + 工具 + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi({http, permission, dict})` 注入点；解包内对 `@/api`、`@/directives/permission`、宿主 `auth.ts`、`import.meta.env` 的全部引用；平台专属件（`GeneratorPipeline`、外壳 `components/layout/**`、`NeuralNet`、品牌 `data/index.ts`）划在包外；前端镜像构建上下文上移到仓库根。**分两步提交**这一条实际没能成立：物料文件被就地改了两轮（先相对化、后注入点），拆不出两个各自可构建的提交，最终合成一次提交，changelog 里分步记录 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）✅；包内 `@/` 引用为 0、`import.meta` 为 0 ✅；包被一个最小 demo app 以 npm 依赖消费成功 ⬜（等发布渠道）；交付项目按 §6.4 拿得到同一套物料 ⬜（下一步：裁剪清单与依赖口径） | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@scaffold/ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等 | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上 | PR 6 |

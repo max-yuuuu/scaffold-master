@@ -8,8 +8,10 @@
 | --- | --- | --- | --- | --- |
 | 后端 | `scaffold-system` | Java 17+、Spring Boot 3.5、MyBatis、MySQL、Redis、JWT | `8080`，接口前缀 `/api` | 已确认 |
 | 管理后台 | `scaffold-vue` | Vue 3、TypeScript、Vite、Vue Router、GSAP，自有组件 | `5173`，开发代理 `/api` | 已确认 |
+| 前端物料包 | `packages/scaffold-ui`（`@scaffold/ui`） | 73 个组件 + 16 个 composable + 工具 + 珍珠玻璃主题，npm workspaces 成员 | 宿主按 `@scaffold/ui/...` 子路径引用，主题走 `@scaffold/ui/theme.css` | 已确认 |
 
 - Maven 模块：`scaffold-common`、`scaffold-framework`、`scaffold-system`、`scaffold-generator`、`scaffold-admin`。
+- npm workspaces：仓库根 `package.json` 声明 `packages/*` 与 `scaffold-vue`，锁文件在根（`package-lock.json`），`scaffold-vue/node_modules/@scaffold/ui` 是指向 `packages/scaffold-ui` 的软链。开发命令一律从根跑：`npm run dev` / `build` / `test:unit`（`build` 与 `test:unit` 会分别进包和进宿主各跑一遍）。
 - 包名前缀：`com.scaffold`；启动类：`scaffold-system/scaffold-admin/src/main/java/com/scaffold/admin/ScaffoldAdminApplication.java`。
 - 配置：`scaffold-system/scaffold-admin/src/main/resources/application.yml`、`application-dev.yml`；前端代理：`scaffold-vue/vite.config.ts`。
 - 数据库初始化：`scaffold-system/sql/V1__init_schema.sql`（15 张表，含 `lc_tenant`，`sys_*` 表带 `tenant_id`）、`V2__seed_data.sql`（首行平台租户 id=1 种子）、`V3__system_resource_menu.sql`；开发工具：`scaffold-admin/src/main/java/com/scaffold/admin/util/DbInit.java`。
@@ -32,7 +34,7 @@
 
 ## 三、模块文件地图
 
-下列后端业务路径均相对于 `scaffold-system`，前端路径均相对于 `scaffold-vue/src`。
+下列后端业务路径均相对于 `scaffold-system`，宿主前端路径均相对于 `scaffold-vue/src`；物料包内文件写作 `packages/scaffold-ui/src/...`（表格里同一目录后续的 `Xxx.vue` 省略前缀，宿主引用时写成 `@scaffold/ui/components/ui/Xxx.vue`）。
 
 | 后端模块 | Controller | Service | Mapper / 表 | 来源 |
 | --- | --- | --- | --- | --- |
@@ -76,23 +78,23 @@
 
 | 公共能力 | 文件入口 | 用途 |
 | --- | --- | --- |
-| 列表模板与数据状态 | `components/business/ListPage.vue`、`composables/list.ts` | 查询、重置、分页、导出、勾选、底部批量浮条及树列表；`altView` + `#alt` 换成画布 / 看板 / 矩阵；行操作由 `RowActions.vue` + `RowMenuItem.vue` 承载（前几个平铺图标按钮，其余收进 teleport 到 body 的「更多」菜单，横向滚动与 overflow 裁剪都盖不住） |
-| 版式组件 | `components/business/OrgCanvas.vue`、`BoardView.vue`、`PermissionMatrix.vue`、`PostLadder.vue`、`PermissionTrace.vue`、`MenuStarMap.vue`、`DictSwatchbook.vue`、`GeneratorPipeline.vue`、`composables/view.ts` | 组织画布、看板分列（拖拽 + 键盘移动）、角色权限矩阵、岗位阶梯、权限溯源（三层下钻）、导航星系（三层下钻）、字典样本册、生成流水线、按页面记忆视图 |
-| 图谱与问答 | `components/charts/RelationGraph.vue`、`composables/neural.ts`、`components/business/InsightPanel.vue`、`AskDock.vue`、`composables/ask.ts`、`composables/viewport.ts`、`components/NeuralNet.vue` | 通用关系图（弹簧布局变形、脉冲、扇形触须；`variant="stage"` 为珍珠玻璃图谱舞台）、舞台 Canvas 绘制件（珍珠球、玻璃刻度表盘、连线与脉冲、背景网络、轨道、台阶光柱）、分析栏、问答坞、本地规则问答引擎、共享视口平移缩放、登录神经网络背景 |
-| 仪器化组件 | `components/ui/Metric.vue`、`Odometer.vue`、`SectionLabel.vue`、`SpecPlate.vue`、`DeltaPill.vue`、`Ruler.vue`、`HoverCard.vue`、`Descriptions.vue` + `DescriptionsItem.vue` | 显示级读数、逐位滚动、编号眉标、规格铭牌、环比、刻度尺、悬停名片、只读键值汇总（复用 `.kv-grid` 材质，配 `Panel` 的 `padded`） |
-| 图表 | `components/charts/TrendChart.vue`、`BarChart.vue`、`TickRing.vue`、`Swimlane.vue` | 自绘 SVG：形变折线与准星（稀疏数据茎叶点，`max` 可锁定纵轴上限给百分比一类有界序列用）、柱状、刻度环、时间轴泳道（默认聚焦有操作时段）；工作台数据权限为页内占比条 |
-| 表单控件与引用选项 | `components/business/FormDialog.vue`、`DictSelect.vue`、`DeptTree.vue`、`DeptSelect.vue`、`UserSelect.vue`、`components/ui/DateInput.vue`、`DateRangePicker.vue`、`NumberInput.vue`、`Textarea.vue`、`TreeSelect.vue`、`Tabs.vue` + `TabPane.vue`、`Upload.vue` + `Photo.vue` + `ImageField.vue`、`composables/dateValue.ts`、`popover.ts`、`upload.ts` | 统一表单、字典 / 部门 / 用户选择、日期与区间（值与显示分离、区间两端共享锚点）、数字与多行文本、树形下拉、标签页、浮层定位、文件与图片上传（走 `fetch` + 同一套 Bearer 鉴权与 `{ code, message, data }` 信封） |
-| 权限 | `components/business/PermissionButton.vue`、`directives/permission.ts` | 以当前用户权限控制操作显示 |
+| 列表模板与数据状态 | `packages/scaffold-ui/src/components/business/ListPage.vue`、`packages/scaffold-ui/src/composables/list.ts` | 查询、重置、分页、导出、勾选、底部批量浮条及树列表；`altView` + `#alt` 换成画布 / 看板 / 矩阵；行操作由 `RowActions.vue` + `RowMenuItem.vue` 承载（前几个平铺图标按钮，其余收进 teleport 到 body 的「更多」菜单，横向滚动与 overflow 裁剪都盖不住） |
+| 版式组件 | `packages/scaffold-ui/src/components/business/OrgCanvas.vue`、`BoardView.vue`、`PermissionMatrix.vue`、`PostLadder.vue`、`PermissionTrace.vue`、`MenuStarMap.vue`、`DictSwatchbook.vue`、`GeneratorPipeline.vue`、`packages/scaffold-ui/src/composables/view.ts` | 组织画布、看板分列（拖拽 + 键盘移动）、角色权限矩阵、岗位阶梯、权限溯源（三层下钻）、导航星系（三层下钻）、字典样本册、生成流水线、按页面记忆视图 |
+| 图谱与问答 | `packages/scaffold-ui/src/components/charts/RelationGraph.vue`、`packages/scaffold-ui/src/composables/neural.ts`、`packages/scaffold-ui/src/components/business/InsightPanel.vue`、`AskDock.vue`、`packages/scaffold-ui/src/composables/ask.ts`、`packages/scaffold-ui/src/composables/viewport.ts`、`components/NeuralNet.vue` | 通用关系图（弹簧布局变形、脉冲、扇形触须；`variant="stage"` 为珍珠玻璃图谱舞台）、舞台 Canvas 绘制件（珍珠球、玻璃刻度表盘、连线与脉冲、背景网络、轨道、台阶光柱）、分析栏、问答坞、本地规则问答引擎、共享视口平移缩放、登录神经网络背景 |
+| 仪器化组件 | `packages/scaffold-ui/src/components/ui/Metric.vue`、`Odometer.vue`、`SectionLabel.vue`、`SpecPlate.vue`、`DeltaPill.vue`、`Ruler.vue`、`HoverCard.vue`、`Descriptions.vue` + `DescriptionsItem.vue` | 显示级读数、逐位滚动、编号眉标、规格铭牌、环比、刻度尺、悬停名片、只读键值汇总（复用 `.kv-grid` 材质，配 `Panel` 的 `padded`） |
+| 图表 | `packages/scaffold-ui/src/components/charts/TrendChart.vue`、`BarChart.vue`、`TickRing.vue`、`Swimlane.vue` | 自绘 SVG：形变折线与准星（稀疏数据茎叶点，`max` 可锁定纵轴上限给百分比一类有界序列用）、柱状、刻度环、时间轴泳道（默认聚焦有操作时段）；工作台数据权限为页内占比条 |
+| 表单控件与引用选项 | `packages/scaffold-ui/src/components/business/FormDialog.vue`、`DictSelect.vue`、`DeptTree.vue`、`DeptSelect.vue`、`UserSelect.vue`、`packages/scaffold-ui/src/components/ui/DateInput.vue`、`DateRangePicker.vue`、`NumberInput.vue`、`Textarea.vue`、`TreeSelect.vue`、`Tabs.vue` + `TabPane.vue`、`Upload.vue` + `Photo.vue` + `ImageField.vue`、`packages/scaffold-ui/src/composables/dateValue.ts`、`popover.ts`、`upload.ts` | 统一表单、字典 / 部门 / 用户选择、日期与区间（值与显示分离、区间两端共享锚点）、数字与多行文本、树形下拉、标签页、浮层定位、文件与图片上传（走 `fetch` + 同一套 Bearer 鉴权与 `{ code, message, data }` 信封） |
+| 权限 | `packages/scaffold-ui/src/components/business/PermissionButton.vue`、`RowMenuItem.vue`，宿主侧 `composables/permission.ts` | 判定入口是宿主的 `hasPermission`，由 `main.ts` 调 `installScaffoldUi({ http, permission, dict })` 注入给包；包不 import 宿主模块。原 `directives/permission.ts` 里的 `v-permission` 指令全仓零使用，已随抽包删除 |
 | 外壳 | `components/layout/AppShell.vue`、`Sidebar.vue`、`Topbar.vue`、`CommandPalette.vue` | 导航、移动侧栏、滚动凝结顶栏、命令面板（最近访问 / 页面 / 用户 / 动作）与账号操作 |
 | 请求与会话 | `api/http.ts`、`api/session.ts`、`composables/auth.ts`、`router/index.ts` | 响应解包、存储、401 处理、动态路由与会话清理；`download` 走 GET 查询串、`downloadForm` 走 POST + 表单参数，两者共用同一套 401 与附件失败处理；`sys_menu.component` 由 `COMPONENT_ALIAS` 显式别名 + `import.meta.glob('../views/**/*.vue')` 约定解析，新增页面不必改 `auth.ts` |
-| 外观与动效 | `composables/appearance.ts`、`motion.ts`、`focus.ts` | 主题、密度、GSAP、浮层层级与焦点 |
-| 样式 | `styles/tokens.css`、`base.css`、`materials.css`、`components.css`、`instruments.css`、`layout.css`、`pages.css` | 顺序加载的七层样式 |
+| 外观与动效 | `packages/scaffold-ui/src/composables/appearance.ts`、`motion.ts`、`focus.ts` | 主题、密度、GSAP、浮层层级与焦点 |
+| 样式 | `packages/scaffold-ui/src/styles/theme.css`（单一入口）内含 `tokens.css`、`base.css`、`materials.css`、`components.css`、`instruments.css`、`layout.css`、`pages.css` | 珍珠玻璃主题随包发布，`@import` 顺序就是原来的七层加载顺序；宿主 `main.ts` 只留 `import '@scaffold/ui/theme.css'` 一行 |
 
 | 部署链路 | 文件入口 | 用途 |
 | --- | --- | --- |
 | 服务编排 | `docker-compose.yml`、`.env.example` | 前端 nginx + 后端 + Redis 常驻，MySQL 在 `mysql` profile 内按需启用；后端对 MySQL 用 `depends_on` + `required: false` 的可选依赖，启用 profile 时等库健康、外部模式自动跳过，`DB_PORT`（后端连库端口）与 `MYSQL_HOST_PORT`（内置库宿主机映射端口）分用两个变量。操作与验证记录见 `docs/docker-deployment.md` |
 | 后端镜像 | `scaffold-system/Dockerfile`、`scaffold-system/.dockerignore` | `maven:3.9-eclipse-temurin-17` 构建 → `eclipse-temurin:17-jre-jammy` 运行；镜像内装 `curl` 专供健康检查，`ENTRYPOINT` 预留 `JAVA_OPTS` |
-| 前端镜像 | `scaffold-vue/Dockerfile`、`scaffold-vue/nginx.conf`、`scaffold-vue/.dockerignore` | `node:22-alpine` 跑 `npm run build`（含 `vue-tsc`）→ `nginx:1.27-alpine` 托管；`/api` 反代到 `backend:8080`，SPA 深链接回退 `index.html`，`/assets/` 长缓存 |
+| 前端镜像 | `scaffold-vue/Dockerfile`（构建上下文改为仓库根）、根 `.dockerignore`、`scaffold-vue/nginx.conf` | `node:22-alpine` 上先拷三份清单（根、`packages/scaffold-ui`、`scaffold-vue`）跑 `npm ci`，再 `npm --workspace scaffold-vue run build`（含 `vue-tsc`）→ `nginx:1.27-alpine` 托管 `/build/scaffold-vue/dist`；`/api` 反代到 `backend:8080`，SPA 深链接回退 `index.html`，`/assets/` 长缓存。原先的 `scaffold-vue/.dockerignore` 已删，上下文换到根之后只有根 `.dockerignore` 生效 |
 | 内置 MySQL 字符集 | `deploy/mysql-client.cnf` | 官方镜像首次建卷导入 SQL 时客户端默认按 latin1 解析，中文会二次编码入库；该配置把 `[client]` 固定为 utf8mb4 |
 
 ## 四、场景剧本

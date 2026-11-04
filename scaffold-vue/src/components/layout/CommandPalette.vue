@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import Icon from '@/components/Icon.vue'
-import Avatar from '@/components/ui/Avatar.vue'
+import Icon from '@scaffold/ui/components/Icon.vue'
+import Avatar from '@scaffold/ui/components/ui/Avatar.vue'
 import { systemApi, type UserRow } from '@/api'
 import { navGroups, pathOf } from '@/composables/auth'
-import { appearance } from '@/composables/appearance'
-import { overlayEnter, overlayLeave, revealCascade, slideThumb, typeOut } from '@/composables/motion'
-import { createFocusTrap } from '@/composables/focus'
-import { ask, presetQuestions, type AnswerCard, type AnswerChip } from '@/composables/ask'
-import { hasPermission } from '@/directives/permission'
+import { appearance } from '@scaffold/ui/composables/appearance'
+import { overlayEnter, overlayLeave, revealCascade, slideThumb, typeOut } from '@scaffold/ui/composables/motion'
+import { createFocusTrap } from '@scaffold/ui/composables/focus'
+import { ask, presetQuestions, type AnswerCard, type AnswerChip } from '@scaffold/ui/composables/ask'
+import { hasPermission } from '@/composables/permission'
 
 /* ============================================================
    命令面板：最近访问 / 页面 / 用户 / 快捷动作 四组结果，
