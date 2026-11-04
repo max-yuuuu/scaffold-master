@@ -77,6 +77,7 @@ public class LcPageService {
         }
         Map<String, Object> model = requireModel(projectId, request.getModelCode());
         PageDesign design = parseDesign(model, request.getDesign());
+        requireSingleListPage(model, null);
 
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("projectId", projectId);
@@ -118,6 +119,7 @@ public class LcPageService {
         }
         // 每次保存都重新对一遍设计：字段可能在两次保存之间被删掉，旧设计指着它就存不进去了
         PageDesign design = parseDesign(model, request.getDesign());
+        requireSingleListPage(model, id);
 
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("pageName", required(request.getPageName(), "页面名称不能为空"));
@@ -164,6 +166,23 @@ public class LcPageService {
     }
 
     /* ── 内部 ── */
+
+    /**
+     * 一个模型第一期只允许一个列表页。
+     *
+     * <p>落点由模型类名派生，放两个进来等于让后一次发布整文件盖掉前一次的产物 —— 设计器里看着是
+     * 两份设计都能生成，交付项目里只剩一个文件，这种「看着都对」的覆盖最难查。要另一份视图请先做
+     * 只读台账（另建一个列表页得换模型）或等详情页模板进生成器。
+     */
+    private void requireSingleListPage(Map<String, Object> model, Long excludeId) {
+        List<Map<String, Object>> existing = pageMapper.selectListPagesOfModel(numberAsLong(model.get("id")), excludeId);
+        if (existing.isEmpty()) {
+            return;
+        }
+        String codes = existing.stream().map(page -> String.valueOf(page.get("pageCode"))).toList().toString();
+        throw new BusinessException("模型「" + model.get("modelCode") + "」已经有一个列表页 " + codes
+                + "：一个模型第一期只允许一个列表页，页面落点由模型类名派生，第二个会在下次发布整文件盖掉第一个");
+    }
 
     private Map<String, Object> requireModel(Long projectId, String modelCode) {
         String code = required(modelCode, "页面必须绑定一个模型");

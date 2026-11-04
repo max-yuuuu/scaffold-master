@@ -229,6 +229,43 @@ class PageApiTest {
         }
     }
 
+    @Test
+    void 一个模型第一期只允许一个列表页() {
+        Fixture fx = new Fixture();
+        try {
+            String admin = fx.admin();
+            long projectId = fx.project(admin, "pproj6");
+            long modelId = fx.model(admin, projectId, "sales_order");
+            fx.salesOrderFields(admin, modelId);
+            long pageId = fx.page(admin, projectId, "sales_order_list", "销售订单列表");
+
+            // 生成物落点是 views/{module}/{Cls}.vue，由模型类名派生：同一模型的第二个列表页
+            // 会在下一次发布整文件盖掉第一个，比报错糟得多，所以入口就拦
+            assertThat(messageOf(post("/api/lowcode/pages", pageBody(projectId, "sales_order_list2", "第二个列表页"), admin)))
+                    .contains("一个模型第一期只允许一个列表页")
+                    .contains("sales_order_list");
+            // 编辑自己不该被这条拦住
+            assertThat(put("/api/lowcode/pages/" + pageId, pageBody(projectId, "sales_order_list", "销售订单列表"), admin).getBody())
+                    .containsEntry("code", 200);
+
+            // 换到另一个模型就各归各：唯一约束是「模型 × 列表页」，不是「项目里只能有一个页面」
+            long otherModel = fx.model(admin, projectId, "order_item");
+            fx.field(admin, otherModel, "qty", new LinkedHashMap<>(Map.of("fieldName", "数量",
+                    "fieldType", "INTEGER", "isInsert", 1, "isEdit", 1)));
+            Map<String, Object> second = pageBody(projectId, "order_item_list", "订单明细列表");
+            second.put("modelCode", "order_item");
+            second.put("design", simpleDesign("order_item", "qty"));
+            assertThat(post("/api/lowcode/pages", second, admin).getBody()).containsEntry("code", 200);
+
+            // 页面删掉之后，这个模型可以重新建一个列表页
+            assertThat(delete("/api/lowcode/pages/" + pageId, admin).getBody()).containsEntry("code", 200);
+            assertThat(post("/api/lowcode/pages", pageBody(projectId, "sales_order_list3", "重做的列表页"), admin).getBody())
+                    .containsEntry("code", 200);
+        } finally {
+            fx.clean();
+        }
+    }
+
     /* ── 请求构造 ── */
 
     /** 一份能生成出来的列表页设计：查询一条、工具栏一个新增、两列、表单四个字段 */
@@ -251,6 +288,21 @@ class PageApiTest {
                                 control("NumberInput", "订单金额", "amount", null),
                                 control("DateInput", "交货日期", "deliveryDate", null),
                                 control("Textarea", "备注", "remark", null)))))));
+        return design;
+    }
+
+    /** 只有一张表与一台弹窗的最小合法列表页：换模型那一例不想把整份设计再造一遍 */
+    private static Map<String, Object> simpleDesign(String modelRef, String field) {
+        Map<String, Object> design = new LinkedHashMap<>();
+        design.put("version", "1.0");
+        design.put("pageType", "list");
+        design.put("modelRef", modelRef);
+        design.put("layout", new LinkedHashMap<>(Map.of(
+                "type", "PageContainer",
+                "children", List.of(
+                        new LinkedHashMap<>(Map.of("type", "DataTable",
+                                "columns", List.of(new LinkedHashMap<>(Map.of("field", field, "title", "数量"))))),
+                        block("FormContainer", null, List.of(control("NumberInput", "数量", field, null)))))));
         return design;
     }
 

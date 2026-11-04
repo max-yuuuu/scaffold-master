@@ -130,6 +130,26 @@ public interface LcPageMapper {
     @Select("SELECT COUNT(*) FROM lc_page WHERE model_id = #{modelId} AND deleted = 0")
     long countPagesOfModel(@Param("modelId") Long modelId);
 
+    /**
+     * 同一个模型上已经有的列表页。
+     *
+     * <p>第一期生成物的页面落点是 {@code views/{module}/{Cls}.vue}，由模型类名派生：同一模型的第二个
+     * 列表页会在下一次发布整文件盖掉第一个。§1.5 说的「一个模型多个页面」是列表 + 详情 + 表单三类，
+     * 第一期只落了列表这一类，所以按「模型 × 列表页」唯一拦下来。
+     */
+    @Select("""
+            <script>
+            SELECT id, page_code AS pageCode, page_name AS pageName
+            FROM lc_page
+            WHERE model_id = #{modelId}
+              AND page_type = 'list'
+              AND deleted = 0
+              AND (#{excludeId} IS NULL OR id &lt;&gt; #{excludeId})
+            ORDER BY id
+            </script>
+            """)
+    List<Map<String, Object>> selectListPagesOfModel(@Param("modelId") Long modelId, @Param("excludeId") Long excludeId);
+
     @Select("SELECT COUNT(*) FROM lc_page WHERE project_id = #{projectId} AND deleted = 0")
     long countPagesOfProject(@Param("projectId") Long projectId);
 
