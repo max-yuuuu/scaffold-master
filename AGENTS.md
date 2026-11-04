@@ -55,6 +55,19 @@
 - 代码变更后维护项目中的 `changelog.md`（记录变更内容），该文件不存在则创建。
 - 模块、接口或调用链改变时同步 `PROJECT_MAP.md` 和相关说明；保留历史日志与人工备注。
 
+## 分支与 PR 流程
+
+固定一条路径：**任务完成 → 基于 `dev` 的新分支提交 → 向 `dev` 开 PR**。用户指定走这条流程时，提交、推送、开 PR 视为已授权，不必逐次确认；commit message 与 PR 内容在完成后一并报告。
+
+- **一个任务一条分支**，命名 `<类型>/<范围>`：`feat/lowcode-pr5d-frontend-templates`、`docs/lowcode-generation-caliber`、`chore/agents-branch-workflow`。开工时从最新的远端 dev 拉：`git fetch --prune <远端>` 后 `git switch -c <新分支> <远端>/dev`。
+- **已合并的分支不再追加提交**。PR 合进 dev 就是收口了，往那条分支上继续推会把新工作混进已合并的 PR（本仓库真踩过：PR 合并后同分支又推两个提交，只能另开分支重搬）。
+- **提交前确认基点**：`git log --oneline <远端>/dev..HEAD` 的条数必须正好是本任务要提的提交。多出来的就是基点不对 —— 前一任务的 PR 还没合，此时等它合并，或把新分支指向那个 tip 并在 PR 描述里写明前置 PR。
+- **下一个任务开始前先合并**：任务之间是串行依赖的（后一个要用前一个的产物），所以下一个任务从 dev 拉分支的前提是前一个 PR 已合并；不要为了赶进度自行叠加。
+- 合并方向只有 `feature → dev`，`dev → main` 只做阶段性收口，永不反向、不直接在 dev 上写。合并不强推，优先 `--ff-only`，有分叉就用合并提交。
+- **共享分支（`dev` / `main`）绝不 force-push**，也不擅自删远端分支或改仓库配置（子模块指针、remote、`.gitmodules`）—— 这些一律先与用户确认。本地还没推过的分支重指基点是安全的。
+- 本仓库的远端是 `lowcode-ai`（平台迭代）；`origin` / `upstream` 是脚手架上游，**不往它们推**。
+- changelog 与 `PROJECT_MAP.md` 跟着所属任务一起进 PR，不让文档跨 PR 悬空；代码与文档可以拆成同 PR 的两条提交。
+
 ## 部署
 
 - 本脚手架交付本地开发底座，并附带单主机自托管的容器部署：`docker-compose.yml`（前端 nginx + 后端 + Redis，MySQL 在 `mysql` profile 内按需启用）、两份 `Dockerfile` 与 `docs/docker-deployment.md`。域名、TLS、多副本与云端编排不在默认交付范围内，需要时另行设计并先与用户确认。
