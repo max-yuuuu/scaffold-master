@@ -45,13 +45,14 @@ public final class ScaffoldTrimPolicy {
             // 平台业务与在线代码生成入口：交付项目里既没有菜单也没有表
             "scaffold-system/scaffold-lowcode/",
             "scaffold-system/scaffold-generator/",
-            // 平台元数据建表与菜单种子（lc_project / lc_model / lc_field / lc_tenant_config 与 400、500 段菜单）
+            // 平台元数据建表与菜单种子（lc_project / lc_model / lc_field / lc_page / lc_tenant_config 与 400、500 段菜单）
             // 新增平台侧 SQL 时要在这一段补一行；漏了不会静默出门，ScaffoldSnapshotPlanner 的
             // 表名残留扫描会当场拒绝初始化
             "scaffold-system/sql/V4__platform_tenant.sql",
             "scaffold-system/sql/V5__lowcode_project.sql",
             "scaffold-system/sql/V6__lowcode_model.sql",
             "scaffold-system/sql/V7__lowcode_workspace.sql",
+            "scaffold-system/sql/V8__lowcode_page.sql",
             // 双租户越权验收脚本，只在平台侧有意义
             "scaffold-system/sql/verify/",
             // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试。
@@ -62,6 +63,7 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantRoleCaliberApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ModelApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/PageApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectWorkspaceApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/DeliveryGenerationApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/StubGitGateway.java",
