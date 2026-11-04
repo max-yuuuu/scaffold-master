@@ -20,7 +20,11 @@
   - 后端 **128 个测试全绿**（common 8 / framework 17 / lowcode 27 / admin 76）。新增 `ScaffoldSnapshotPlannerTest` 8 例（对**真实底座**出快照并钉死「平台的东西不进交付项目」「底座能力必须进」、pom/启动类/SQL/前端入口的裁剪结果、标记块不成对与同行成对的报错、底座缺失提示）；`JGitGatewayTest` 8 例对本机临时裸仓库跑通「空仓库未出生 HEAD → 提交 → 显式建分支推送 → 回读」、无改动不空提交、脏与未推送检测、**远端已前进时推送被拒而不是强推**、克隆后切发布分支且主干不动、不可达报错文案、分支名规则；`ProjectWorkspaceApiTest` 8 例用可控假远端跑状态机（就绪、不可达、非法地址、重复初始化、未推送提交禁止清空、状态读数、只读检查不改状态、停用项目拒绝初始化），并断言固定代码真的按清单落盘且不含 `scaffold-lowcode` / `views/tool`。
   - 交付产物**实测能编译能起能登录**：把 282 个文件的快照落到临时目录 → 离线 `mvn package` 出 jar → 前端 `npm ci` + `vite build` 通过 → 用交付侧的 `V1`–`V3` 建一个全新库 → 起在 8091 端口 → `admin` 登录成功、`/api/system/users` 返回 3 条、`/api/auth/routes` 的菜单里没有任何 `/tool` 与 `/lowcode` 路径、`/api/lowcode/projects` 返回 404；验证完删掉临时库与目录。
   - 前端 `vue-tsc` + `vite build` 通过，21 个前端用例通过；浏览器实测项目管理页出现「仓库与工作区」入口，对一个真实 GitHub 空仓库执行只读连通性检查回显「可访问 / 空仓库 / 下一步：初始化会直接创建发布分支并推入固定代码」。
-- **还差一次真机推送**：对这个真实空仓库点「初始化固定代码」会往租户仓库推一个约 280 文件的提交，属于对外可见的写操作，需要使用者确认后再做（§10.3 的 PR 4 风险项，SSH 与 `known_hosts` 也在那一次一并验证）。
+- **真机推送已完成**（使用者授权后对本机 → GitHub 真实仓库跑通）：`order-serive` 绑定 `git@github.com:max-yuuuu/test-lowcode-push.git`（空仓库），初始化耗时约 14 秒，推上 `refs/heads/platform-generated` 提交 `36c8021`，282 个文件；`sync_status` 走 `0→1→2`，`base_scaffold_sha` 记的是底座提交，`workspace` 读数 `dirty=false / unpushed=false / localSha==remoteSha`，`main` 分支全程没被写过。GitHub 侧核对：远端只有 `refs/heads/platform-generated` 这一条。
+- **真机跑出两个「代码没错、环境或依赖不给力」的坑**（都在 `SshTransportSupportTest` 里钉住了）：
+  - **系统代理劫持 git over ssh**：这台机器开着本机 HTTP 代理（`scutil --proxy` 里 `127.0.0.1:7897`），JGit 的 `DefaultProxyDataFactory` 会读 JVM/系统代理，于是 SSH 去连代理端口并被掐断，报错只有一句含糊的 `Session is being closed`（调试日志里才看得见 `remote=/127.0.0.1:7897`）。现在 `directSshProxy()` 固定返回 null 走直连 —— 与 `ssh` 命令、原生 git 的行为一致；真要代理就在 `~/.ssh/config` 写 `ProxyCommand`，那条路走 `ConnectorFactory`，不受影响。
+  - **ed25519 部署密钥需要 BouncyCastle**：Apache SSHD 2.19 的 OpenSSH 私钥解析器没有 BC 就报 `Unsupported key type (ssh-ed25519)`，认证阶段表现为 `publickey: no keys to try` —— 看起来像「密钥没配好」，实际是依赖缺失（BC 既不由 Spring Boot 也不由 JGit 管理版本，父 pom 里显式钉 1.80）。另外这次还暴露一个自己的操作失误：只构建 `-pl scaffold-lowcode -am` 就重启后端，BC 根本没进 fat jar，白查一轮。
+- 顺带把推送失败的信息文案改准：不再把分支名当「目标」印出来，认证类失败补一句「推送凭据只走主机级密钥，HTTPS 请改用 git@ 或配置主机 token」。
 
 
 ## 2026-11-04（PR 3b / 3c：模型与字段配置、类型映射单一事实源、手工新增租户的开通分支）

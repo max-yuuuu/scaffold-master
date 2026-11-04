@@ -19,6 +19,8 @@ import org.eclipse.jgit.transport.RemoteRefUpdate;
 import org.eclipse.jgit.transport.SshSessionFactory;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.URIish;
+import org.eclipse.jgit.transport.sshd.JGitKeyCache;
+import org.eclipse.jgit.transport.sshd.ProxyDataFactory;
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -248,6 +250,15 @@ public class JGitGateway implements GitGateway {
         };
     }
 
+    /**
+     * git over ssh 不走 HTTP/系统代理：开着本机代理时代理工厂会把 {@code github.com:22}
+     * 解析成代理端口并被掐断，报错还是含糊的 "Session is being closed"。需要代理请在
+     * {@code ~/.ssh/config} 里写 {@code ProxyCommand}，那条路走 ConnectorFactory，不受这里影响。
+     */
+    static ProxyDataFactory directSshProxy() {
+        return address -> null;
+    }
+
     private SshSessionFactory sshFactory() {
         SshdSessionFactory current = sshSessionFactory;
         if (current != null) {
@@ -255,7 +266,11 @@ public class JGitGateway implements GitGateway {
         }
         synchronized (this) {
             if (sshSessionFactory == null) {
-                SshdSessionFactory factory = new SshdSessionFactory();
+                // 第二个参数是代理工厂：返回 null 表示直连。git over ssh 必须和 ssh 命令一致地
+                // 忽略 HTTP/系统代理 —— 否则开着本机代理时 SSHD 会去连代理端口并被掐断
+                // （报 "Session is being closed"，与凭据无关）。真需要代理的人在 ~/.ssh/config
+                // 里写 ProxyCommand，那条路走 ConnectorFactory，不受这里影响。
+                SshdSessionFactory factory = new SshdSessionFactory(new JGitKeyCache(), directSshProxy());
                 if (sshHome != null) {
                     factory.setHomeDirectory(sshHome);
                     factory.setSshDirectory(new File(sshHome, ".ssh"));

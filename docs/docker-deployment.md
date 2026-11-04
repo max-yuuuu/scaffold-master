@@ -121,8 +121,17 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
    ssh -T git@github.com            # 确认部署密钥可用
    ```
 
-   HTTPS 地址（`https://github.com/...`）走匿名读，私有仓库需要平台侧凭据，本期不支持；
-   推送统一建议用 `git@host:org/repo.git`。平台永不 `force-push`，分支保护导致的拒绝会原样回显。
+   两条真实踩过的坑，报错都不指向真因，先按这里对照：
+
+   - **`publickey: no keys to try` 未必是密钥没配**：Apache SSHD 解析 ed25519 私钥要 BouncyCastle，
+     缺依赖时就是这个表现。后端 jar 里应能看到 `BOOT-INF/lib/bcprov-jdk18on-*.jar`
+     （`unzip -l target/scaffold-admin-*.jar | grep bcprov`）。
+   - **`Session is being closed` 多是代理劫持**：这台机器开着本机 HTTP 代理时，git over ssh 也不该走它 ——
+     平台固定直连（与 `ssh` 命令一致）。确实需要代理的，就在 `~/.ssh/config` 里给该主机写 `ProxyCommand`。
+
+   HTTPS 地址（`https://github.com/...`）本期不带 token：匿名读可以，推送会被远端拒（回显
+   `Authentication is required...`）。要推 HTTPS 得让平台从主机环境变量读凭据，属未交付的能力。
+   推送统一建议 `git@host:org/repo.git`。平台永不 `force-push`，分支保护导致的拒绝会原样回显。
 
 初始化与推送是同步执行的 HTTP 请求，仓库较大时可能几十秒。nginx 反代默认 60 秒读超时，
 如果超时就给 `/api` 这个 location 加 `proxy_read_timeout 300s;`（`scaffold-vue/nginx.conf`），

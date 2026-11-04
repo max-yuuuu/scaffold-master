@@ -198,6 +198,7 @@
 ## 九、特殊机制备忘
 
 - **多租户地基（PR 1，2026-11-03）**：`TenantContext`（`scaffold-common`，纯 ThreadLocal）+ `TenantFilter`（`scaffold-framework`，`SecurityConfig` 用 `.addFilterAfter(tenantFilter, JwtAuthenticationFilter.class)` 注册）+ `LoginUser.tenantId` + JWT `tenantId` claim 已打通登录链路：`AuthService.login` 依次校验账号密码 → 用户状态 → 租户状态（`AuthMapper.countActiveTenant`），签发 token 携带 `user.getTenantId()`；`SecurityUtils.getTenantId()` 在使用点抛 401。11 张 `sys_*` 表带 `tenant_id NOT NULL DEFAULT 1`；跨租户唯一键改为 `(tenant_id, 原键)`。旧令牌（无 `tenantId` claim）解析出 `tenantId = null`，`TenantFilter` 不抛错，业务层决定是否拒绝。
+- **平台推仓库的两个运行期前提**（PR 4 真机验证踩到的，`SshTransportSupportTest` 已钉住）：① `scaffold-lowcode` 必须带 `bcprov-jdk18on`（父 pom 显式钉版本，Boot 与 JGit 都不管理它）—— 没有它 Apache SSHD 解析不了 ed25519 私钥，报 `publickey: no keys to try`，看着像凭据没配；② `JGitGateway.directSshProxy()` 固定不走 HTTP/系统代理 —— 本机开着代理时 JGit 的默认代理工厂会把 `github.com:22` 指到代理端口，失败只剩 `Session is being closed`。需要代理就在 `~/.ssh/config` 写 `ProxyCommand`。凭据仍然只有主机密钥，库里不存 token。
 - **交付产物由代码里的裁剪清单定义，不在文档里手抄一遍**（PR 4，方案 §6.4）：`ScaffoldTrimPolicy` 是路径白名单 + 黑名单，`PlatformOnlyStripper` 再删文件内的 `scaffold:platform-only:start/end` 标记块（标记必须独占整行）。新增平台侧模块、页面、接口客户端、建表脚本或 compose 挂载时，**三处要一起想清楚**：路径要不要进黑名单、是不是既有文件里的平台专属片段、`ScaffoldSnapshotPlanner` 的残留引用扫描能不能兜住。清单改了必须跑 `ScaffoldSnapshotPlannerTest`（它对真实底座出快照），漏裁不会静默出门 —— 初始化当场失败。交付项目里 `lc_tenant` 与其余 `lc_*` 命运不同：**保留**，因为 `AuthService.login()` 每次都要查租户是否停用；剔除的是 `lc_project` / `lc_model` / `lc_field` / `lc_tenant_config` 等元数据表。
 - **`@MapperScan` 会把包树里所有接口注册成 Mapper**：所以低代码侧要逐个列到 `*.mapper` 包，写成包根 `com.scaffold.lowcode` 会让服务接口（如 `GitGateway`）多出一个 bean 把构造注入打成二义、后端直接起不来。业务包 `com.scaffold.business` 按包根扫是有意的例外，代价是那里的接口一律按 Mapper 注册。
 
@@ -247,7 +248,7 @@
 | 文件业务与防重复提交 | 文件表已保留，统一上传及防重复提交能力未提供完整业务闭环；`Upload` 组件与 `composables/upload.ts` 已按统一鉴权就绪，只缺后端上传接口 | 有实际需求时扩展公共能力 |
 | 资源监测的历史曲线 | 只回传单次快照，近 5 分钟折线由页面自身采样累积，离开页面即丢弃；不落库、不建表 | 需要跨重启的趋势与告警时再设计留存表与采集任务 |
 | 模型没有版本历史 | 模型改动只体现在下次发布的 diff 里，库里不留版本（`lc_model.version` / `config` 本期不建） | 需要「回滚某个模型定义」时再设计，别和 `lc_page_version` 混为一谈 |
-| 真机推送一次 | JGit 语义已对本机临时裸仓库验证（空仓库未出生 HEAD、非快进被拒、脏与未推送检测），对真实 GitHub 空仓库只跑过**只读**连通性检查 | 对待推送的租户仓库点一次「初始化固定代码」，同时验证 SSH 部署密钥与 `known_hosts` —— 方案 §10.3 标的本期风险点，属对外写操作，需使用者确认后再做 |
+| 真机推送 | 已对本机 → GitHub 真实空仓库跑通：282 个文件推上 `platform-generated`（提交 `36c8021`），`sync_status=2`、`main` 未被写、回读远端一致；过程中修掉系统代理劫持与缺 BouncyCastle 两处 | 租户各带凭据、以及 deploy key 一把只绑一个仓库的限制（现在每台主机一把账号级 key 还是每仓库一把 deploy key）需要定口径，属 `lc_tenant_credential` 那一档的事 |
 | 容器里的仓库凭据 | compose 已把 `~/.ssh`、工作区卷、Maven/npm 缓存与底座 checkout 挂进后端，流程写在 `docs/docker-deployment.md` 的「低代码平台的工作区与仓库凭据」一节 | 第一次上容器部署时按那节逐步跑一遍；私钥带口令或 `known_hosts` 缺指纹都会在初始化时如实报错 |
 | 交付快照的「能起能登录」 | 已实测一次：282 文件落盘 → 离线 `mvn package` → 前端 `npm ci` + `build` → 用交付侧 V1–V3 建新库 → 起服务、登录、菜单里没有 `/tool` 与 `/lowcode` | 这条链依赖本机 Maven/npm 缓存；CI 里要长期守住就得把「干净 `npm ci`」也放进去（方案 §九 已列为风险） |
 | 租户开通流程 | 自助注册与「租户管理里手工新增（填了管理员即开通）」两条路径共用 `TenantProvisionService`，菜单模板当前是**复制平台租户的业务菜单** | 菜单模板要成为可维护的一等资产时再建 `lc_menu_template`，避免长期靠「平台租户恰好配得对」 |

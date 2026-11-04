@@ -46,6 +46,8 @@
         <jjwt.version>0.12.6</jjwt.version>
         <!-- JGit：纯 Java 的 Git 实现，仓库读写不经 shell，避免用户输入拼进命令行 -->
         <jgit.version>7.7.1.202607240634-r</jgit.version>
+        <!-- Apache SSHD 解析 ed25519 私钥依赖 BouncyCastle，JGit/Boot 都不管理它的版本 -->
+        <bouncycastle.version>1.80</bouncycastle.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
@@ -127,6 +129,11 @@
                 <groupId>org.eclipse.jgit</groupId>
                 <artifactId>org.eclipse.jgit.ssh.apache</artifactId>
                 <version>${jgit.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
