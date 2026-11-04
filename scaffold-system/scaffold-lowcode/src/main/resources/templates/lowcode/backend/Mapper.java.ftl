@@ -56,6 +56,23 @@ public interface ${className}Mapper {
             """)
     <@mp.declare returnType="List<${className}Row>" name="selectRows" items=pagedParams style="mapper" />
 
+    /**
+     * 按主键取整行（含没勾选进列表的字段）。
+     * <p>编辑弹窗必须先取这一份：列表行只有勾选进列表的列，直接拿它填表单，
+     * 会把没显示出来的字段当成空覆盖掉。
+     */
+    @Select("""
+            SELECT <#list fields as f><#if f?index gt 0>,
+                   </#if>t.${f.column}<#if f.column != f.javaField> AS ${f.javaField}</#if></#list><#if audit><#if fields?size gt 0>,
+                   </#if>t.create_by AS createBy,
+                   t.update_by AS updateBy,
+                   t.create_time AS createTime,
+                   t.update_time AS updateTime</#if>
+            FROM ${tableName} t
+            WHERE t.${primaryField.column} = #{id}<#if logicDelete> AND t.deleted = 0</#if>
+            """)
+    ${className} selectById(@Param("id") Long id);
+
 <#list uniqueFields as f>
     /** ${f.desc}是否已被占用：新增时 {@code excludeId} 传 null，修改时传自身主键 */
     @Select("""

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-04（PR 5D：前端两份模板，产物在宿主里过了 vue-tsc）
+
+`frontend/Api.ts.ftl`（→ `src/api/{module}/{resource}.ts`）与 `frontend/ListView.vue.ftl`（→ `src/views/{module}/{Cls}.vue`）。写之前先把底座的真实写法读了一遍：`views/lowcode/models.vue` 的 ListPage 版式、`composables/list.ts` 的 `useListPage` 契约（含 `exporter` / `exportName` / `params()` 丢空值）、`utils/validate.ts` 的 `validate(form, rules)`、`DictTag` 的 `{type, value}`、`composables/auth.ts` 的 `resolveComponent` → `../views/${component}.vue`。
+
+- **分支基点搞错又改回来了**（记下来免得再犯）：我从 `lowcode-ai/dev` 拉 5D 分支，而 dev 当时只合到 5B，5C 还在 PR #3 上没合。改到一半发现 GenerationInput 里 5C 的派生全不在，于是把 WIP 三个 .ftl 与两份新模板搬到 `feat/lowcode-pr5d-frontend-templates`（改指向 5C 分支的 tip，那条本地分支没有提交、也没推过，重指无损），在正确基点上重做 Java 侧派生。
+- **接口文件按模型一份**（本项修订方案 §10.2 的第 ⑤ 条）：原来写的 `src/api/{module}.ts` 是模块级单文件，一个项目多个模型时，任何一个字段变化都要重写整文件、diff 会盖到别人的接口上；按模型分文件后一次发布只动一个文件。另一条硬约束：**不引 `@/api` 汇总出口**，那个 barrel 是 A 档，平台往里加导出行等于破「A 档不随发布更新」。
+- **补了详情接口**（动到 5B 的三套模板）：编辑弹窗必须先 `GET /{id}` 取整行再填表单 —— 列表行只有勾选进列表的字段，直接拿 row 填，保存时会把没显示出来的字段当空值覆盖掉。所以 Mapper 加 `selectById`（选全部列）、Service 加 `detail`、Controller 加 `@GetMapping("/{id}")`（权限点复用 `:list`，与底座 `system:post:list` 覆盖导出同一口径）。方案 §4.x 的接口表里本来就有这条，是我在 5B 当「没人用的方法」删掉的。
+- **类型形状两条**：日期在 TS 里是 `string`（后端 `@JsonFormat` 出规范串，前端物料 `dateValue` 也只认这两种，全程不用 Date 对象承载）；入参里的数字字段**一律 `| null`**，Java 侧本来就是 `Integer` / `Long` / `BigDecimal`，必填由后端 Service 校验并回中文提示，前端表单初值是空，类型上先允许 null 才不用骗编译器 —— 这条是 `vue-tsc` 逼出来的：先前写成 `number` 直接报 `Type 'null' is not assignable to type 'number'`。
+- **控件映射定死**（`GenerationInput.formControl` / `queryControl` / `pageImportsOf`）：挂字典的一律 `DictSelect`，列表单元格换 `DictTag`；TEXTAREA→Textarea、NUMBER→NumberInput、DATE/DATETIME→DateInput、其余 TextInput。区间拆出来的起止两个参数**不按字典渲染**（日期区间是两个日期框，不是两个下拉）；多选（后端收 `FIND_IN_SET` 逗号串）如实给一个文本框，不假装是多选控件。**没挂字典的 SELECT、UPLOAD、REF 先落文本框并留注释**：选项来源与上传接口模板不替项目猜。页面 import 只列这个页面真会用到的组件（`pageImports`），多余的 import 读代码的人会以为页面里有那个控件。
+- **JS 字面量转义**：字段说明是中文自由文本，出现单引号或反斜杠就得转义（`jsText`），否则生成的 .vue 少一个转义就是整份文件解析失败，而这种错要到前端构建才暴露。SQL 侧同理另有一条 `sqlText`。
+- **验证**：`vue-tsc` 的演练是把渲染出的两份文件写到宿主 `scaffold-vue/src/api/order/order.ts` 与 `src/views/order/Order.vue` 跑 typecheck（本模块测试不引 node 工具链），一共改了四轮才过 —— Query/Form 得用 `type` 别名（interface 没有隐式索引签名，不满足 `Record<string, unknown>` 约束）、数字可空、可空文本的 `?.trim() ?? null`、对象字面量统一「每项一行 + 尾逗号」（JS 允许尾逗号，省掉换行体操）；之后 `npm run build`（含 `vite build`）也过，演练文件随即删掉。新增 `FrontendTemplatesTest` 11 例：路径来源、可空性、五个接口方法、版式骨架与权限点、字典控件、查询区控件、表单校验与 trim、编辑前取整行、无查询条件时不出查询区、引号转义、两次渲染逐字节一致。夹具 `TemplateFixture` 补 `dict()` / `area()` 两条字段形态。后端 **181 用例全绿**，前端 24 用例 + 构建全绿。
+
 ## 2026-11-04（PR 5C：建表与菜单种子模板，真机跑了两遍）
 
 模板链的最后一段「要人拿去执行」的产物。这两份 SQL 的特殊之处是：形状断言证明不了 MySQL 收不收，所以除了单测，还在本机 IT 容器（`scaffold-it-mysql`，3316）的一个临时库里把 V1 + V2 + 生成物**各跑两遍**做了物化演练。

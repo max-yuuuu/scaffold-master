@@ -1,6 +1,7 @@
 <#import "../_shared/methodParams.ftl" as mp>
 package com.scaffold.business.${module}.service;
 
+
 import com.scaffold.business.${module}.domain.${className};
 import com.scaffold.business.${module}.domain.${className}Row;
 import com.scaffold.business.${module}.domain.${className}WriteRequest;
@@ -49,6 +50,15 @@ public class ${className}Service {
         List<${className}Row> rows = mapper.selectRows(<@mp.call items=queryParams /><#if queryParams?size gt 0>, </#if>query.offset(), query.normalizedPageSize());
         long total = mapper.countByQuery(<@mp.call items=queryParams />);
         return PageResult.of(rows, total, query.normalizedPageNum(), query.normalizedPageSize());
+    }
+
+    /** 单行详情。编辑弹窗打开时先取这一份：列表行只有勾选进列表的字段 */
+    public ${className} detail(Long id) {
+        ${className} entity = mapper.selectById(id);
+        if (entity == null) {
+            throw new BusinessException("${modelName}不存在或已删除");
+        }
+        return entity;
     }
 
     /**
