@@ -76,10 +76,11 @@ public class ${className}Service {
     </#if>) {
         List<${className}Row> rows = mapper.selectRows(<@mp.call items=queryParams /><#if queryParams?size gt 0>, </#if>0, EXPORT_LIMIT);
         extension.afterRows(rows);
+        // 导出的列与页面上那一套对齐：开了审计开关时页面有「创建时间」列，CSV 也要有这一列
         List<List<Object>> data = rows.stream()
-                .map(row -> CsvUtils.row(<#list rowFields as f>row.get${f.javaField?cap_first}()<#if f?has_next>, </#if></#list>))
+                .map(row -> CsvUtils.row(<#list rowFields as f>row.get${f.javaField?cap_first}()<#if f?has_next>, </#if></#list><#if audit>, row.getCreateTime()</#if>))
                 .toList();
-        return CsvUtils.csv(List.of(<#list rowFields as f>"${f.desc}"<#if f?has_next>, </#if></#list>), data);
+        return CsvUtils.csv(List.of(<#list rowFields as f>"${f.desc}"<#if f?has_next>, </#if></#list><#if audit>, "创建时间"</#if>), data);
     }
 
     /** 新增${modelDesc}，返回新行主键 */

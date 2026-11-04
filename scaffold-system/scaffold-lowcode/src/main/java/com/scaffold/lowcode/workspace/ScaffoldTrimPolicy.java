@@ -54,13 +54,17 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/sql/V7__lowcode_workspace.sql",
             // 双租户越权验收脚本，只在平台侧有意义
             "scaffold-system/sql/verify/",
-            // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试
+            // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试。
+            // 新增引用了平台包或平台接口的用例文件时要在下面补一行，忘补不会静默出门 ——
+            // ScaffoldSnapshotPlanner 的残留引用扫描会当场拒绝，但报的是初始化快照时失败，不容易联想到新文件
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantIsolationApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantRegisterApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/TenantRoleCaliberApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ModelApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectWorkspaceApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/DeliveryGenerationApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/StubGitGateway.java",
             // 平台前端页面与接口客户端
             "scaffold-vue/src/views/lowcode/",
             // 在线代码生成页面：交付项目里没有 scaffold-generator，留着就是一个点开报错的菜单

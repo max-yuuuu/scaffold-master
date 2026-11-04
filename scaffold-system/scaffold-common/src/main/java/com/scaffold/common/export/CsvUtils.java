@@ -1,5 +1,8 @@
 package com.scaffold.common.export;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
 
@@ -8,6 +11,10 @@ import java.util.List;
  * 避免每个模块各写一套转义与表头拼接逻辑。
  */
 public final class CsvUtils {
+
+    /** 与 {@code @JsonFormat} 给前端的两种规范串同一口径，导出文件里不出现 ISO 的 {@code T} */
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private CsvUtils() {
     }
@@ -39,7 +46,7 @@ public final class CsvUtils {
     }
 
     private static String cell(Object value) {
-        String text = value == null ? "" : String.valueOf(value);
+        String text = value == null ? "" : display(value);
         if (text.contains("\"")) {
             text = text.replace("\"", "\"\"");
         }
@@ -47,5 +54,15 @@ public final class CsvUtils {
             return "\"" + text + "\"";
         }
         return text;
+    }
+
+    private static String display(Object value) {
+        if (value instanceof LocalDateTime dateTime) {
+            return DATE_TIME.format(dateTime);
+        }
+        if (value instanceof LocalDate date) {
+            return DATE.format(date);
+        }
+        return String.valueOf(value);
     }
 }

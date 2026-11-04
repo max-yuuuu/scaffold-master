@@ -3,6 +3,8 @@ package com.scaffold.lowcode.generate;
 import com.scaffold.common.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
@@ -113,6 +115,32 @@ class SqlTemplatesTest {
         Map<String, Object> model = GenerationInput.of(model(true, true), richFields());
         assertThat(renderer.render("sql/Table.sql.ftl", model)).isEqualTo(renderer.render("sql/Table.sql.ftl", model));
         assertThat(renderer.render("sql/Menu.sql.ftl", model)).isEqualTo(renderer.render("sql/Menu.sql.ftl", model));
+    }
+
+    @Test
+    void 列类型已经是完整写法时不重复拼长度() {
+        // lc_field 存的是 FieldType 算好的完整形式（varchar(64) 与另存一列的 column_length），
+        // 老代码生成页给的是裸类型 + 长度。两条链路的入参形状不同，DDL 只能有一份答案 ——
+        // 拼成 varchar(64)(64) 时建表语句在 MySQL 上是语法错误，人在目标库执行第一次就会撞上
+        String ddl = renderer.render("sql/Table.sql.ftl",
+                GenerationInput.of(model(true, true), storedColumnTypes()));
+
+        assertThat(ddl).contains("order_no VARCHAR(64) NOT NULL").contains("amount DECIMAL(18,2)");
+        assertThat(ddl).doesNotContain("VARCHAR(64)(64)").doesNotContain("DECIMAL(18,2)(18,2)");
+    }
+
+    /** 把夹具里的裸类型换成库里实际存的那种完整写法 */
+    private static List<Map<String, Object>> storedColumnTypes() {
+        return richFields().stream().map(row -> {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            String base = String.valueOf(row.get("columnType"));
+            if ("varchar".equals(base)) {
+                copy.put("columnType", "varchar(" + row.get("columnLength") + ")");
+            } else if ("decimal".equals(base)) {
+                copy.put("columnType", "decimal(" + row.get("columnPrecision") + "," + row.get("columnScale") + ")");
+            }
+            return copy;
+        }).toList();
     }
 
     private String table(boolean audit, boolean logicDelete) {

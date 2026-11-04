@@ -67,6 +67,24 @@ class ModelCodeGeneratorTest {
     }
 
     @Test
+    void 页面引用的接口路径就是接口文件的实际落点() {
+        // 单字词根看不出来：resourceName 是驼峰、文件名是下划线，两个词以上才分家。
+        // 引用写错一个分隔符，交付项目在 vue-tsc 阶段就报「找不到模块 @/api/...」，页面整块起不来。
+        Map<String, Object> model = new LinkedHashMap<>(model(true, true));
+        model.put("modelCode", "purchase_order");
+        model.put("className", "PurchaseOrder");
+        model.put("moduleName", "order");
+        model.put("tableName", "biz_purchase_order");
+
+        List<GeneratedFile> files = generator.renderFiles(model, richFields());
+
+        assertThat(files).extracting(GeneratedFile::path)
+                .contains("scaffold-vue/src/api/order/purchase_order.ts");
+        assertThat(contentOf(files, "scaffold-vue/src/views/order/PurchaseOrder.vue"))
+                .contains("from '@/api/order/purchase_order'");
+    }
+
+    @Test
     void 同一份模型两次生成逐字节一致() {
         // 发布 diff 的可读性建立在这条上：内容不稳定，每次合并请求都是整文件重写
         List<GeneratedFile> first = generator.renderFiles(model(true, true), richFields());
@@ -92,6 +110,15 @@ class ModelCodeGeneratorTest {
     }
 
     @Test
+    void 非数字主键的模型拒绝生成而不是产出一份对不上的接口() {
+        // 五个入口的定位参数写的是 @PathVariable Long id（与底座同一形状），
+        // 主键是字符串时这份产物编得过但调不通：路径上拿到的是编号，Service 却按 Long 查。当场拦掉更省事
+        assertThatThrownBy(() -> generator.renderFiles(model(true, true), TemplateFixture.stringKeyFields()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("主键");
+    }
+
+    @Test
     void 产物的档位是从路径反推出来的而不是模板自述() {
         // GeneratedFile.of 是唯一入口：模板把路径拼错就当场拒绝，错不到磁盘上
         List<String> paths = new ArrayList<>(generator.renderFiles(model(true, true), richFields())
@@ -101,5 +128,10 @@ class ModelCodeGeneratorTest {
         assertThatThrownBy(() -> GeneratedFile.of(paths.get(paths.size() - 1), "// 内容"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("生成器无权写这个路径");
+    }
+
+    private static String contentOf(List<GeneratedFile> files, String path) {
+        return files.stream().filter(file -> path.equals(file.path())).findFirst()
+                .orElseThrow(() -> new AssertionError("产物清单里没有 " + path)).content();
     }
 }

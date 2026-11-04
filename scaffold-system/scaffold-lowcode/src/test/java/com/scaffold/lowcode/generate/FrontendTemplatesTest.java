@@ -6,9 +6,11 @@ import java.util.List;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
+import static com.scaffold.lowcode.generate.TemplateFixture.numericKeyFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.quotedRemarkFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.simpleFields;
+import static com.scaffold.lowcode.generate.TemplateFixture.withWritablePk;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -101,7 +103,8 @@ class FrontendTemplatesTest {
         // LIKE 的订单号：文本框 + 回车查询
         assertThat(page).contains("<TextInput v-model=\"list.query.orderNo\" clearable @enter=\"list.search()\" />");
         // 区间的起止是两个独立控件，初值空串 / null，params() 会丢掉空值
-        assertThat(page).contains("<NumberInput v-model=\"list.query.amountStart\" />");
+        // 金额是小数两位的列，查询区与表单都得把精度传下去（不传 NumberInput 按整数收）
+        assertThat(page).contains("<NumberInput v-model=\"list.query.amountStart\" :precision=\"2\" />");
         assertThat(page).contains("<DateInput v-model=\"list.query.payTimeStart\" type=\"datetime\" />");
         // 多选（后端收逗号串）如实给一个文本框，不假装是多选控件
         assertThat(page).contains("<TextInput v-model=\"list.query.tags\" clearable @enter=\"list.search()\" />");
@@ -153,6 +156,62 @@ class FrontendTemplatesTest {
         for (String template : List.of("frontend/Api.ts.ftl", "frontend/ListView.vue.ftl")) {
             assertThat(renderer.render(template, model)).as(template).isEqualTo(renderer.render(template, model));
         }
+    }
+
+    @Test
+    void 自增主键不进表单新增与编辑靠editing判别() {
+        // 字段接口把主键的三项默认值都开着，老链路的存量配置也这么写着。数据库自己给值的列一进表单，
+        // 新增就要求人猜下一个 id；更要命的是它在类型里被声明两遍（硬编码的 id?: number 与字段循环各一份，
+        // 一条是 undefined 一条是 null），交付项目 npm run build 在 vue-tsc 阶段直接 TS2717 / TS2322
+        Map<String, Object> pageModel = GenerationInput.of(model(true, true), withWritablePk(richFields()));
+        String page = renderer.render("frontend/ListView.vue.ftl", pageModel).replace("\r", "");
+
+        assertThat(page).doesNotContain("id?: number").doesNotContain("form.id").doesNotContain("  id: number | null");
+        // 「哪一行在编辑」由一个独立的 ref 记着：主键既可能根本不进表单（自增），也可能由人填（业务编号），
+        // 两种情况都不能拿表单里的值当判据
+        assertThat(page).contains("  orderNo: string")
+                .contains("const editing = ref<number | null>(null)")
+                .contains("editing.value = row.id")
+                .contains("if (editing.value !== null) await orderApi.update(editing.value, payload)");
+        // 模板里 ref 会自动解包：那里写成 editing.value 会让交付项目报 TS18047 / TS2551
+        assertThat(page).contains(":title=\"editing !== null ? '编辑订单' : '新增订单'\"");
+    }
+
+    @Test
+    void 人工填写的主键照样进表单但编辑目标仍由editing记() {
+        // 不自增的主键（业务编号当主键）必须由人填，所以它在表单里；
+        // 但「新增还是编辑」不能靠它的值判断 —— 新建那条也填了编号，会被误判成编辑
+        Map<String, Object> pageModel = GenerationInput.of(model(true, true), numericKeyFields());
+        String page = renderer.render("frontend/ListView.vue.ftl", pageModel).replace("\r", "");
+
+        assertThat(page).contains("  couponCode: number | null")
+                .contains("couponCode: [required('请输入券号')],")
+                .contains("editing.value = row.couponCode")
+                .contains("if (editing.value !== null) await orderApi.update(editing.value, payload)");
+    }
+
+    @Test
+    void 小数列给数字输入框传精度否则金额被抹成整数() {
+        // NumberInput 不传 precision 时按 step 推断小数位，而 step 默认是 1 —— 于是 DECIMAL(18,2) 的列
+        // 在页面上输入 1234.5 会被静默取整成 1235 再提交。不报错、不失败，直接把数据写错，
+        // 查询区的区间两端同理（1234.5 起会变成 1235 起，查出来的集合不对）
+        Map<String, Object> root = GenerationInput.of(model(true, true), decimalAndIntegerFields());
+        String page = renderer.render("frontend/ListView.vue.ftl", root).replace("\r", "");
+
+        assertThat(page).contains("<NumberInput v-model=\"form.amount\" :precision=\"2\" />")
+                .contains("<NumberInput v-model=\"list.query.amountStart\" :precision=\"2\" />")
+                .contains("<NumberInput v-model=\"list.query.amountEnd\" :precision=\"2\" />");
+        // 整数列本来就该按整数收，不传 precision
+        assertThat(page).contains("<NumberInput v-model=\"form.quantity\" />");
+    }
+
+    /** 一个金额（小数两位）+ 一个数量（整数）+ 主键，够看两种精度分支 */
+    private static List<Map<String, Object>> decimalAndIntegerFields() {
+        return List.of(
+                new TemplateFixture.Field("id", "主键", "Long", "bigint").primary().autoIncrement().list().build(),
+                new TemplateFixture.Field("amount", "订单金额", "BigDecimal", "decimal").input().required().number()
+                        .list().query("BETWEEN").build(),
+                new TemplateFixture.Field("quantity", "数量", "Integer", "int").input().number().list().build());
     }
 
     private String api(boolean audit, boolean logicDelete) {

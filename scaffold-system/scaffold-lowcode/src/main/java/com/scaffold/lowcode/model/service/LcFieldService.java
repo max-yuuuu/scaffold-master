@@ -155,9 +155,13 @@ public class LcFieldService {
         row.put("isList", isOnExplicit(request.getIsList(), 1) ? 1 : 0);
         row.put("isQuery", isOn(request.getIsQuery()) ? 1 : 0);
         row.put("queryType", QueryType.of(request.getQueryType()).code());
-        row.put("isInsert", isOnExplicit(request.getIsInsert(), 1) ? 1 : 0);
-        row.put("isEdit", isOnExplicit(request.getIsEdit(), 1) ? 1 : 0);
-        row.put("isRequired", (primary || isOn(request.getIsRequired())) ? 1 : 0);
+        // 自增主键由数据库给值，「可录入 / 可编辑 / 必填」这三格对它没有意义：
+        // 留着就会生成一张要人填主键的新增表单，字段接口给的默认值又都是开着的，所以在这里压掉。
+        // 不自增的主键（业务编号当主键）不压 —— 那一列真的需要人填
+        boolean autoKey = primary && autoIncrement;
+        row.put("isInsert", autoKey ? 0 : (isOnExplicit(request.getIsInsert(), 1) ? 1 : 0));
+        row.put("isEdit", autoKey ? 0 : (isOnExplicit(request.getIsEdit(), 1) ? 1 : 0));
+        row.put("isRequired", autoKey ? 0 : ((primary || isOn(request.getIsRequired())) ? 1 : 0));
         row.put("formType", formType.name());
         row.put("formOptions", formOptionsJson);
         row.put("dictType", dictType);
