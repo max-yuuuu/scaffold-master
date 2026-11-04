@@ -14,11 +14,6 @@ import java.util.Map;
  */
 final class TemplateFixture {
 
-    /** 后端全套模板，两个测试按同一份清单逐个跑 */
-    static final List<String> BACKEND_TEMPLATES = List.of("backend/Entity.java.ftl", "backend/Row.java.ftl",
-            "backend/WriteRequest.java.ftl", "backend/Mapper.java.ftl", "backend/Service.java.ftl",
-            "backend/Controller.java.ftl");
-
     private TemplateFixture() {
     }
 

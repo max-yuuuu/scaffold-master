@@ -934,40 +934,22 @@ const list = useListPage({
 
 ### 4.3 生成文件路径规则
 
-路径以**生成项目的真实目录结构**为准。生成项目就是脚手架的一份拷贝，顶层不是 `backend/` + `frontend/`，后端是 `scaffold-{module}` Maven 模块、前端是 `scaffold-vue` 单应用。下面每条标注所属所有权档（§5.2），分档判定就按这张表的路径前缀做：
+路径以**生成项目的真实目录结构**为准。生成项目就是脚手架的一份拷贝，顶层不是 `backend/` + `frontend/`，后端是 `scaffold-{module}` Maven 模块、前端是 `scaffold-vue` 单应用。下面每条标注所属所有权档（§5.2）。
 
-```typescript
-const fileRules = {
-  // B 档：每次发布整文件覆盖，约定人工不改
-  backend: {
-    entity:     (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/domain/${cls}.java`,
-    writeRequest: (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/domain/dto/${cls}WriteRequest.java`,
-    vo:         (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/domain/vo/${cls}VO.java`,
-    mapper:     (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/mapper/${cls}Mapper.java`,
-    controller: (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/controller/${cls}Controller.java`,
-    service:    (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/service/${cls}Service.java`,
-  },
-  frontend: {
-    api:    (m) => `scaffold-vue/src/api/${m}.ts`,                    // 一个模块一个文件
-    listView: (m, kebab) => `scaffold-vue/src/views/${m}/${kebab}.vue`, // 复数平铺，如 system/Users.vue
-  },
-  sql: {                       // B 档，但只生成增量语句，禁 DROP / ALTER DROP COLUMN
-    table: (t) => `sql/pages/${t}_table.sql`,
-    menu:  (t) => `sql/pages/${t}_menu.sql`,
-  },
-  // C 档：首次生成空骨架后即归人工所有，之后发布"存在即跳过"
-  custom: {
-    ext: (m, cls) => `scaffold-${m}/src/main/java/com/scaffold/${m}/service/${cls}Extension.java`,
-    overrides: (m, kebab) => `scaffold-vue/src/views/${m}/overrides/${kebab}.*.vue`,
-  },
-  // A 档：项目初始化写入一次，平台此后不生成不覆盖
-  // pom.xml、scaffold-admin 装配、scaffold-vue/src/components、src/styles、Dockerfile、docker-compose.yml
-};
-```
+> **PR 5E 起这张表由代码持有（2026-11-04）**：唯一事实源是 `scaffold-lowcode` 的 `GeneratedPaths` —— 路径由它拼、档位由它按路径反推，产物清单从 `ModelCodeGenerator.renderFiles()` 出来。本节只写形状与理由，具体每一格以代码为准；此前草稿里的 `{Cls}VO`、`domain/vo/`、`src/api/{m}.ts`、`views/{m}/{kebab}.vue`、`backend/`+`frontend/` 两层目录都已作废。
 
-> **命名要向现有底座看齐**：`scaffold-system` 实际用的是 `{Entity}WriteRequest`（不是 `{Entity}DTO`）、`PageQuery` + 逐个 `@RequestParam`（不是 `{Entity}Query` 对象）、`R.success(...)`（不是 `R.ok(...)`）、单类 Service（不是 interface + `service/impl`）。§4.2 的示例代码是按另一套约定写的，两者不一致 —— PR 5 必须先定这一刀（见 §10.2 开放项 2），否则生成物与底座风格分叉，违反 AGENTS.md 的"统一底座"。
+| 档 | 产物 | 落点（相对交付项目根） |
+|---|---|---|
+| B | 实体 / 入参 / 列表行 | `scaffold-system/scaffold-business/src/main/java/com/scaffold/business/{module}/domain/{Cls}.java`、`{Cls}WriteRequest.java`、`{Cls}Row.java` |
+| B | Mapper / Service / Controller | 同上 `mapper/{Cls}Mapper.java`、`service/{Cls}Service.java`、`controller/{Cls}Controller.java` |
+| B | 前端接口 | `scaffold-vue/src/api/{module}/{resource}.ts`（按模型一份，§10.2 第 ⑤ 条） |
+| B | 前端页面 | `scaffold-vue/src/views/{module}/{Cls}.vue`（`{Cls}` 就是菜单 `component`，与路由解析一致） |
+| B | 建表 / 菜单种子 | `scaffold-system/sql/pages/{table}_table.sql`、`{table}_menu.sql` —— 子目录不在 `docker-entrypoint-initdb.d` 的自动执行范围内，**只生成增量语句，禁 DROP / ALTER DROP COLUMN**，由人执行 |
+| C | 后端扩展点 | `…/business/{module}/service/{Cls}Extension.java`：首次生成空骨架后即归人工所有，之后发布**存在即跳过** |
+| C | 前端人写区 | `scaffold-vue/src/views/{module}/overrides/*.vue`（形状先认下，加载机制见 §10.2 开放项 3） |
+| A | 其余一切 | `pom.xml`、`scaffold-admin` 装配、`src/api/index.ts`、`src/components/**`、`src/styles/**`、`main.ts`、Dockerfile、`docker-compose.yml` —— 页面发布**无权写**，`GeneratedPaths.tier()` 认不出来就抛错 |
 
-C 档扩展点是"业务逻辑唯一允许落笔的地方"，平台只在首次生成空骨架、之后永不覆盖。前端 `overrides/` 用于人工覆写某个区块而不碰 B 档主文件（第一期可先只做后端扩展点，前端 overrides 视 P2 完成情况决定要不要上）。
+C 档扩展点是"业务逻辑唯一允许落笔的地方"，平台只在首次生成空骨架、之后永不覆盖。前端 `overrides/` 用于人工覆写某个区块而不碰 B 档主文件（第一期只落分档表里的形状，机制待 §10.2 开放项 3 定稿）。
 
 ---
 
@@ -1015,7 +997,9 @@ scaffold-system/         # 后端 Maven 聚合
 | `POST` / `PUT /{id}` / `DELETE /{id}` | 增改删 | 用 `is_insert` / `is_edit` / `is_required` 生成校验；删除走 `enable_logic_delete` |
 | `GET /api/{module}/{resource}/export` | 导出 | `is_list` 字段作列 |
 
-外加权限点（`permission_prefix` × 5）、`@OperLog`、树表（`is_tree` 时多一个 `/tree`）、数据范围（`enable_data_scope`）。**这一类覆盖后台管理接口的绝大多数，不需要设计，只需要配置。**
+外加权限点（`permission_prefix` × 5）与 `@OperLog`。**这一类覆盖后台管理接口的绝大多数，不需要设计，只需要配置。**
+
+> **两个开关本期不在此列（PR 5E，2026-11-04）**：树表（`is_tree` 时的 `/tree` 端点与树形页面）与数据范围（`enable_data_scope` 的 `@DataScope` 与部门过滤）**模板还没实现**，`ModelCodeGenerator.renderFiles()` 在进模板**之前**就把这两种组合抛掉，`models.vue` 上两个开关的说明同步改成「本期不生成」。不选「忽略勾选、把能生成的生成出来」：静默忽略等于交付一个「看着配置对了、实际没有」的项目，比报错更难发现。库里那两列的注释记的是列的设计意图，边界当前写在生成入口与 UI 上，比 ALTER 一次列注释更靠近读的人；要做的时候按 §5.2 加模板、把这两条拒收回即可。
 
 #### ② 自定义接口 —— 走 C 档扩展点，不生成
 
@@ -1079,13 +1063,19 @@ scaffold-system/         # 后端 Maven 聚合
 
 > 命名口径（2026-11-04 定稿，覆盖此前写法）：本表原写 `{Cls}ServiceImplCustom.java` / `{resource}.ext.ts` / `{Cls}VO` / `{Cls}Query` / `types.ts`，那是 interface+impl 那套约定的残留。§10.2 开放项 2 已定为**生成物向底座看齐**（单类 Service、`WriteRequest`、`PageQuery` + 逐个 `@RequestParam`），所以扩展点统一叫 `{Cls}Extension`，VO/Query/types.ts 三类文件不再存在；本节与 §4.2、§4.3 一律按此口径。
 
+**分档判定已经落成代码（PR 5E，2026-11-04）。** 上面这张表不再是"实现要照着抄的规格"，而是 `scaffold-lowcode` 里 `GeneratedPaths` 的说明文档：产物路径由它拼、档位由 `GeneratedPaths.tier(path)` 按路径**反推**，`GeneratedFile.of(path, content)` 是唯一的构造入口 —— 模板不能自己声明"我属于 C 档"。判档用白名单形状匹配（列出 B/C 允许的每一种路径形状，认不出就拒绝），不按前缀排除：`src/api/` 前缀下就住着 A 档的 `index.ts` 汇总出口。落盘那一侧（`GeneratedFileWriter`）B 档覆盖、C 档存在即跳过，并在写之前再判一次路径没越出工作区。
+
+C 档后端的骨架是一份 `{Cls}Extension`，七个钩子：`afterRows(List<{Cls}Row>)`（列表与导出共用）、create / update / delete 各一对 `before*` + `after*`。B 档 Service 的构造器把它当依赖注入并逐个调用，所以"改名或删方法就编译失败"这条契约是真的（常驻测试 `GeneratedCodeCompilesTest` 把七个 java 文件一起交给 javac）。钩子都在 Service 的 `@Transactional` 里跑，`after*` 抛异常连带回滚 —— 骨架的类注释里写明了，别把 `after` 当提交后执行。
+
+**"存在即跳过"的前提**：调用方给的工作区要反映项目当前内容。发布分支落后主干时，主干上人工改过的扩展类在这份工作区里不存在，骨架会被重新生成，两边在合并请求里以 `both added` 冲突暴露 —— 不静默丢代码，但 PR 7 组工作区时要把这条做对。
+
 > 原方案的 `CUSTOM-START / CUSTOM-END` 标记 + 文本级 diff 合并机制**取消**：它是"平台覆盖文件"与"保留手写代码"两个诉求在同一文件上的强行调和，实现复杂且最容易静默丢代码。分档 + 分支隔离 + 人工审 diff 三重手段已覆盖该诉求。若个别场景仍需在一个文件里混排，可自行在 C 档文件内用标记，但平台不参与解析。
 
 **A 档"固定"的硬约束：一个项目只有一个业务模块。**
 
 新增 Maven 模块必须同时改两处 A 档文件 —— 父 `scaffold-system/pom.xml` 的 `<modules>` 与 `scaffold-admin/pom.xml` 的 `<dependencies>`（本仓库自己加 `scaffold-lowcode` 就是这样改的）。如果每个业务模块都这么来一次，"A 档不随发布更新"就破了，每次发布都会带上 pom 冲突。
 
-所以约定：**生成项目初始化时预置单一业务模块 `scaffold-business`，所有生成的业务代码进它的子包**（`com.scaffold.business.{model}`），pom 在初始化时一次写好、此后平台永不改。`lc_project.backend_module` 默认值 `business` 正是为此；它允许改名但只影响初始化时的路径生成。前端同理：业务视图只往 `src/views/{module}/**` 与 `src/api/{module}.ts` 增文件，不碰路由与注册表（靠 `sys_menu` + `import.meta.glob` 自动生效）。
+所以约定：**生成项目初始化时预置单一业务模块 `scaffold-business`，所有生成的业务代码进它的子包**（`com.scaffold.business.{model}`），pom 在初始化时一次写好、此后平台永不改。`lc_project.backend_module` 默认值 `business` 正是为此；它允许改名但只影响初始化时的路径生成。前端同理：业务视图与接口只往 `src/views/{module}/**` 与 `src/api/{module}/{resource}.ts`（按模型一份，见 §10.2 第 ⑤ 条）增文件，不碰路由与注册表（靠 `sys_menu` + `import.meta.glob` 自动生效）。
 
 这条也让合并请求的 diff 更干净：A 档不出现在 diff 里，审的就是"这次发布动了哪些业务文件"。
 
@@ -1387,7 +1377,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 
 1. ~~`super_admin` 跨租户旁路口径~~ **已定（PR 2）**：走"会话内切换租户"，见 §10.1 与 §2.3。留下的实现细节 —— 切换态下顶栏常驻「回到平台租户」，平台管理菜单不下发给租户。
 2. ~~**生成物命名约定跟底座还是跟模板**~~ **已定（2026-11-04，PR 5 开工第一刀）：选 (a) 生成物向底座看齐**，判据是可读性 —— 生成代码是给项目里的人读和改的，底座已经是一套一致的形状（`{Entity}WriteRequest`、`PageQuery` + 逐个 `@RequestParam`、`R.success(...)`、单类 Service、`views/{module}/{Cls}.vue`），再造一套 interface+impl / DTO+Query+types.ts 只会让一个项目里出现两种风格，而教科书分层对单人维护的项目并不更好读。连带定死五件事：① `{Cls}VO` / `{Cls}Query` / `types.ts` 三类文件不再存在，列表行用 `{Cls}Row`；② 扩展点统一 `{Cls}Extension`（`ServiceImplCustom` 那个旧名作废）；③ 生成物包名 `com.scaffold.business.{module}`，与「一个项目只有一个业务模块」一致；④ 接口路径用单数 `/{module}/{resource}`，不做英文自动变复数（底座 `/system/users` 的复数是人工历史命名，自动变格只会生成 `Categorys` 一类错名）；⑤ 前端接口文件**按模型一份** `src/api/{module}/{resource}.ts` —— 本项是 PR 5D 的修订，原写模块级单文件 `src/api/{module}.ts`，多模型时任何一个字段变化都要重写整文件、diff 会盖到别人的接口上；按模型分文件后一次发布只动一个文件，且不引 `@/api` 汇总出口（那是 A 档，平台不往里加导出行）。§4.2 的示例代码按此重写，见 PR 5G。
-3. **C 档扩展点的文件约定**：后端一个扩展类是否够用、前端 `overrides/` 第一期要不要做。与上条绑定。
+3. **C 档扩展点的文件约定**：~~后端一个扩展类是否够用~~ **已定（2026-11-04，PR 5E）**：后端就一个 `{Cls}Extension`，七个钩子（`afterRows` 一个 + create/update/delete 各一对 `before*`/`after*`），由 B 档 Service 构造器注入并逐个调用；自定义接口不生成端点、直接在这个类里加方法（§4.5 ②）。不再往下拆（`{Cls}QueryExtension` / `{Cls}Validator` 之类）的理由：钩子签名是平台契约，每多一套就多在下次发布时咬人一次的面积，而人能随便加自己的方法，一个类不是瓶颈。**前端 `overrides/` 仍开放**：PR 5E 只把它的形状认进分档表（§4.3、§5.2，为的是分档判定完整、PR 6 的 `custom:{name}` 桩有合法落点），**覆写怎么被发现、盖到 B 档哪个区块上、整页接管怎么退出**这三个问题还没定，定稿前生成器不产出这类文件。
 4. **`design_json` 是否对齐 LCE 搭建协议**：对齐能白捡一份别人验证过的 schema 与文档，代价是字段冗余（本项目只需列表/表单两类）。倾向"借结构不借全协议"。
 5. **多项目工作区并发**：同一台机器上两个项目同时发布是否加文件锁。单租户自己用时不会发生，平台给别人用时才会。
 6. **`installScaffoldUi` 的三个契约**（PR 4B 的第一刀）：`http`（请求与统一返回结构 `R` 的解包，是否复用 `scaffold-vue/src/api/http.ts`）、`permission`（`v-perm` 需要的权限集合从哪来、何时刷新）、`dict`（`useDict` 的缓存归属 —— 包内缓存还是宿主提供）。这三个定不好，28 处解耦会改成 28 个各写各的 prop，包就白抽了。
@@ -1405,6 +1395,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 4**<br>P1 下 | ✅ 已完成（2026-11-04）：JGit 依赖只落 `scaffold-lowcode`（7.7.1 + `ssh.apache`）；`ls-remote` 连通性检查（只读，不改生命周期）；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单代码化**（`ScaffoldTrimPolicy` 路径白/黑名单 + `scaffold:platform-only` 标记块 + 交付产物的平台残留引用扫描）+ `scaffold-business` 空壳预置；空仓库首次初始化（未出生 HEAD、显式 `refs/heads/{gen_branch}`、推完回读校验）与 `sync_status` 推进、`sync_message` 失败原因（V7）。初始化同步执行，不引入异步任务表 | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止。**实测补记**：交付快照 282 个文件离线 `mvn package` 通过、前端 `npm ci` + `vite build` 通过、用交付侧 V1–V3 建新库能起能登录，菜单里没有 `/tool` 与 `/lowcode`；`lc_tenant` 因登录链路每次都要查租户状态而保留（§6.4 已回写）。**真机推送已完成（2026-11-04）**：对本机 → GitHub 真实空仓库推上 282 个文件、`sync_status=2`、主干未被写；顺带修掉「系统代理劫持 git-over-ssh」与「缺 BouncyCastle 时 ed25519 部署密钥报 no keys to try」两处。**底座标记 tag（2026-11-04 补，PR 8 的前置）**：每交付一份完整 A 档快照就给那个提交打附注 tag `yuanda/platform-base/{base_scaffold_sha}` 并推到项目仓库，只创建、永不移动、永不删除；tag 推不上去只告警不回滚初始化，底座 checkout 读不到提交号时如实写进 `sync_message` 与项目抽屉读数（`JGitGatewayTest` 10 例含真机 tag 语义、`ProjectWorkspaceApiTest` 15 例） | PR 3 |
 | **PR 4B**<br>P1.5 | **抽 `@yuanda-lowcode-ai/scaffold-ui`**：`packages/scaffold-ui` + npm workspaces（根 `package.json`、锁文件上移到根）；组件 + 16 composable + 工具 + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi({http, permission, dict})` 注入点；解包内对 `@/api`、`@/directives/permission`、宿主 `auth.ts`、`import.meta.env` 的全部引用；平台专属件（`GeneratorPipeline`、外壳 `components/layout/**`、`NeuralNet`、品牌 `data/index.ts`）划在包外；前端镜像构建上下文上移到仓库根；裁剪清单补第三层手段 `deliverySubstitutions()`（精确整行块替换 + `{SCAFFOLD_UI_VERSION}`），交付项目按 npm 依赖拿物料、不再拷源码。**分两步提交**这一条实际没能成立：物料文件被就地改了两轮（先相对化、后注入点），拆不出两个各自可构建的提交，最终合成一次提交，changelog 里分步记录 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）✅；包内 `@/` 引用为 0、`import.meta` 为 0 ✅；交付快照 177 文件用 `file:` tarball 装依赖后 `vue-tsc` + `vite build` 通过 ✅；包被一个最小 demo app 以 **npm registry 版本号**依赖消费 ⬜（组织与 token 已就绪，差正式 `npm publish --access public`） | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@yuanda-lowcode-ai/scaffold-ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
+| ↳ 5A–5E | ✅ 已完成（2026-11-04，分片进度与踩坑见 `changelog.md`）：5A 渲染骨架 + 实体（`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`，否则 MyBatis 的 `#{}` 被引擎吃掉）；5B 后端 CRUD 五套 + `SqlIdentifiers` 保留字拦截 + 生成前守卫；5C 建表与菜单种子（真机在一个临时库里各跑两遍验幂等）；5D 前端接口与列表页（产物塞进宿主跑 `vue-tsc` + `vite build` 验）；**5E 分档落成代码** —— `GeneratedPaths` 持路径表并按路径白名单反推档位、`ModelCodeGenerator.renderFiles()` 出 `List<GeneratedFile>`、`{Cls}Extension` 七钩子骨架与 B 档调用点、`GeneratedFileZip` / `GeneratedFileWriter` 两条 sink、`is_tree` / `enable_data_scope` 明确拒绝 | 常驻测试 `GeneratedCodeCompilesTest` 把 7 个 java 产物按交付路径落盘后真起 javac（审计×逻辑删除四种组合）；`ExtensionContractTest` 扫渲染结果核对钩子契约；后端 202 例全绿 | — |
+| ↳ 5F–5G | ⬜ 待做：5F 老 `GeneratorService` 改吃同一套模板（连带把 `javaType()` 与 `FieldType` 对齐，`date` 不再算成 `LocalDateTime`，见 §2.2 之二）；5G 端到端真机验证 + 把 §4.1/4.2/4.3 的草稿示例重写为定稿形状 | zip 下载行为不回退（老 `preview` / `download` 两个入口继续可用）；一个真实项目从建模到发布跑通 | — |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；**发布前 C 档引用体检**（扫扩展代码对已删字段的引用，默认阻断，可显式放行） | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上；删掉字段后带着旧引用的扩展代码发布不出去 | PR 6 |
 | **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |

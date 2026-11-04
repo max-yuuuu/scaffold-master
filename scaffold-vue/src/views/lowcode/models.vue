@@ -490,13 +490,13 @@ onMounted(bootstrap)
       <Field label="模型说明" span>
         <Textarea v-model="modelForm.modelDesc" :rows="2" placeholder="这个模型管什么数据" :maxlength="256" />
       </Field>
-      <Field label="树表" group hint="生成 /tree 接口与树表页面">
+      <Field label="树表" group hint="本期不生成：勾选后发布会被拒绝，树形取数请在生成的扩展点类里手写">
         <Switch :model-value="modelForm.isTree === 1" :label="modelForm.isTree === 1 ? '是' : '否'" @update:model-value="modelForm.isTree = $event ? 1 : 0" />
       </Field>
       <Field label="逻辑删除" group>
         <Switch :model-value="modelForm.enableLogicDelete === 1" :label="modelForm.enableLogicDelete === 1 ? '生成 deleted 列' : '物理删除'" @update:model-value="modelForm.enableLogicDelete = $event ? 1 : 0" />
       </Field>
-      <Field label="数据权限" group>
+      <Field label="数据权限" group hint="本期不生成：勾选后发布会被拒绝，部门过滤请在生成的扩展点类里手写">
         <Switch :model-value="modelForm.enableDataScope === 1" :label="modelForm.enableDataScope === 1 ? '按部门过滤' : '不过滤'" @update:model-value="modelForm.enableDataScope = $event ? 1 : 0" />
       </Field>
       <Field label="审计字段" group>
