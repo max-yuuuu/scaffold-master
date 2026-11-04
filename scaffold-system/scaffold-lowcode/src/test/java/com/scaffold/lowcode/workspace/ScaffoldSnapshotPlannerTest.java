@@ -93,6 +93,7 @@ class ScaffoldSnapshotPlannerTest {
         assertThat(textOf("README.md")).contains("python3 scripts/session-regression.py")
                 .doesNotContain("packages/scaffold-ui");
         assertThat(textOf("docs/docker-deployment.md")).contains("组件与珍珠玻璃主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui`")
+                .contains("前端命令在 `scaffold-vue` 目录跑")
                 .doesNotContain("npm workspaces");
     }
 

@@ -102,6 +102,27 @@ docker compose down                      # 停止并移除容器，保留数据�
 docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除（不可恢复）
 ```
 
+## 本地直接跑进程（不起容器）的几条事实
+
+开发期常见的是 `java -jar` 起后端 + `npm run dev` 起前端，下面几条都是真踩过的，写下来省得再查一轮：
+
+- **重打 jar 必须 `clean package`**：`mvn -DskipTests package` 走增量构建时可能几百毫秒就"成功"，fat jar 里还是旧字节码，重启后行为没变还以为是别的问题。怀疑没打进去了就核对一眼：`unzip -l scaffold-admin/target/scaffold-admin-0.1.0-SNAPSHOT.jar | grep <关键依赖或类>`。
+- **`JWT_SECRET` 一变，所有已登录会话立刻 401**。这不是 bug：令牌签名校验不过就是未认证。所以重启后端前先确认用的是同一份密钥。
+- **别用 `ps eww` 抓旧进程环境变量再 `env $vars` 重启**：值里含空格会被拆坏，密钥被截断后签名校验自然全挂 ——
+  本仓库开发时就因此把所有登录会话刷没了一次，`/api/*` 全部 401，只能重新走验证码登录。
+  正确做法是把启动变量固化成一份**不入库**的本地文件，例如 `scaffold-system/scaffold-admin/.env.local`
+  （`.gitignore` 的 `**/.env.*` 已经覆盖它，`!**/.env.*.example` 那条只放行模板），启动时加载：
+
+  ```bash
+  cd scaffold-system/scaffold-admin
+  set -a; . ./.env.local; set +a
+  java -jar target/scaffold-admin-0.1.0-SNAPSHOT.jar
+  ```
+
+  需要给人抄的模板放 `.env.example`（入库），真实值永远只在 `.env.local` 里。
+- **本机端口归属**：`3306` / `6379` 是业务库与业务 Redis，本脚手架的测试与本地实例用 `3316` / `6380`（容器 `scaffold-it-mysql` / `scaffold-it-redis`）。跑集成测试前先确认端口归属，别把业务库当测试库写进去。登录验证码答案与会话状态都在这个 Redis 里，清了 Redis 等于所有人重新登录、验证码全部作废。
+- **前端命令一律从仓库根跑**（`npm run dev|build|test:unit`）。宿主 `scaffold-vue` 与物料包 `packages/*` 是 npm workspaces，`node_modules` 里那个包是指向 `packages/...` 的软链：**改包内源码宿主即时生效，不用重装**；只有改了依赖清单（`package.json`）才需要再 `npm install` 一次重建软链与锁文件。
+
 <!-- scaffold:platform-only:start -->
 ## 低代码平台的工作区与仓库凭据
 
@@ -112,6 +133,13 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
    工作区只是缓存，可以从「clone + 按裁剪清单全量重生成」重建；构建缓存卷一旦没有，每次生成都要全量重下依赖。
    清空某项目的工作区在「项目管理 → 仓库与工作区 → 清空工作区」里做，
    本地有未提交改动或未推送提交时后端会拒绝执行，平台不会静默丢代码。
+   - **工作区路径是相对进程工作目录的**（`scaffold.lowcode.workspace-root` 默认 `./lowcode-workspace`）：
+     换个目录启动后端，读到的就是另一个空目录，项目状态却还记着「就绪」，看起来像工作区丢了。
+     这种情况点「清空工作区」把状态清回未初始化即可 —— 目录不在时它只重置状态，不碰远端分支；
+     随后重新「初始化固定代码」会按当前底座重新全量生成。别手工去改库里的 `sync_status`。
+   - **全量初始化会把发布分支上「快照之外」的旧文件删掉**（组件抽成 npm 包之后必须这样，否则项目里
+     同时存在包里的组件和上一版拷进去的源码），删除数量出现在「最近一次动作」里；
+     主干分支上人工写的东西不在此列，平台只写发布分支。
 2. **底座源码 checkout**：容器要能读到本仓库的一份代码（`LOWCODE_SCAFFOLD_SRC` 挂成只读）。
    发布产物就是从这份 checkout 按裁剪清单读出来的，所以它必须是一个 git 工作副本，
    平台的 `base_scaffold_sha` 记的就是它当时的提交号。

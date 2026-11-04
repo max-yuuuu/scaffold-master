@@ -194,7 +194,10 @@ public final class ScaffoldTrimPolicy {
                             "| `.dockerignore`（仓库根）与 `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`target`、`.git`、`lowcode-workspace` 等。Docker 只读「上下文根」的那一份，所以两份各管一边 |",
                             "| `package.json` / `package-lock.json`（仓库根） | 平台侧 npm workspaces 声明（`packages/*` + `scaffold-vue`）与锁文件；`@yuanda-lowcode-ai/scaffold-ui` 的物料源码在 `packages/scaffold-ui`，镜像内 `npm ci` 会把它软链进 `node_modules`。这两份清单属平台，不进交付项目 |"),
                     List.of("| `scaffold-vue/Dockerfile` | 前端镜像：`node:22-alpine` 里 `npm install` + `npm run build` → `nginx:1.27-alpine` 托管；构建上下文是 `scaffold-vue` 目录，组件与珍珠玻璃主题来自 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui` |",
-                            "| `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`.DS_Store` |")));
+                            "| `scaffold-vue/.dockerignore` | 排除 `node_modules`、`dist`、`.DS_Store` |")),
+            new DeliverySubstitution("docs/docker-deployment.md",
+                    List.of("- **前端命令一律从仓库根跑**（`npm run dev|build|test:unit`）。宿主 `scaffold-vue` 与物料包 `packages/*` 是 npm workspaces，`node_modules` 里那个包是指向 `packages/...` 的软链：**改包内源码宿主即时生效，不用重装**；只有改了依赖清单（`package.json`）才需要再 `npm install` 一次重建软链与锁文件。"),
+                    List.of("- **前端命令在 `scaffold-vue` 目录跑**（`npm run dev|build|test:unit`）。组件与珍珠玻璃主题是 npm 依赖 `@yuanda-lowcode-ai/scaffold-ui`，升级就是改 `package.json` 里的版本号再 `npm install`；本项目不是 workspace，仓库根没有清单。")));
 
     /** 交付项目里物料包依赖的默认版本写法（可被配置覆盖，便于本地用 file: 依赖演练交付链） */
     public static final String DEFAULT_SCAFFOLD_UI_VERSION = "^1.0.0";

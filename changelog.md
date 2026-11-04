@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-04（PR 4B 收尾：存量项目真机升级，顺带修掉两个交付链缺陷）
+
+用户要求「按方案处理存量项目」。选的路径是**不删历史**：把上次真机推出去的旧形态（282 文件，只有 `platform-generated` 一条分支）先推成 `main`，再让平台对它做一次全量初始化 —— 这等于把「存量项目怎么升级到抽包后的形态」真跑了一遍。
+
+- **顺带清掉的验证数据**：`uidemo`（绑假地址 `git@github.com:acme/ui-demo.git`、从未初始化）。删除被守卫拦了一次 —— 「项目下还有模型，请先删除模型」，按提示先删它名下的 `order_detail` 模型（连带 3 个字段）才删掉项目，守卫行为符合预期。
+- **缺陷 1：全量初始化没有删除语义，升级后项目里两份物料并存。** 第一次初始化推上去后核对 diff，发现 `main → platform-generated` **一个文件都没删**（D=0），旧形态的 96 个组件/composable/工具/样式文件原样留在发布分支里，同时 `package.json` 已经依赖 npm 包 —— 抽包的意义直接抵消。根因是 `ScaffoldSnapshotWriter.write()` 只写清单、从不删，原注释还写着「平台无权清理清单之外的东西」：那句话对**主干上人工写的 C 档文件**成立，但发布分支是平台自己维护的全量产物，快照就是它应有的内容。修法：新增 `ScaffoldSnapshotWriter.pruneOutsideSnapshot(workspace, snapshot)`（删快照外的文件 + 收空目录，保留 `.git`），只在**非空仓库的全量初始化**分支里调用，删除数写进 `sync_message`；`ProjectWorkspaceApiTest` 加一例「clone 出旧形态 → 初始化后 `components/business/ListPage.vue` 与整个 `business/` 目录都不在、消息里出现『清理快照外旧文件』」。
+- **缺陷 2：READY 但工作区目录不在时，项目被两头守卫卡死。** 换服务器、清过卷或手工删目录之后，状态仍是就绪 → 初始化被「已就绪不许再初始化」拒；想清空又因为按钮只在 `workspace.exists` 时出现（后端也直接抛「工作区不存在，无需重建」）而无入口。修法：后端 `resetWorkspace` 在目录缺失时不再报错，而是把状态清回未初始化（远端与已推送内容一概不动，因此不需要脏/未推送守卫），已是未初始化才继续报「无需重建」；前端 `canResetWorkspace` 改成「目录在 **或** 状态不是未初始化」，并在 `statusHint` 里给这一状态单独一句可操作的提示。测试覆盖「初始化 → 手工删目录 → 清空动作重置状态 → 再清空报无需重建 → 重新初始化成功且旧拷贝被清掉」。
+- **真机结果**：`sync_message` = 「固定代码已推送到 platform-generated，并清理快照外旧文件 **109** 个」，`sync_status=2`，新提交 `ff5124d`，**`main` 全程停在 `36c8021` 没被写过**。升级 diff 变成 `146 files changed：D=107 / A=2 / M=37`（删的是组件源码拷贝与交付不该带的 `scaffold-vue/package-lock.json`，加的是 `api/scaffold-providers.ts` 与 `composables/permission.ts`），核对交付树里 `components/platform`、`views/tool`、`views/lowcode`、`scaffold-system/scaffold-lowcode`、`packages` 全为空 ✓。
+- **升级后的项目能装能编译**：另起干净 clone 拉 `platform-generated`，`npm install` 装到 `@yuanda-lowcode-ai/scaffold-ui@1.0.0`（靠交付自带的 `.npmrc` 把该 scope 钉在官方源，绕开镜像滞后）、53 个包 18 秒，`npm run build`（`vue-tsc` + `vite build`）通过。
+- **验证**：后端 134 用例全绿（admin 76→78，两条新用例）、前端 24 用例 + 构建全绿；后端用新 jar 重启后在浏览器里把整条链（清空工作区 → 初始化 → 读数）走完。踩到一条运维事实：用 `ps eww` 抓旧进程环境变量再 `env $vars` 重启的做法对**含空格的值不可靠**，这次重启后所有登录态失效（`/api/*` 全 401），只能重新登录 —— 以后重启后端要么用固定 env 文件，要么接受会话失效。
+- **运维事实补进文档**（用户要求「把文档里的运维事实补充完整」）：`docs/docker-deployment.md` 新增「本地直接跑进程（不起容器）的几条事实」一节 —— 重打 jar 必须 `clean package`（增量构建可能不重打 fat jar）、`JWT_SECRET` 一变全部会话 401、启动变量固化成不入库的 `.env.local` 并给出加载命令（明确反对从 `ps eww` 抓旧进程 env，含空格的值会被拆坏）、`3306/6379` 是业务库而本脚手架测试与本地实例用 `3316/6380`、清 Redis 等于会话与验证码全作废、前端命令从仓库根跑且包内源码经软链即时生效不用重装。平台专属段补三条：工作区路径**相对进程工作目录**（换目录启动会「看起来工作区丢了」，正解是点清空而不是手工改 `sync_status`）、清空在目录缺失时只重置状态不碰远端、全量初始化会删快照外遗留且删除数进 `sync_message`。`PROJECT_MAP.md` 排障表加 6 行症状→第一现场（重启后全 401 / 改了代码行为没变 / 就绪但工作区未建立 / 项目里两份组件物料并存 / 生成项目 `ETARGET` 装不上物料包），`README.md` 本地启动处加指针。
+  - 连带修正：新写的「npm workspaces」那句对**交付项目不成立**（它们不是 workspace、命令在 `scaffold-vue` 目录跑），所以 `deliverySubstitutions()` 又加一条 `docs/docker-deployment.md` 的整块替换，并在 `ScaffoldSnapshotPlannerTest` 里断言交付侧读到的是 `scaffold-vue` 目录版本、读不到 `npm workspaces`。后端 134 用例全绿。
+
 ## 2026-11-04（分支口径调整 + PR 4B：组件抽成 `@yuanda-lowcode-ai/scaffold-ui` 物料包、注入点解耦）
 
 - **分支口径**：`feat/lowcode-pr3-model-field`（PR 3b/3c + PR 4 + 抽屉版式，4 个提交）快进并入 `main`，再从 `main` 拉出 `dev`；后续模块开发分支一律向 `dev` 合并 PR，`main` 只做阶段收口。远端仍未推。
