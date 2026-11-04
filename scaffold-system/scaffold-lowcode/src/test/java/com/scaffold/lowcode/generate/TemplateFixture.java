@@ -52,9 +52,9 @@ final class TemplateFixture {
                 new Field("orderNo", "订单号", "String", "varchar").input().required().unique().list().query("LIKE").build(),
                 new Field("amount", "订单金额", "BigDecimal", "decimal").input().list().query("BETWEEN").build(),
                 new Field("payTime", "支付时间", "LocalDateTime", "datetime").input().list().query("BETWEEN").build(),
-                new Field("status", "状态", "Integer", "int").input().required().list().query("EQ").build(),
+                new Field("status", "状态", "Integer", "int").input().required().list().dict("sys_order_status").query("EQ").build(),
                 new Field("tags", "标签", "String", "varchar").query("IN").build(),
-                new Field("remark", "备注", "String", "text").input().build());
+                new Field("remark", "备注", "String", "text").input().area().build());
     }
 
     /** 说明里带单引号的字段：SQL 字面量必须把引号翻倍，否则建表语句从中间被截断 */
@@ -136,6 +136,19 @@ final class TemplateFixture {
 
         Field unique() {
             row.put("isUnique", 1);
+            return this;
+        }
+
+        /** 挂了字典的字段：前端出 DictSelect / DictTag，控件形态由字典而非自由文本 */
+        Field dict(String type) {
+            row.put("dictType", type);
+            row.put("formType", "SELECT");
+            return this;
+        }
+
+        /** 长文本字段走文本域 */
+        Field area() {
+            row.put("formType", "TEXTAREA");
             return this;
         }
 

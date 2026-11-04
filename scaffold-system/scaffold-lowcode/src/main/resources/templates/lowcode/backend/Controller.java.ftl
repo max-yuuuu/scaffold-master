@@ -1,6 +1,7 @@
 <#import "../_shared/methodParams.ftl" as mp>
 package com.scaffold.business.${module}.controller;
 
+import com.scaffold.business.${module}.domain.${className};
 import com.scaffold.business.${module}.domain.${className}Row;
 import com.scaffold.business.${module}.domain.${className}WriteRequest;
 import com.scaffold.business.${module}.service.${className}Service;
@@ -57,6 +58,13 @@ public class ${className}Controller {
 </#list>
     ) {
         return R.success(service.page(query<@mp.call items=queryParams prefix=", " />));
+    }
+
+    /** 单行详情：前端编辑前取整行，避免用列表行填表时把没显示的字段清空 */
+    @GetMapping("/{id}")
+    @RequiresPermission("${permissionPrefix}:list")
+    public R<${className}> detail(@PathVariable Long id) {
+        return R.success(service.detail(id));
     }
 
     /** 导出当前筛选条件下的 CSV（上限由 Service 把住），文件名用模型中文名 */

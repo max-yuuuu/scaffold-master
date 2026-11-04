@@ -157,6 +157,12 @@ public final class GenerationInput {
                 .map(suffix -> "'" + permissionPrefix + ":" + suffix + "'")
                 .collect(Collectors.joining(", ")));
         root.put("menuButtons", MENU_BUTTONS);
+        // 前端产物用：接口对象名、导出文件名、页面要 import 的物料组件
+        root.put("apiVar", Naming.camel(className) + "Api");
+        root.put("exportName", blankToDefault(text(model.get("modelDesc")), modelName) + ".csv");
+        root.put("modelNameJs", jsText(modelName));
+        root.put("modelDescJs", jsText(blankToDefault(text(model.get("modelDesc")), modelName)));
+        root.put("pageImports", pageImportsOf(queryParams, formFields, rowFields));
         // import 顺序固定，同一份模型两次生成的文本才逐字节一致（发布 diff 才可读）；
         // 每个文件只带自己用到的，不留无用 import
         root.put("entityImports", audit ? withAudit(importsOf(fieldModels)) : importsOf(fieldModels));
@@ -213,6 +219,15 @@ public final class GenerationInput {
         item.put("ddlType", String.valueOf(item.get("columnType")).toUpperCase(Locale.ROOT));
         item.put("ddlComment", sqlText(String.valueOf(item.get("desc"))));
         item.put("ddlNull", ddlNull(item));
+        item.put("tsType", tsType(javaType));
+        item.put("descJs", jsText(String.valueOf(item.get("desc"))));
+        // 前端接口里可空与否跟着「必填 / 主键」走：可空字段类型上要带 | null，编辑表单才知道能放 null
+        item.put("nullableTs", !Boolean.TRUE.equals(item.get("required")) && !Boolean.TRUE.equals(item.get("primary")));
+        String formControl = formControl(String.valueOf(item.get("formType")), item.get("dictType") != null, javaType);
+        item.put("formControl", formControl);
+        // 提交前 trim 掉首尾空格；下拉、字典与日期的取值不是人打的自由文本，不动它
+        item.put("valueTrim", "string".equals(item.get("tsType")) && !isChoice(formControl));
+        item.put("inputVerb", isChoice(formControl) ? "请选择" : "请输入");
         return item;
     }
 
@@ -328,6 +343,89 @@ public final class GenerationInput {
         return sorted(merged);
     }
 
+    /**
+     * Java 类型 → TypeScript 类型。日期类固定映射成 {@code string}：后端在生成字段上写
+     * {@code @JsonFormat}，出参就是 {@code yyyy-MM-dd} / {@code yyyy-MM-dd HH:mm:ss} 规范串，
+     * 与前端物料 {@code dateValue} 只认的两种写法一致 —— 全程不用 Date 对象承载，避免时区与序列化歧义。
+     */
+    private static String tsType(String javaType) {
+        return switch (javaType) {
+            case "Integer", "Long", "BigDecimal", "Double", "Float" -> "number";
+            default -> "string";
+        };
+    }
+
+    /**
+     * 表单控件。挂了字典的一律走 {@code DictSelect}（选项由注入的 dict 能力取）；
+     * 没挂字典的单选 / 多选、附件与关联先落文本框并留注释 —— 模板不替项目猜选项与上传接口从哪来。
+     */
+    private static String formControl(String formType, boolean hasDict, String javaType) {
+        if (hasDict) {
+            return "dict";
+        }
+        return switch (formType) {
+            case "TEXTAREA" -> "textarea";
+            case "NUMBER" -> "number";
+            case "DATE" -> "date";
+            case "DATETIME" -> "datetime";
+            case "SELECT", "RADIO", "CHECKBOX" -> "select";
+            case "UPLOAD" -> "upload";
+            case "REF" -> "ref";
+            default -> "input";
+        };
+    }
+
+    private static boolean isChoice(String control) {
+        return switch (control) {
+            case "dict", "select", "date", "datetime" -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * TS / JS 单引号字符串字面量里的内容。字段说明是中文自由文本，出现引号或反斜杠就转义掉 ——
+     * 生成的 .vue 少一个转义就是整份文件解析失败，而这种错要到前端构建才暴露。
+     */
+    private static String jsText(String value) {
+        return value.replace("\\", "\\\\").replace("'", "\\'");
+    }
+
+    /**
+     * 生成页面要 import 的物料组件名：只列这个页面真会用到的。
+     * 物料是 npm 依赖，多一个没用的 import 在 {@code vue-tsc} 下只是噪音，
+     * 但读代码的人会以为页面里有这个控件。{@code Field} / {@code ListPage} /
+     * {@code FormDialog} / {@code PermissionButton} 四个是这套版式的固定件。
+     */
+    private static Map<String, Object> pageImportsOf(List<Map<String, Object>> queryItems,
+                                                     List<Map<String, Object>> formItems,
+                                                     List<Map<String, Object>> rowItems) {
+        Set<String> ui = new LinkedHashSet<>(List.of("Field"));
+        Set<String> business = new LinkedHashSet<>(List.of("FormDialog", "ListPage", "PermissionButton"));
+        for (Map<String, Object> item : concat(queryItems, formItems)) {
+            switch (String.valueOf(item.get("formControl"))) {
+                case "textarea" -> ui.add("Textarea");
+                case "number" -> ui.add("NumberInput");
+                case "date", "datetime" -> ui.add("DateInput");
+                case "select" -> ui.add("Select");
+                case "dict" -> business.add("DictSelect");
+                default -> ui.add("TextInput");
+            }
+        }
+        if (rowItems.stream().anyMatch(item -> item.get("dictType") != null)) {
+            business.add("DictTag");
+        }
+        Map<String, Object> imports = new LinkedHashMap<>();
+        imports.put("ui", sorted(ui));
+        imports.put("business", sorted(business));
+        return imports;
+    }
+
+    private static List<Map<String, Object>> concat(List<Map<String, Object>> first, List<Map<String, Object>> second) {
+        List<Map<String, Object>> all = new ArrayList<>(first);
+        all.addAll(second);
+        return all;
+    }
+
     private static List<String> sorted(Set<String> imports) {
         return imports.stream().sorted().toList();
     }
@@ -347,14 +445,21 @@ public final class GenerationInput {
             String javaField = String.valueOf(field.get("javaField"));
             String javaType = String.valueOf(field.get("javaType"));
             String pattern = (String) field.get("jsonPattern");
+            Object dictType = field.get("dictType");
+            boolean hasDict = dictType != null;
             List<Map<String, Object>> params = new ArrayList<>();
             if ("BETWEEN".equals(kind)) {
-                params.add(queryParam(javaField + "Start", javaType, pattern, field.get("desc") + "（起）"));
-                params.add(queryParam(javaField + "End", javaType, pattern, field.get("desc") + "（止）"));
+                // 区间两端按类型给控件（日期区间是两个日期框），不按字典渲染
+                params.add(queryParam(javaField + "Start", javaType, pattern, field.get("desc") + "（起）",
+                        queryControl(javaType, false), null));
+                params.add(queryParam(javaField + "End", javaType, pattern, field.get("desc") + "（止）",
+                        queryControl(javaType, false), null));
             } else if ("IN".equals(kind)) {
-                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）"));
+                // 后端按 FIND_IN_SET 收逗号串，这里就如实给一个文本框，不假装是多选控件
+                params.add(queryParam(javaField, "String", null, field.get("desc") + "（多选，逗号分隔）", "input", null));
             } else {
-                params.add(queryParam(javaField, javaType, pattern, field.get("desc")));
+                params.add(queryParam(javaField, javaType, pattern, field.get("desc"),
+                        queryControl(javaType, hasDict), dictType));
             }
             Map<String, Object> condition = new LinkedHashMap<>();
             condition.put("kind", kind);
@@ -380,13 +485,34 @@ public final class GenerationInput {
         return (List<Map<String, Object>>) value;
     }
 
-    private static Map<String, Object> queryParam(String name, String javaType, String pattern, Object desc) {
+    private static Map<String, Object> queryParam(String name, String javaType, String pattern, Object desc,
+                                                  String control, Object dictType) {
         Map<String, Object> param = new LinkedHashMap<>();
         param.put("name", name);
         param.put("javaType", javaType);
+        param.put("tsType", tsType(javaType));
         param.put("jsonPattern", pattern);
         param.put("desc", String.valueOf(desc));
+        param.put("descJs", jsText(String.valueOf(desc)));
+        param.put("dictType", dictType);
+        param.put("formControl", control);
         return param;
+    }
+
+    /**
+     * 查询区控件：等值的字典列出下拉，日期列出日期框，数字列出数字框。
+     * 区间拆出来的起止两个参数<b>不</b>按字典渲染 —— 日期区间用两个日期框，不是两个下拉。
+     */
+    private static String queryControl(String javaType, boolean hasDict) {
+        if (hasDict) {
+            return "dict";
+        }
+        return switch (javaType) {
+            case "LocalDate" -> "date";
+            case "LocalDateTime" -> "datetime";
+            case "Integer", "Long", "BigDecimal", "Double", "Float" -> "number";
+            default -> "input";
+        };
     }
 
     /**
