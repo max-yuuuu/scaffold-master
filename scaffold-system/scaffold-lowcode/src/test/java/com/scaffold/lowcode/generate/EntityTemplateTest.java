@@ -23,7 +23,7 @@ class EntityTemplateTest {
 
     @Test
     void 实体模板产出与底座同款的POJO形状() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true), fields());
+        Map<String, Object> model = GenerationInput.of(model(true), fields());
         String code = renderer.render("backend/Entity.java.ftl", model);
 
         assertThat(code).contains("package com.scaffold.business.order.domain;");
@@ -41,24 +41,24 @@ class EntityTemplateTest {
 
     @Test
     void 审计开关决定四字段是否出现() {
-        assertThat(renderer.render("backend/Entity.java.ftl", GenerationInput.of(project(), model(true), fields())))
+        assertThat(renderer.render("backend/Entity.java.ftl", GenerationInput.of(model(true), fields())))
                 .contains("private LocalDateTime createTime;")
                 .contains("public String getUpdateBy() { return updateBy; }");
-        assertThat(renderer.render("backend/Entity.java.ftl", GenerationInput.of(project(), model(false), fields())))
+        assertThat(renderer.render("backend/Entity.java.ftl", GenerationInput.of(model(false), fields())))
                 .doesNotContain("private String createBy;")
                 .doesNotContain("getUpdateTime");
     }
 
     @Test
     void 同一份模型两次渲染逐字节一致() {
-        String first = renderer.render("backend/Entity.java.ftl", GenerationInput.of(project(), model(true), fields()));
-        String second = renderer.render("backend/Entity.java.ftl", GenerationInput.of(project(), model(true), fields()));
+        String first = renderer.render("backend/Entity.java.ftl", GenerationInput.of(model(true), fields()));
+        String second = renderer.render("backend/Entity.java.ftl", GenerationInput.of(model(true), fields()));
         assertThat(second).isEqualTo(first);
     }
 
     @Test
     void 命名与派生值由Java侧算完() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true), fields());
+        Map<String, Object> model = GenerationInput.of(model(true), fields());
         assertThat(model).containsEntry("module", "order")
                 .containsEntry("className", "Order")
                 .containsEntry("resourceName", "order")
@@ -90,10 +90,6 @@ class EntityTemplateTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("模板渲染失败")
                 .hasMessageContaining("backend/NoSuchThing.ftl");
-    }
-
-    private static Map<String, Object> project() {
-        return Map.of("projectCode", "order-service", "projectName", "订单中台");
     }
 
     private static Map<String, Object> model(boolean audit) {

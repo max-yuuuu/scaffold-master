@@ -17,10 +17,6 @@ final class TemplateFixture {
     private TemplateFixture() {
     }
 
-    static Map<String, Object> project() {
-        return Map.of("projectCode", "order-service", "projectName", "订单中台");
-    }
-
     /**
      * @param audit       模型的「审计四字段」开关
      * @param logicDelete 模型的「逻辑删除」开关

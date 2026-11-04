@@ -19,6 +19,7 @@ class FieldTypeTest {
                 List.of("STRING", "String", "varchar(255)", "INPUT"),
                 List.of("TEXT", "String", "text", "TEXTAREA"),
                 List.of("INTEGER", "Integer", "int", "NUMBER"),
+                List.of("LONG", "Long", "bigint", "NUMBER"),
                 List.of("DECIMAL", "BigDecimal", "decimal(18,2)", "NUMBER"),
                 List.of("DATE", "LocalDate", "date", "DATE"),
                 List.of("DATETIME", "LocalDateTime", "datetime", "DATETIME"),
@@ -70,6 +71,39 @@ class FieldTypeTest {
         assertThatThrownBy(() -> FieldType.of("  ")).isInstanceOf(IllegalArgumentException.class);
         // 大小写与空格容错
         assertThat(FieldType.of(" datetime ")).isEqualTo(FieldType.DATETIME);
+    }
+
+    @Test
+    void 库里已有的列类型反推出同一个字段类型() {
+        // PR 5F：老代码生成页原来自己算一份，date 被算成 LocalDateTime，与正向表分叉 —— 现在两条链路共用这一张
+        assertThat(FieldType.ofColumn("bigint")).isEqualTo(FieldType.LONG);
+        assertThat(FieldType.ofColumn("int")).isEqualTo(FieldType.INTEGER);
+        assertThat(FieldType.ofColumn("tinyint")).isEqualTo(FieldType.INTEGER);
+        assertThat(FieldType.ofColumn("decimal")).isEqualTo(FieldType.DECIMAL);
+        assertThat(FieldType.ofColumn("date")).isEqualTo(FieldType.DATE);
+        assertThat(FieldType.ofColumn("datetime")).isEqualTo(FieldType.DATETIME);
+        assertThat(FieldType.ofColumn("timestamp")).isEqualTo(FieldType.DATETIME);
+        assertThat(FieldType.ofColumn("varchar")).isEqualTo(FieldType.STRING);
+        assertThat(FieldType.ofColumn("LONGTEXT")).isEqualTo(FieldType.TEXT);
+        assertThat(FieldType.ofColumn("json")).isEqualTo(FieldType.TEXT);
+        // date 列经过这一格拿到的就是 LocalDate，不再是 LocalDateTime
+        assertThat(FieldType.ofColumn("date").javaType(false)).isEqualTo("LocalDate");
+        assertThat(FieldType.ofColumn("date").columnType(null, null, null, false)).isEqualTo("date");
+        // 认不出来的（time / year / bit / 二进制）落到字符串：老链路的表本来就在，不为这一格再造类型
+        assertThat(FieldType.ofColumn("time")).isEqualTo(FieldType.STRING);
+        assertThat(FieldType.ofColumn(null)).isEqualTo(FieldType.STRING);
+    }
+
+    @Test
+    void 模糊匹配只给文本列() {
+        // 数字与日期列被 LIKE 会既用不上索引也读不出等值结果（老链路的 status 列就中过）
+        assertThat(FieldType.STRING.defaultQueryType()).isEqualTo(QueryType.LIKE);
+        assertThat(FieldType.TEXT.defaultQueryType()).isEqualTo(QueryType.LIKE);
+        assertThat(FieldType.INTEGER.defaultQueryType()).isEqualTo(QueryType.EQ);
+        assertThat(FieldType.LONG.defaultQueryType()).isEqualTo(QueryType.EQ);
+        assertThat(FieldType.DECIMAL.defaultQueryType()).isEqualTo(QueryType.EQ);
+        assertThat(FieldType.DATE.defaultQueryType()).isEqualTo(QueryType.EQ);
+        assertThat(FieldType.ENUM.defaultQueryType()).isEqualTo(QueryType.EQ);
     }
 
     @Test

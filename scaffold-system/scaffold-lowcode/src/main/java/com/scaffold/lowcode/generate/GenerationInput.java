@@ -14,7 +14,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 把 {@code lc_project} / {@code lc_model} / {@code lc_field} 三份行数据装配成 FreeMarker 的数据模型（方案 §4.2）。
+ * 把一个模型的行数据（{@code lc_model} + 它的 {@code lc_field}）装配成 FreeMarker 的数据模型（方案 §4.2）。
+ *
+ * <p>入参形状是「字段名 → 值」的宽松 Map，不绑死数据来源：低代码链路给的是库里查出来的 {@code lc_*} 行，
+ * 老代码生成页给的是 {@code gen_table} / {@code gen_table_column} 拼出来的同形状 Map —— 两条链路共用一套模板。
  *
  * <p>所有派生都在这一层算完：命名（类名 / 包段 / 资源名 / 表名）、列类型全形式、查询运算符、
  * 需要的 import、列表 / 查询 / 表单三组字段的筛选。模板里只允许取值与循环 ——
@@ -25,7 +28,7 @@ public final class GenerationInput {
     private GenerationInput() {
     }
 
-    public static Map<String, Object> of(Map<String, Object> project, Map<String, Object> model, List<Map<String, Object>> fields) {
+    public static Map<String, Object> of(Map<String, Object> model, List<Map<String, Object>> fields) {
         String modelCode = text(model.get("modelCode"));
         String className = blankToNull(text(model.get("className")));
         if (className == null) {
@@ -107,8 +110,6 @@ public final class GenerationInput {
 
         Map<String, Object> root = new LinkedHashMap<>();
         boolean audit = truth(model.get("enableAuditField"));
-        root.put("projectCode", text(project.get("projectCode")));
-        root.put("projectName", text(project.get("projectName")));
         root.put("module", module);
         root.put("className", className);
         root.put("resourceName", resourceName);

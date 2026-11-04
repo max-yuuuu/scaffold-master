@@ -13,7 +13,6 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -29,7 +28,7 @@ class GeneratedFileZipTest {
 
     @Test
     void 压缩包里每个文件都能原样读回() throws IOException {
-        List<GeneratedFile> files = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
 
         Map<String, String> entries = unzip(GeneratedFileZip.pack(files));
 
@@ -41,7 +40,7 @@ class GeneratedFileZipTest {
 
     @Test
     void 压缩包里的目录就是交付项目的目录() throws IOException {
-        List<GeneratedFile> files = generator.renderFiles(project(), model(true, true), richFields());
+        List<GeneratedFile> files = generator.renderFiles(model(true, true), richFields());
 
         Map<String, String> entries = unzip(GeneratedFileZip.pack(files));
 

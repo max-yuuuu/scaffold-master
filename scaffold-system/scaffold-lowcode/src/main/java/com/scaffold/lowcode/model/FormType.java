@@ -28,6 +28,11 @@ public enum FormType {
         return label;
     }
 
+    /** 与 {@link FieldType#code()} / {@link QueryType#code()} 同一口径：给前端与生成物用的枚举名 */
+    public String code() {
+        return name();
+    }
+
     public static FormType of(String code, FormType fallback) {
         if (code == null || code.isBlank()) {
             return fallback;

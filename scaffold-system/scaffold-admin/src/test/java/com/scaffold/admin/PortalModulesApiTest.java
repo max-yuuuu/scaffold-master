@@ -113,11 +113,37 @@ class PortalModulesApiTest {
                 new HttpEntity<>(headers),
                 MAP_TYPE
         );
-        assertThat(preview.getStatusCode()).isEqualTo(HttpStatus.OK);
-        Map<String, Object> previewData = dataOf(preview.getBody());
-        assertThat(listOf(previewData.get("files"))).extracting(row -> row.get("name"))
-                .contains("PurchaseOrderController.java", "PurchaseOrderMapper.java", "index.vue");
-        assertThat((String) previewData.get("code")).contains("class PurchaseOrderController");
+        // PR 5F：生成的类型事实（主键、长度、可空）改从库里现查，物理表已经不在了就不能再出一份指向空表的代码
+        assertThat(preview.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(messageOf(preview)).contains("不存在或已被删除");
+
+        // 把这张 IT 夹具表建回来，预览走的就是与下载同一条链路
+        jdbcTemplate.execute("""
+                CREATE TABLE it_purchase_order (
+                    id BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
+                    order_no VARCHAR(64) NOT NULL COMMENT '订单号',
+                    amount DECIMAL(18,2) DEFAULT NULL COMMENT '金额',
+                    PRIMARY KEY (id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='集成测试采购订单'
+                """);
+        try {
+            ResponseEntity<Map<String, Object>> rendered = restTemplate.exchange(
+                    "/api/tool/generator/tables/" + table.get("id") + "/preview",
+                    HttpMethod.GET,
+                    new HttpEntity<>(headers),
+                    MAP_TYPE
+            );
+            assertThat(rendered.getStatusCode()).isEqualTo(HttpStatus.OK);
+            Map<String, Object> previewData = dataOf(rendered.getBody());
+            assertThat(listOf(previewData.get("files"))).extracting(row -> row.get("name"))
+                    .contains("PurchaseOrderController.java", "PurchaseOrderMapper.java", "PurchaseOrder.vue");
+            // 落点是交付项目的真实目录，不再是想象出来的 backend/ + frontend/
+            assertThat(listOf(previewData.get("files"))).extracting(row -> row.get("path"))
+                    .allSatisfy(path -> assertThat(String.valueOf(path)).startsWith("scaffold-"));
+            assertThat((String) previewData.get("code")).contains("class PurchaseOrderController");
+        } finally {
+            jdbcTemplate.execute("DROP TABLE IF EXISTS it_purchase_order");
+        }
 
         ResponseEntity<Map<String, Object>> save = restTemplate.exchange(
                 "/api/tool/generator/tables/" + table.get("id"),
@@ -147,6 +173,11 @@ class PortalModulesApiTest {
     private Map<String, Object> dataOf(Map<String, Object> body) {
         assertThat(body).containsEntry("code", 200);
         return (Map<String, Object>) body.get("data");
+    }
+
+    private String messageOf(ResponseEntity<Map<String, Object>> response) {
+        assertThat(response.getBody()).isNotNull();
+        return String.valueOf(response.getBody().get("message"));
     }
 
     @SuppressWarnings("unchecked")

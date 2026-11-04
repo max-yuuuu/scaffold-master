@@ -68,7 +68,9 @@ watch(step, async (next, prev) => {
 watch(() => Boolean(props.table), open => { if (open) nextTick(() => slideThumb(thumb.value, stepper.value?.querySelector<HTMLElement>(`[data-step="${step.value}"]`) ?? null, 'x', true)) })
 
 /* ── ② 字段映射图 ── */
-const FORM_LABEL: Record<string, string> = { input: '输入框', textarea: '多行文本', select: '下拉选择', radio: '单选', checkbox: '多选', datetime: '日期时间', date: '日期', number: '数字', upload: '上传', editor: '富文本' }
+/* PR 5F：gen_table_column.form_type 存的不再是中文，而是 FormType 枚举名（两条链路同一个取值口径），
+   所以这里按枚举名查标签。认不出来时原样显示，不让一个旧值把图画成空白。 */
+const FORM_LABEL: Record<string, string> = { INPUT: '单行输入', TEXTAREA: '多行输入', NUMBER: '数字输入', SELECT: '下拉选择', RADIO: '单选组', CHECKBOX: '多选组', SWITCH: '开关', DATE: '日期选择', DATETIME: '日期时间选择', UPLOAD: '附件上传', REF: '关联选择' }
 const mapping = computed<{ nodes: GraphNode[]; links: GraphLink[] }>(() => {
   const { w, h } = size.value
   const cols = columns.value

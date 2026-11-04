@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 
 import static com.scaffold.lowcode.generate.TemplateFixture.model;
-import static com.scaffold.lowcode.generate.TemplateFixture.project;
 import static com.scaffold.lowcode.generate.TemplateFixture.richFields;
 import static com.scaffold.lowcode.generate.TemplateFixture.simpleFields;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,7 +82,7 @@ class SqlTemplatesTest {
 
     @Test
     void 说明里的单引号被转义() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true, true),
+        Map<String, Object> model = GenerationInput.of(model(true, true),
                 TemplateFixture.quotedRemarkFields());
         String ddl = renderer.render("sql/Table.sql.ftl", model);
         // 单引号翻倍，SQL 字面量才不会被截断
@@ -111,16 +110,16 @@ class SqlTemplatesTest {
 
     @Test
     void 同一份模型两次生成逐字节一致() {
-        Map<String, Object> model = GenerationInput.of(project(), model(true, true), richFields());
+        Map<String, Object> model = GenerationInput.of(model(true, true), richFields());
         assertThat(renderer.render("sql/Table.sql.ftl", model)).isEqualTo(renderer.render("sql/Table.sql.ftl", model));
         assertThat(renderer.render("sql/Menu.sql.ftl", model)).isEqualTo(renderer.render("sql/Menu.sql.ftl", model));
     }
 
     private String table(boolean audit, boolean logicDelete) {
-        return renderer.render("sql/Table.sql.ftl", GenerationInput.of(project(), model(audit, logicDelete), richFields()));
+        return renderer.render("sql/Table.sql.ftl", GenerationInput.of(model(audit, logicDelete), richFields()));
     }
 
     private String menu() {
-        return renderer.render("sql/Menu.sql.ftl", GenerationInput.of(project(), model(true, true), simpleFields()));
+        return renderer.render("sql/Menu.sql.ftl", GenerationInput.of(model(true, true), simpleFields()));
     }
 }
