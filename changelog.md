@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-04（PR 5C：建表与菜单种子模板，真机跑了两遍）
+
+模板链的最后一段「要人拿去执行」的产物。这两份 SQL 的特殊之处是：形状断言证明不了 MySQL 收不收，所以除了单测，还在本机 IT 容器（`scaffold-it-mysql`，3316）的一个临时库里把 V1 + V2 + 生成物**各跑两遍**做了物化演练。
+
+- **三条口径定稿**（写进方案 §5.2 的更新策略表与 `PROJECT_MAP.md`）：① **永不生成破坏性语句** —— 建表用 `CREATE TABLE IF NOT EXISTS`，只建「新表」，对已存在的表不加列不删列；模型加字段时看合并请求 diff 里多出的那一行，由人手工 `ALTER TABLE ... ADD COLUMN`。为什么不在文件里生成 ALTER：MySQL 没有 IF NOT EXISTS 的加列写法，写进去第二次执行直接报错，等于把「可重复执行」这个性质换掉了。② 菜单**不照抄底座的「固定 ID + `INSERT IGNORE`」** —— 那是 V6 知道 502 这个号，而 `sys_menu.id` 在 V4 已改成数据库自增，生成物不知道本项目用到哪个号；改成按 `permission` 判重的 `INSERT ... SELECT ... FROM DUAL WHERE NOT EXISTS`，父级用会话变量 `@{资源}_menu` 取，`tenant_id` 不写（靠列默认值 1），只授给内置管理员 `role_id = 1`，其它角色由项目侧在角色管理里勾。③ 落点 `sql/generated/{表名}.sql` 与 `sql/generated/menu/{资源名}.sql`：子目录不在 `docker-entrypoint-initdb.d` 的自动执行范围内（mysql 不递归子目录，与 `sql/verify/` 同一机制），建表由人在目标库执行一次 —— 平台不托管运行时，也不连项目的库。
+- **`GenerationInput` 补的派生**：每列 `ddlType`（大写列类型）、`ddlNull`（自增主键 `NOT NULL AUTO_INCREMENT` / 必填 `NOT NULL` / 可空文本列只写 `NULL` / 其余 `DEFAULT NULL`，外加 `defaultValue`，`CURRENT_TIMESTAMP` 是唯一不加引号的写法）、`ddlComment`（单引号翻倍 + 反斜杠翻倍，说明里出现引号很常见，不转义就是建表语句被截断）、`textType`；表级 `tableIndexes`（唯一列 `UNIQUE KEY`、非 LIKE 的查询列与关联列 `KEY`；**LIKE 列不建**因为生成的是前置通配用不上，**TEXT 列不建**因为 MySQL 要求给前缀长度否则建表失败）、`tableComment`、`menuComponent`（就是 `views/{module}/{Cls}`，与前端路由 `composables/auth.ts` 的解析规则一致）、`menuButtons` / `menuPermissionList` / `resourceSlug`。
+- **踩到的两个坑**：① MySQL 不允许 TEXT 列带默认值，`remark TEXT DEFAULT NULL` 直接建表失败 → 可空文本列只写 `NULL`；② 手工 `docker exec -i ... mysql < xxx.sql` 不带 `--default-character-set=utf8mb4` 时，容器内 locale 为 `C`，客户端按 latin1 解析 UTF-8 字节，中文注释与菜单名**二次编码入库**（查出来是 `C3A8C2AE…` 而不是 `E8AEA2…`）—— 这不是生成物的问题（底座自己的 V2 用同样命令导入也一样），但生成脚本永不自动执行、只能手工跑，所以这条必须写进部署文档：手工执行带该参数，与 `deploy/mysql-client.cnf` 的由来是同一个坑。
+- **物化演练结果**（临时库 `lowcode_5c_rehearsal`，跑完即删，正式 IT 库 `scaffold_system` 未动）：V1 + V2 + 生成建表 + 生成菜单**各执行两遍**，全程无报错；表 12 列、6 个索引（`PRIMARY` + `uk_order_no` + 4 个 `idx_`）、表注释 `订单主表` 入库字节正确；`sys_menu` 4 行（1 页面 + 3 按钮，按钮 `parent_id` 指向页面自增出来的 2022）、`sys_role_menu` 4 行 —— **第二遍没有产生任何重复行**，幂等成立。
+- 验证：`SqlTemplatesTest` 7 例（DDL 形状与列序、索引取舍、两个开关关掉后片段整块消失、生成物语句行里不含 DROP/ALTER/TRUNCATE、单引号转义、菜单按 permission 判重且不写死 ID、两次生成逐字节一致）。后端全量测试见下条命令记录。
+- **未做**：生成物路径的落地与「哪些文件属于本次发布」的装配在 PR 5E（`renderFiles()` + A/B/C 分档 + 存在即跳过）；`SqlTemplatesTest` 里那句 `statements()`（滤掉注释行再判破坏性语句）说明注释文本仍带着「请加 ALTER」的指导语，这是刻意保留的 —— 读产物的人需要知道下一步该做什么。
+
+## 2026-11-04（分支口径修正：PR 5B 重新开 PR）
+
+PR #1 合并进 dev 之后，我把 PR 5B 的两条提交推到了同一条已合并分支 `feat/lowcode-pr5-freemarker` 上（GitHub 不会重开已合并的 PR，但提交挂在那条分支上等于混进了已收口的单元）。按分支口径搬到独立分支 `feat/lowcode-pr5b-backend-templates` 重新开 PR #2（base 仍是 `dev`），内容一字未改，提交是原来那两条。PR #1 分支上的残留提交没动 —— 删分支或强推都算改动共享状态，等用户点头。后续 5C 在新分支 `feat/lowcode-pr5c-sql-templates` 上做。
+
 ## 2026-11-04（PR 5B：后端 CRUD 五套模板，产物真编译）
 
 5A 只搭了骨架 + 实体，这一步把 `WriteRequest` / `Row` / `Mapper` / `Service` / `Controller` 四套补齐，并给每条口径找到出处。扩展点（`{Cls}Extension` 骨架与调用点）留到 5E —— 现在加会让这一步编译不过。

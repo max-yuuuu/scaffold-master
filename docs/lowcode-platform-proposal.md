@@ -1130,8 +1130,8 @@ A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平�
 
 | 文件类型 | 更新策略 | 说明 |
 |----------|----------|------|
-| 建表 SQL | 覆盖到项目仓库 `sql/` 下，`CREATE TABLE IF NOT EXISTS` | **只生成增量语句，不生成 `DROP` / `ALTER ... DROP COLUMN`**；破坏性变更在发布结果里以提示列出，由人写迁移 |
-| 菜单 SQL | 覆盖，`INSERT IGNORE INTO sys_menu` | 生成项目启动后前端路由经 `import.meta.glob` 自动注册 |
+| 建表 SQL | 覆盖到项目仓库 `sql/generated/{表名}.sql`，`CREATE TABLE IF NOT EXISTS` | **只建「新表」**：对已存在的表不加列、不删列，`DROP` / `ALTER ... DROP COLUMN` 一条都不生成。模型加过字段就看合并请求的 diff —— 多出来的那一行就是要人工补的 `ALTER TABLE ... ADD COLUMN`（MySQL 没有 IF NOT EXISTS 的加列写法，把 ALTER 写进这个文件会让第二次执行直接报错）。破坏性变更在发布结果里以提示列出，由人写迁移。这目录**不在** `docker-entrypoint-initdb.d` 的自动执行范围内（mysql 不递归子目录），由人在目标库执行一次 —— 平台不托管运行时，也不连项目的库 |
+| 菜单 SQL | 覆盖到 `sql/generated/menu/{资源名}.sql`，按 `permission` 判重的 `INSERT ... SELECT ... WHERE NOT EXISTS` | 不能照抄底座 V6 的「固定 ID + `INSERT IGNORE`」—— 那是因为它知道 502 这个号，而 `sys_menu.id` 在 V4 已改成数据库自增，生成物不知道本项目用到哪个号。同理授权也只按已存在判重，只授给内置管理员角色（`role_id = 1`），其它角色由项目侧在角色管理里勾。页面本身靠 `sys_menu` + `import.meta.glob` 自动注册，`component` 就是 `views/{module}/{Cls}` |
 | 路由配置 | 不生成 | 走 `sys_menu` + 自动注册，避免生成文件与人工路由表冲突 |
 
 ### 5.3 合并请求：平台内的 PR 式功能
