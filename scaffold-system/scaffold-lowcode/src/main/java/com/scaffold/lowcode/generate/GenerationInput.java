@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 把 {@code lc_project} / {@code lc_model} / {@code lc_field} 三份行数据装配成 FreeMarker 的数据模型（方案 §4.2）。
@@ -114,8 +115,11 @@ public final class GenerationInput {
         root.put("tableName", tableName);
         root.put("modelName", modelName);
         root.put("modelDesc", blankToDefault(text(model.get("modelDesc")), modelName));
-        root.put("permissionPrefix", module + ":" + Naming.snake(resourceName));
-        root.put("apiPath", "/" + module + "/" + Naming.snake(resourceName));
+        String resourceSlug = Naming.snake(resourceName);
+        String permissionPrefix = module + ":" + resourceSlug;
+        root.put("permissionPrefix", permissionPrefix);
+        String apiPath = "/" + module + "/" + resourceSlug;
+        root.put("apiPath", apiPath);
         root.put("tree", truth(model.get("isTree")));
         root.put("logicDelete", truth(model.get("enableLogicDelete")));
         root.put("dataScope", truth(model.get("enableDataScope")));
@@ -137,6 +141,22 @@ public final class GenerationInput {
         // Mapper 里的实体参数名（@Param("order") Order order），与底座 @Param("row") 那个位置同职责
         root.put("entityVar", Naming.camel(className));
         root.put("primaryField", primary);
+        root.put("tableIndexes", tableIndexes(fieldModels));
+        root.put("tableComment", sqlText(blankToDefault(text(model.get("modelDesc")), modelName)));
+        // 菜单：component 就是前端路由解析的路径（composables/auth.ts 里 ../views/{component}.vue）
+        root.put("menuComponent", module + "/" + className);
+        root.put("menuPath", apiPath);
+        root.put("resourceSlug", resourceSlug);
+        // 菜单授权那条 IN 列表：页面权限点 + 三个按钮，逐个加好引号，模板里不再拼字符串
+        List<String> menuSuffixes = new ArrayList<>();
+        menuSuffixes.add("list");
+        for (Map<String, Object> button : MENU_BUTTONS) {
+            menuSuffixes.add(String.valueOf(button.get("suffix")));
+        }
+        root.put("menuPermissionList", menuSuffixes.stream()
+                .map(suffix -> "'" + permissionPrefix + ":" + suffix + "'")
+                .collect(Collectors.joining(", ")));
+        root.put("menuButtons", MENU_BUTTONS);
         // import 顺序固定，同一份模型两次生成的文本才逐字节一致（发布 diff 才可读）；
         // 每个文件只带自己用到的，不留无用 import
         root.put("entityImports", audit ? withAudit(importsOf(fieldModels)) : importsOf(fieldModels));
@@ -146,6 +166,22 @@ public final class GenerationInput {
     }
 
     /** 单个字段的模板视图：命名、列类型全形式与查询运算符都在这里定稿 */
+    /** 菜单里的三个按钮权限点。导出与列表共用 {@code :list}，与底座的 {@code system:post:list} 同一口径 */
+    private static final List<Map<String, Object>> MENU_BUTTONS = List.of(
+            Map.of("action", "新增", "suffix", "add", "sort", 1),
+            Map.of("action", "编辑", "suffix", "edit", "sort", 2),
+            Map.of("action", "删除", "suffix", "remove", "sort", 3));
+
+    /**
+     * SQL 字符串字面量里的内容：单引号翻倍，反斜杠也翻倍。
+     *
+     * <p>字段说明是人在设计器里打的中文，里面出现引号很常见（{@code 状态'正常'}），
+     * 不转义就是建表语句少一个引号，报的错还指着半行提示。
+     */
+    private static String sqlText(String value) {
+        return value.replace("\\", "\\\\").replace("'", "''");
+    }
+
     private static Map<String, Object> fieldModel(Map<String, Object> field) {
         String fieldCode = text(field.get("fieldCode"));
         String javaType = blankToDefault(text(field.get("javaType")), "String");
@@ -173,7 +209,73 @@ public final class GenerationInput {
         item.put("formType", blankToDefault(text(field.get("formType")), "INPUT"));
         item.put("dictType", blankToNull(text(field.get("dictType"))));
         item.put("defaultValue", blankToNull(text(field.get("defaultValue"))));
+        item.put("textType", String.valueOf(item.get("columnType")).toLowerCase(Locale.ROOT).startsWith("text"));
+        item.put("ddlType", String.valueOf(item.get("columnType")).toUpperCase(Locale.ROOT));
+        item.put("ddlComment", sqlText(String.valueOf(item.get("desc"))));
+        item.put("ddlNull", ddlNull(item));
         return item;
+    }
+
+    /**
+     * 建表语句里「这一列的约束与默认值」那一段，形状与底座 {@code sql/V1__init_schema.sql} 一致：
+     * 自增主键 {@code NOT NULL AUTO_INCREMENT}，必填 {@code NOT NULL}，可空的文本列只写 {@code NULL}
+     * （MySQL 里 TEXT 不能带默认值），其余 {@code DEFAULT NULL}。
+     */
+    private static String ddlNull(Map<String, Object> item) {
+        boolean primary = Boolean.TRUE.equals(item.get("primary"));
+        boolean autoIncrement = Boolean.TRUE.equals(item.get("autoIncrement"));
+        StringBuilder ddl = new StringBuilder();
+        if (autoIncrement && primary) {
+            ddl.append("NOT NULL AUTO_INCREMENT");
+        } else if (primary || Boolean.TRUE.equals(item.get("required")) || Boolean.FALSE.equals(item.get("nullable"))) {
+            ddl.append("NOT NULL");
+        } else {
+            ddl.append(Boolean.TRUE.equals(item.get("textType")) ? "NULL" : "DEFAULT NULL");
+        }
+        String defaultValue = (String) item.get("defaultValue");
+        // MySQL 不允许 TEXT 列带默认值，填了也只能忽略（写进去就是建表直接失败）
+        if (defaultValue != null && !Boolean.TRUE.equals(item.get("textType"))) {
+            // CURRENT_TIMESTAMP 是唯一不加引号的写法：加了引号就成一个固定时间串了
+            ddl.append(" DEFAULT ").append("CURRENT_TIMESTAMP".equalsIgnoreCase(defaultValue)
+                    ? defaultValue.toUpperCase(Locale.ROOT) : "'" + sqlText(defaultValue) + "'");
+        }
+        return ddl.toString();
+    }
+
+    /**
+     * 建表要生成的二级索引：唯一列出 {@code UNIQUE KEY}，非模糊的查询列与关联列出普通 {@code KEY}。
+     *
+     * <p>LIKE 查询列不建索引 —— 生成的是 {@code LIKE '%x%'} 前置通配，用不上索引，白占写入开销。
+     * 文本列也不建 —— MySQL 对 TEXT 建索引必须指定前缀长度，不给前缀就是建表失败。
+     */
+    private static List<Map<String, Object>> tableIndexes(List<Map<String, Object>> fields) {
+        Map<String, Map<String, Object>> byColumn = new LinkedHashMap<>();
+        for (Map<String, Object> field : fields) {
+            if (Boolean.TRUE.equals(field.get("textType")) || Boolean.TRUE.equals(field.get("primary"))) {
+                continue;
+            }
+            String column = String.valueOf(field.get("column"));
+            boolean unique = Boolean.TRUE.equals(field.get("unique"));
+            boolean indexed = unique
+                    || (Boolean.TRUE.equals(field.get("query")) && !"LIKE".equals(field.get("queryKind")))
+                    || "REF".equals(field.get("formType")) || "Long".equals(field.get("javaType"));
+            if (!indexed) {
+                continue;
+            }
+            Map<String, Object> index = byColumn.get(column);
+            if (index == null) {
+                index = new LinkedHashMap<>();
+                index.put("name", (unique ? "uk_" : "idx_") + column);
+                index.put("column", column);
+                index.put("unique", unique);
+                byColumn.put(column, index);
+            } else if (unique) {
+                // 同一列既唯一又被查询过：唯一的约束更强，名字与写法都换成唯一
+                index.put("name", "uk_" + column);
+                index.put("unique", true);
+            }
+        }
+        return List.copyOf(byColumn.values());
     }
 
     /**
