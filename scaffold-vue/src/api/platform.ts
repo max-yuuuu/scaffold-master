@@ -1,6 +1,6 @@
-import { crudPage, type PageResult } from './system'
-import type { QueryParams } from './http'
-import type { HttpClient } from './http'
+import { crudPage, type PageResult } from './system.ts'
+import type { QueryParams } from './http.ts'
+import type { HttpClient } from './http.ts'
 
 /** 租户行（lc_tenant）：userCount 为该租户下的账号数 */
 export interface TenantRow {
@@ -279,6 +279,46 @@ export interface ModelMeta {
   queryTypes: Array<{ code: string, operator: string, label: string }>
 }
 
+/** 页面列表行：不带 design_json，一屏几十行各带一份设计会把内存吃光，而列表上没有一处要读它 */
+export interface PageRow {
+  id: number
+  projectId: number
+  projectName: string | null
+  modelId: number
+  modelCode: string
+  modelName: string
+  pageCode: string
+  pageName: string
+  pageDesc: string | null
+  pageType: string
+  routePath: string | null
+  menuIcon: string | null
+  menuSort: number | null
+  refFieldCount: number
+  status: number
+  createTime: string
+  updateTime: string
+}
+
+export interface PageDetail extends PageRow {
+  design: Record<string, unknown>
+  refFields: string[]
+}
+
+/** 页面新增与编辑请求（lc_page）：design 送对象而不是字符串，后端 PageWriteRequest 收 JsonNode */
+export interface PageWriteRequest {
+  projectId?: number
+  modelCode?: string
+  pageCode?: string
+  pageName: string
+  pageDesc?: string | null
+  routePath?: string | null
+  menuIcon?: string | null
+  menuSort?: number | null
+  status?: number
+  design: Record<string, unknown>
+}
+
 export function createPlatformApi(client: HttpClient) {
   return {
     tenants: {
@@ -313,6 +353,12 @@ export function createPlatformApi(client: HttpClient) {
       createField: (modelId: number, body: FieldWriteRequest) => client.post<{ id: number }>(`/lowcode/models/${modelId}/fields`, body),
       updateField: (fieldId: number, body: FieldWriteRequest) => client.put<void>(`/lowcode/fields/${fieldId}`, body),
       removeField: (fieldId: number) => client.delete<void>(`/lowcode/fields/${fieldId}`),
+    },
+    pages: {
+      ...crudPage<PageRow, PageWriteRequest>(client, '/lowcode/pages'),
+      /** 详情带整份 design：设计器打开页面吃的就是这一份，列表接口不给（一屏几十行各带一份设计） */
+      detail: (id: number) => client.get<PageDetail>(`/lowcode/pages/${id}`),
+      updateStatus: (id: number, status: number) => client.put<void>(`/lowcode/pages/${id}/status`, { status }),
     },
     tenantConfigs: {
       list: (query?: QueryParams) => client.get<PageResult<TenantConfigRow>>('/platform/tenant-configs', query),
