@@ -10,6 +10,14 @@ package com.scaffold.lowcode.generate;
 public record GeneratedFile(String path, String content, Tier tier) {
 
     /**
+     * 按路径建一份产物，档位由 {@link GeneratedPaths#tier} 反推 —— 生成器不能自己声明「我是 C 档」，
+     * 落到 A 档或不认识的路径上时这里当场拒绝，越界的模板到不了磁盘。
+     */
+    public static GeneratedFile of(String path, String content) {
+        return new GeneratedFile(path, content, GeneratedPaths.tier(path));
+    }
+
+    /**
      * 生成物只有 B、C 两档：A 档固定代码在项目初始化时一次性写入，不归生成器管。
      */
     public enum Tier {
