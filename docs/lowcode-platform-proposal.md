@@ -1074,7 +1074,7 @@ scaffold-system/         # 后端 Maven 聚合
 | 档 | 内容 | 平台行为 | 人工约定 |
 |----|------|----------|----------|
 | **A 固定文件** | 后端 `scaffold-common` / `framework` / `system` 源码、前端 app 壳（`main.ts`、路由与布局、登录页、工作台）、`pom.xml`、`package.json`（含 `@yuanda-lowcode-ai/scaffold-ui` 版本号）、Dockerfile | **不随页面发布生成或覆盖**；只在人工发起的「底座升级」动作里重新生成，推独立升级分支走合并请求（见下方「A 档怎么跟着框架迭代」） | 可随意修改。**组件与样式不在 A 档** —— 它们是 `@yuanda-lowcode-ai/scaffold-ui` 依赖，升级只 bump 版本号，不进 diff |
-| **B 纯生成文件** | `{Cls}.java`（实体）、`{Cls}WriteRequest.java`、`{Cls}Row.java`（列表行）、`{Cls}Mapper.java`、`{Cls}Service.java`、`{Cls}Controller.java`、`api/{module}.ts`、`views/{module}/{Cls}.vue` | 每次发布**整文件覆盖** | 不在主干手改；要改回到模型或设计器改，再发布。人硬改了也不静默丢 —— 改动会在合并请求的 diff 里与生成结果正面撞，由人取舍 |
+| **B 纯生成文件** | `{Cls}.java`（实体）、`{Cls}WriteRequest.java`、`{Cls}Row.java`（列表行）、`{Cls}Mapper.java`、`{Cls}Service.java`、`{Cls}Controller.java`、`api/{module}/{resource}.ts`、`views/{module}/{Cls}.vue` | 每次发布**整文件覆盖** | 不在主干手改；要改回到模型或设计器改，再发布。人硬改了也不静默丢 —— 改动会在合并请求的 diff 里与生成结果正面撞，由人取舍 |
 | **C 扩展点文件** | `service/{Cls}Extension.java`、`views/{module}/overrides/*.vue` | 首次生成**空骨架**后即视为人工资产，之后发布**存在即跳过** | 业务逻辑写这里，平台不碰。**钩子方法签名是平台契约**：改名或删方法，下次发布的 B 档调用点直接编译失败，这是刻意设计（可见失败优于静默改行为） |
 
 > 命名口径（2026-11-04 定稿，覆盖此前写法）：本表原写 `{Cls}ServiceImplCustom.java` / `{resource}.ext.ts` / `{Cls}VO` / `{Cls}Query` / `types.ts`，那是 interface+impl 那套约定的残留。§10.2 开放项 2 已定为**生成物向底座看齐**（单类 Service、`WriteRequest`、`PageQuery` + 逐个 `@RequestParam`），所以扩展点统一叫 `{Cls}Extension`，VO/Query/types.ts 三类文件不再存在；本节与 §4.2、§4.3 一律按此口径。
@@ -1386,7 +1386,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 ### 10.2 真正的开放项
 
 1. ~~`super_admin` 跨租户旁路口径~~ **已定（PR 2）**：走"会话内切换租户"，见 §10.1 与 §2.3。留下的实现细节 —— 切换态下顶栏常驻「回到平台租户」，平台管理菜单不下发给租户。
-2. ~~**生成物命名约定跟底座还是跟模板**~~ **已定（2026-11-04，PR 5 开工第一刀）：选 (a) 生成物向底座看齐**，判据是可读性 —— 生成代码是给项目里的人读和改的，底座已经是一套一致的形状（`{Entity}WriteRequest`、`PageQuery` + 逐个 `@RequestParam`、`R.success(...)`、单类 Service、`src/api/{module}.ts`、`views/{module}/{Cls}.vue`），再造一套 interface+impl / DTO+Query+types.ts 只会让一个项目里出现两种风格，而教科书分层对单人维护的项目并不更好读。连带定死四件事：① `{Cls}VO` / `{Cls}Query` / `types.ts` 三类文件不再存在，列表行用 `{Cls}Row`；② 扩展点统一 `{Cls}Extension`（`ServiceImplCustom` 那个旧名作废）；③ 生成物包名 `com.scaffold.business.{module}`，与「一个项目只有一个业务模块」一致；④ 接口路径用单数 `/{module}/{resource}`，不做英文自动变复数（底座 `/system/users` 的复数是人工历史命名，自动变格只会生成 `Categorys` 一类错名）。§4.2 的示例代码按此重写，见 PR 5G。
+2. ~~**生成物命名约定跟底座还是跟模板**~~ **已定（2026-11-04，PR 5 开工第一刀）：选 (a) 生成物向底座看齐**，判据是可读性 —— 生成代码是给项目里的人读和改的，底座已经是一套一致的形状（`{Entity}WriteRequest`、`PageQuery` + 逐个 `@RequestParam`、`R.success(...)`、单类 Service、`views/{module}/{Cls}.vue`），再造一套 interface+impl / DTO+Query+types.ts 只会让一个项目里出现两种风格，而教科书分层对单人维护的项目并不更好读。连带定死五件事：① `{Cls}VO` / `{Cls}Query` / `types.ts` 三类文件不再存在，列表行用 `{Cls}Row`；② 扩展点统一 `{Cls}Extension`（`ServiceImplCustom` 那个旧名作废）；③ 生成物包名 `com.scaffold.business.{module}`，与「一个项目只有一个业务模块」一致；④ 接口路径用单数 `/{module}/{resource}`，不做英文自动变复数（底座 `/system/users` 的复数是人工历史命名，自动变格只会生成 `Categorys` 一类错名）；⑤ 前端接口文件**按模型一份** `src/api/{module}/{resource}.ts` —— 本项是 PR 5D 的修订，原写模块级单文件 `src/api/{module}.ts`，多模型时任何一个字段变化都要重写整文件、diff 会盖到别人的接口上；按模型分文件后一次发布只动一个文件，且不引 `@/api` 汇总出口（那是 A 档，平台不往里加导出行）。§4.2 的示例代码按此重写，见 PR 5G。
 3. **C 档扩展点的文件约定**：后端一个扩展类是否够用、前端 `overrides/` 第一期要不要做。与上条绑定。
 4. **`design_json` 是否对齐 LCE 搭建协议**：对齐能白捡一份别人验证过的 schema 与文档，代价是字段冗余（本项目只需列表/表单两类）。倾向"借结构不借全协议"。
 5. **多项目工作区并发**：同一台机器上两个项目同时发布是否加文件锁。单租户自己用时不会发生，平台给别人用时才会。
