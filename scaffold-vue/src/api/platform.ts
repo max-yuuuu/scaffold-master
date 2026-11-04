@@ -63,11 +63,57 @@ export interface ProjectRow {
   lastCommitSha: string | null
   syncStatus: number
   syncStatusText: string
+  /** 最近一次仓库动作的失败原因或进度说明，界面直接显示，不让人去翻后端日志 */
+  syncMessage: string | null
+  /** 工作区相对路径（{租户 ID}/{项目编码}），未初始化时为空 */
+  workspacePath: string | null
   initTime: string | null
   lastPublishTime: string | null
   status: number
   createTime: string
   remark: string | null
+}
+
+/** 仓库连通性检查结果（POST /lowcode/projects/{id}/repo/check） */
+export interface RepoCheck {
+  repoUrl: string
+  reachable: boolean
+  /** 空仓库：初始化时直接在发布分支上创建第一次提交 */
+  empty?: boolean
+  branches?: string[]
+  mainBranch?: string
+  genBranch?: string
+  mainBranchExists?: boolean
+  genBranchExists?: boolean
+  /** 下一步该做什么，后端给中文说明 */
+  action?: string
+  message?: string
+}
+
+/** 工作区读数（GET /lowcode/projects/{id}/workspace） */
+export interface WorkspaceStatus {
+  path: string
+  exists: boolean
+  genBranch: string
+  syncStatus: number
+  syncStatusText: string
+  dirty?: boolean
+  localSha?: string | null
+  remoteSha?: string | null
+  unpushed?: boolean
+  message?: string
+}
+
+/** 初始化固定代码的结果 */
+export interface InitializeResult {
+  projectId: number
+  path: string
+  syncStatus: number
+  syncStatusText: string
+  /** 本次写入交付清单的文件数 */
+  files: number
+  commitSha: string | null
+  message: string
 }
 
 /** 项目新增与编辑请求体（projectCode 创建后不可改） */
@@ -236,6 +282,13 @@ export function createPlatformApi(client: HttpClient) {
       options: () => client.get<ProjectOption[]>('/lowcode/projects/options'),
       updateStatus: (id: number, status: number) => client.put<void>(`/lowcode/projects/${id}/status`, { status }),
       export: (query?: QueryParams) => client.download('/lowcode/projects/export', query),
+      /** 只读远端引用：不改项目生命周期，失败也回 200，用 reachable 表达 */
+      checkRepo: (id: number) => client.post<RepoCheck>(`/lowcode/projects/${id}/repo/check`),
+      /** 首次初始化：写固定代码并提交推送发布分支，同步执行，可能要几十秒 */
+      initialize: (id: number) => client.post<InitializeResult>(`/lowcode/projects/${id}/initialize`),
+      workspace: (id: number) => client.get<WorkspaceStatus>(`/lowcode/projects/${id}/workspace`),
+      /** 清空工作区：有未提交改动或未推送提交时后端会拒绝 */
+      resetWorkspace: (id: number) => client.delete<{ path: string, cleared: boolean }>(`/lowcode/projects/${id}/workspace`),
     },
     tenantAssets: {
       /** 平台加了租户可见菜单后，已有租户靠这一步补齐（幂等，可重复执行） */

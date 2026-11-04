@@ -26,7 +26,7 @@
 - 接口生成边界：标准 CRUD 六端点由模型直接推导；自定义接口（状态流转、批量、聚合、跨实体）一律走扩展点不生成；**flow / 流程编排 / 状态机元数据化本期不做**。
 - 版本与回滚：每次发布打 tag，支持文件级 / 页面级 / 发布级三级回滚，一律以 `revert` 新提交实现，不倒带分支历史。
 
-**当前阶段**：P0-A 多租户地基（`lc_tenant`、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）与 **P0-B 租户隔离收口**（租户 SQL 拦截器、`super_admin` 切换租户旁路、`lc_tenant_config`、`scaffold-lowcode` 模块与租户管理 / 租户参数页面）均已完成，含**租户自助注册**：登录页可切换到注册表单，提交即开通租户（建租户 + 管理员账号 + `tenant_admin` 角色 + 复制平台业务菜单 / 字典 / 参数）并直接进入。P1（PR 3）也已完成：`lc_project` + 仓库地址协议白名单 + 项目管理页面、`lc_model` / `lc_field` + 模型与字段配置页面（字段类型 → Java / 列类型映射的唯一事实源是 `FieldType` 枚举），手工新增租户时填了管理员就走同一套开通流程。下一步 PR 4 —— JGit 接入、仓库连通性检查与初始化快照推送。
+**当前阶段**：P0-A 多租户地基（`lc_tenant`、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / JWT `tenantId` claim / 登录三段校验）与 **P0-B 租户隔离收口**（租户 SQL 拦截器、`super_admin` 切换租户旁路、`lc_tenant_config`、`scaffold-lowcode` 模块与租户管理 / 租户参数页面）均已完成，含**租户自助注册**：登录页可切换到注册表单，提交即开通租户（建租户 + 管理员账号 + `tenant_admin` 角色 + 复制平台业务菜单 / 字典 / 参数）并直接进入。P1（PR 3）也已完成：`lc_project` + 仓库地址协议白名单 + 项目管理页面、`lc_model` / `lc_field` + 模型与字段配置页面（字段类型 → Java / 列类型映射的唯一事实源是 `FieldType` 枚举），手工新增租户时填了管理员就走同一套开通流程。**PR 4 已完成**：JGit 接入（`GitGateway` / `JGitGateway`，凭据走主机 SSH 密钥、不入库）、仓库连通性检查、按代码里的裁剪清单产出交付快照并推送到项目的发布分支（`sync_status 0→1→2`，异常态 3/4/5 带 `sync_message`），以及 `scaffold-business` 空壳模块预置。交付产物已实测「能编译、能起、能登录，且不含 `/tool` 页面与 `lc_project` 等平台元数据表」。下一步 PR 4B —— 抽 `@scaffold/ui` 组件包（PR 5 的硬前置）。
 
 ## 开发入口
 

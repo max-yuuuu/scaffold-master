@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.scaffold</groupId>
+        <artifactId>scaffold-system-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>scaffold-business</artifactId>
+    <name>scaffold-business</name>
+    <description>业务代码唯一入口模块。生成项目的 pom 在初始化时一次写好，此后平台不再改任何 A 档 pom。</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.scaffold</groupId>
+            <artifactId>scaffold-framework</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+    </dependencies>
+</project>

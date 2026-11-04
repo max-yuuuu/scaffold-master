@@ -253,6 +253,7 @@ CREATE TABLE IF NOT EXISTS sys_file (
     KEY idx_sys_file_tenant (tenant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件信息表';
 
+-- scaffold:platform-only:start 代码生成器（scaffold-generator）的表，交付项目里没有这个模块
 CREATE TABLE IF NOT EXISTS gen_table (
     id BIGINT NOT NULL AUTO_INCREMENT COMMENT '代码生成表 ID',
     table_name VARCHAR(100) NOT NULL COMMENT '数据库表名',
@@ -288,3 +289,4 @@ CREATE TABLE IF NOT EXISTS gen_table_column (
     PRIMARY KEY (id),
     KEY idx_gen_table_column_table (table_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='代码生成字段配置';
+-- scaffold:platform-only:end

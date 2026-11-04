@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-04（PR 4：JGit 仓库接入、§6.4 裁剪清单代码化、空仓库首次初始化）
+
+按方案 §10.3 开 PR 4。本单元的落点是「项目不再只是一行数据库记录」：平台能把裁剪后的固定代码推到租户仓库的发布分支，并且**交付产物是脚手架减去平台自身**。
+
+- **`scaffold-business` 空壳模块预置**（§5.2 那条硬约束的兑现）：交付项目的业务代码只进 `com.scaffold.business.{模型}` 子包，Maven 模块不再增加。它在本仓库里就是空壳（只有 `package-info.java`），父 pom 的 `<modules>` 与 admin 的 `<dependencies>` 现在就写好 —— 这样交付快照不必再去改写 pom，A 档 pom 真的从此不动。`@MapperScan` 同时补了 `com.scaffold.business`。
+- **JGit 依赖只落 `scaffold-lowcode`**（`org.eclipse.jgit` + `org.eclipse.jgit.ssh.apache`，7.7.1）。所有 Git 动作经 `GitGateway` 接口，不经 shell；SSH 走主机 `~/.ssh` 密钥与 `known_hosts`，HTTPS 不存 token，库里仍然只有 `repo_url` 与分支名。
+- **`GitGateway` / `JGitGateway`**：`ls-remote`、空仓库 `init` 并把 HEAD 设成未出生的发布分支、克隆指定分支、切工作分支、add+commit（**无改动不产生空提交**，未出生分支看索引条目数、已有提交看暂存区 diff）、显式 `refs/heads/{branch}` 非强推、脏工作区与本地/远端提交号读取。失败分两类落到 `sync_status`：连不上（5 仓库不可达）与远端拒绝（4 与远端分叉），都带一句可操作的说明（主机指纹未登记 / 私钥有口令 / 分支保护）。
+- **§6.4 裁剪清单成了代码里的一份配置**（`ScaffoldTrimPolicy`）：路径白名单 + 黑名单 + 任意层级的构建产物目录名，加上第二道手段 —— 文件内的 `scaffold:platform-only:start/end` 标记块，由 `PlatformOnlyStripper` 在写快照时整块删除。同一套机制通吃父 pom 的 `<module>`、admin pom 的依赖、`docker-compose.yml` 的工作区卷、`application.yml` 的平台参数段、建表脚本里的 `gen_table` 与「系统工具」菜单种子、前端 `api/index.ts` 的平台客户端，以及启动类里平台模块的 Mapper 扫描包。标记必须独占整行，写歪了当场报错而不是产出半截文件。
+- **交付产物是校验过的**（`ScaffoldSnapshotPlanner`）：底座根路径缺一块就失败（清单与仓库结构不一致要先改清单）；写完的文本还要扫一遍平台残留引用（`com.scaffold.lowcode`、`com.scaffold.generator`、`/api/lowcode`、`/api/platform`，SQL 里另扫 `lc_project`/`lc_model`/`lc_field`/`lc_page`/`lc_tenant_config`/`gen_table`），命中就拒绝初始化 —— 带病的交付物不出门。
+- **一处与方案 §6.4 字面不同的判断，已在方案里回写**：`lc_tenant` **保留**在交付项目的库结构里。`AuthService.login()` 每次登录都要查 `countActiveTenant`（停用租户立刻登不上），`currentUser()` 要读租户编码与名称；删掉它要么登录报错，要么给交付项目维护第二套认证代码 —— 与 §6.4「避免两套 schema、两套认证」的原意相反。剔除的是其余 `lc_*` 元数据表。同理，`OrgCanvas` / `PermissionMatrix` / `DictSwatchbook` 这些组件§6.4 列为「平台专属、不进项目」，实际是部门 / 角色 / 字典三个基础页在用，只有 `GeneratorPipeline` 真的只服务被剔除的代码生成页，因此只裁它。
+- **初始化链路与状态机**（`ProjectRepositoryService`，接口在 `/api/lowcode/projects/{id}/repo/check|initialize|workspace`）：连通性检查**只读**，不改生命周期；初始化走 `0 → 1 → 2`，空仓库按 §6.3 在未出生 HEAD 上提交并用显式 refspec 建分支，非空仓库要求主干存在且认得出脚手架（`.scaffold-project.json` 或 `scaffold-system/pom.xml` + `scaffold-vue/package.json`），推完**回读 `ls-remote` 校验远端 ref 确实指向本次提交**才置就绪；内容与远端一致时不制造空提交、也不谎称推送过。固定代码（A 档）只在初始化写一次，已就绪的项目再次初始化被拒；`resetWorkspace` 在有未提交改动或未推送提交时拒绝执行，平台不静默丢人的代码。库里存成 `file://` 之类的脏值在初始化时再校一次。
+- **动作是同步执行的**，不引入异步任务表：这是单机研发期工具（§7.1），放请求线程里租户上下文与失败原因都能如实回给人；`sync_status=1` + 进程内的按项目互斥已经挡住并发。部署文档里说明了 nginx 反代需要给 `/api` 放宽 `proxy_read_timeout`。
+- **V7**：`lc_project` 加 `sync_message`（失败原因/进度直接显示在界面，不让人翻日志；列已存在时跳过 ALTER 保证幂等）+ 「同步仓库」按钮权限码 `lowcode:project:sync`。**能编辑项目不等于能往租户仓库推代码**，所以单独一个码。`sync_status` 的中文文案从 SQL 的 CASE 挪进 `ProjectSyncStatus`，接口与页面共用一处定义。
+- **一个由启动失败暴露的坑**：`@MapperScan("com.scaffold.lowcode")` 会把包树里**所有接口**注册成 MyBatis Mapper，`GitGateway` 因此多出一个 bean 让注入变成二义、后端起不来。改成逐个列到 `*.mapper` 包。交付侧按包根扫 `com.scaffold.business` 是有意保留的例外（生成代码会不断加子包），代价写进了注释。
+- **前端**：`projects.vue` 行操作加「仓库与工作区」，抽屉里三块读数 —— 仓库绑定（地址 / 两个分支 / 底座提交 / 最后推送提交 / 最近一次动作）、连通性检查（能否访问、是否空仓库、远端分支、下一步）、平台工作区（路径、是否已建、未提交改动、本地/远端提交、未推送提交）。同步状态列改成 Tag，异常态有告警图标，鼠标悬停看 `sync_message`。动作按钮统一 `lowcode:project:sync` 权限，初始化与清空都先二次确认并说明后果。
+- **compose**：新增 `lowcode-workspace` / `maven-repo` / `npm-cache` 三个卷，底座 checkout 与主机 `~/.ssh` 以只读挂进后端；这些行都在标记块里，交付项目的 compose 是干净的。
+- 验证：
+  - 后端 **128 个测试全绿**（common 8 / framework 17 / lowcode 27 / admin 76）。新增 `ScaffoldSnapshotPlannerTest` 8 例（对**真实底座**出快照并钉死「平台的东西不进交付项目」「底座能力必须进」、pom/启动类/SQL/前端入口的裁剪结果、标记块不成对与同行成对的报错、底座缺失提示）；`JGitGatewayTest` 8 例对本机临时裸仓库跑通「空仓库未出生 HEAD → 提交 → 显式建分支推送 → 回读」、无改动不空提交、脏与未推送检测、**远端已前进时推送被拒而不是强推**、克隆后切发布分支且主干不动、不可达报错文案、分支名规则；`ProjectWorkspaceApiTest` 8 例用可控假远端跑状态机（就绪、不可达、非法地址、重复初始化、未推送提交禁止清空、状态读数、只读检查不改状态、停用项目拒绝初始化），并断言固定代码真的按清单落盘且不含 `scaffold-lowcode` / `views/tool`。
+  - 交付产物**实测能编译能起能登录**：把 282 个文件的快照落到临时目录 → 离线 `mvn package` 出 jar → 前端 `npm ci` + `vite build` 通过 → 用交付侧的 `V1`–`V3` 建一个全新库 → 起在 8091 端口 → `admin` 登录成功、`/api/system/users` 返回 3 条、`/api/auth/routes` 的菜单里没有任何 `/tool` 与 `/lowcode` 路径、`/api/lowcode/projects` 返回 404；验证完删掉临时库与目录。
+  - 前端 `vue-tsc` + `vite build` 通过，21 个前端用例通过；浏览器实测项目管理页出现「仓库与工作区」入口，对一个真实 GitHub 空仓库执行只读连通性检查回显「可访问 / 空仓库 / 下一步：初始化会直接创建发布分支并推入固定代码」。
+- **还差一次真机推送**：对这个真实空仓库点「初始化固定代码」会往租户仓库推一个约 280 文件的提交，属于对外可见的写操作，需要使用者确认后再做（§10.3 的 PR 4 风险项，SSH 与 `known_hosts` 也在那一次一并验证）。
+
+
 ## 2026-11-04（PR 3b / 3c：模型与字段配置、类型映射单一事实源、手工新增租户的开通分支）
 
 接 PR 3a 继续 P1：`lc_model` / `lc_field` 建表与配置页面，以及方案 §10.3 PR 3 验收项「字段类型 → Java 类型/列类型映射表有单测」。

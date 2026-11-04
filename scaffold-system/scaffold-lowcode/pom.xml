@@ -19,6 +19,15 @@
             <groupId>com.scaffold</groupId>
             <artifactId>scaffold-framework</artifactId>
         </dependency>
+        <!-- 仓库读写只在平台侧发生，JGit 依赖只落本模块（方案 §10.3 PR 4） -->
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit.ssh.apache</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

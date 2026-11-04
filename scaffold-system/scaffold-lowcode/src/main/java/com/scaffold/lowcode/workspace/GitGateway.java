@@ -1,0 +1,58 @@
+package com.scaffold.lowcode.workspace;
+
+import java.nio.file.Path;
+import java.util.List;
+
+/**
+ * 仓库读写原语。全部走 JGit（纯 Java，不拼命令行），把 {@code repo_url}、分支名这些用户输入
+ * 挡在 shell 之外（方案 §九 注入风险一条）。
+ *
+ * <p>本接口只做 Git 动作，不含平台判断：什么时候该拒绝、状态怎么推进，在
+ * {@link ProjectRepositoryService}。拆开的目的是让「JGit 行为」和「平台策略」能各自被测。
+ */
+public interface GitGateway {
+
+    /**
+     * 读远端引用，等价于 {@code git ls-remote}。仓库不存在、网络不通、主机指纹未登记都在这里抛出。
+     *
+     * @return 远端引用列表；空仓库返回空列表
+     */
+    List<RemoteRef> lsRemote(String repoUrl);
+
+    /** 空仓库首次初始化：在本地建库、把 {@code initialBranch} 设为未出生的 HEAD，并登记 origin */
+    void initEmpty(Path dir, String repoUrl, String initialBranch);
+
+    /** 克隆远端的一条分支到工作区目录 */
+    void cloneBranch(Path dir, String repoUrl, String branch);
+
+    /**
+     * 切到工作分支：本地已有就切过去，没有就从 {@code startPoint}（如 {@code origin/main}）新建；
+     * {@code startPoint} 为空时以当前 HEAD 为起点（未出生的 HEAD 也算，第一次提交即创建分支）。
+     */
+    void checkoutBranch(Path dir, String branch, String startPoint);
+
+    /**
+     * 暂存工作区全部改动并提交。
+     *
+     * @return 提交号；工作区没有改动时返回 {@code null}（不产生空提交）
+     */
+    String commitAll(Path dir, String message);
+
+    /**
+     * 推送指定分支，refspec 显式写 {@code refs/heads/{branch}}，不带 {@code +}：
+     * 远端拒绝非快进时如实报错，平台永不 force-push（方案 §5.3 安全边界）。
+     */
+    void pushBranch(Path dir, String branch);
+
+    /** 工作区是否有未提交改动（含未跟踪文件） */
+    boolean isDirty(Path dir);
+
+    /** 本地分支当前提交号；分支不存在返回 {@code null} */
+    String localBranchSha(Path dir, String branch);
+
+    /** 分支名是否符合 Git 的 refname 规则：{@code refs/heads/{branch}} 能不能建 */
+    boolean isValidBranch(String branch);
+
+    /** 读取一个 Git 仓库的 HEAD 提交号，用于记录 {@code base_scaffold_sha}；不是仓库时返回 {@code null} */
+    String headSha(Path repoDir);
+}

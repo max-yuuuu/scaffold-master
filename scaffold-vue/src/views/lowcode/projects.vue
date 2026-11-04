@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@/components/ui'
+import { Descriptions, DescriptionsItem, Drawer, Field, SectionLabel, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton } from '@/components/business'
-import { platformApi, type ProjectRow } from '@/api'
+import Icon from '@/components/Icon.vue'
+import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
 import { useListPage } from '@/composables/list'
 import { confirm } from '@/composables/confirm'
 import { pushToast, toastError } from '@/composables/toast'
@@ -131,6 +132,107 @@ async function toggleStatus(row: ProjectRow) {
   }
 }
 
+/* ============================================================
+   仓库与工作区（PR 4）。项目能不能开始建模，取决于固定代码有没有推到发布分支：
+   检查只读远端引用，初始化才会写工作区并推送；重建在有未推送提交时会被后端拒绝。
+   ============================================================ */
+const repo = ref<ProjectRow | null>(null)
+const checking = ref(false)
+const initializing = ref(false)
+const resetting = ref(false)
+const check = ref<RepoCheck | null>(null)
+const workspace = ref<WorkspaceStatus | null>(null)
+
+async function loadWorkspace() {
+  if (!repo.value) return
+  try {
+    workspace.value = await platformApi.projects.workspace(repo.value.id) as WorkspaceStatus
+  } catch (error) {
+    workspace.value = null
+    toastError(error, '工作区状态读取失败')
+  }
+}
+
+async function openRepo(row: ProjectRow) {
+  repo.value = row
+  check.value = null
+  workspace.value = null
+  await loadWorkspace()
+}
+
+async function runCheck() {
+  if (!repo.value) return
+  checking.value = true
+  try {
+    check.value = await platformApi.projects.checkRepo(repo.value.id) as RepoCheck
+    await loadWorkspace()
+  } catch (error) {
+    toastError(error, '仓库检查失败')
+  } finally {
+    checking.value = false
+  }
+}
+
+async function runInitialize() {
+  if (!repo.value) return
+  const ok = await confirm({
+    title: '初始化固定代码',
+    message: `平台会按裁剪清单把底座固定代码提交到发布分支「${repo.value.genBranch}」，主干分支不动。`
+      + '仓库凭据走服务器 SSH 密钥，需要目标主机指纹已登记。确认开始吗？',
+    confirmText: '开始初始化',
+  })
+  if (!ok) return
+  initializing.value = true
+  try {
+    const result = await platformApi.projects.initialize(repo.value.id) as InitializeResult
+    pushToast(`固定代码已推送：${result.files} 个文件`)
+    await list.load()
+    const fresh = list.rows.value.find(item => item.id === repo.value?.id)
+    if (fresh) repo.value = fresh
+    await loadWorkspace()
+  } catch (error) {
+    toastError(error, '初始化失败')
+    await list.load()
+    await loadWorkspace()
+  } finally {
+    initializing.value = false
+  }
+}
+
+async function runReset() {
+  if (!repo.value) return
+  const ok = await confirm({
+    title: '清空工作区',
+    message: '只删平台本机的工作区副本，仓库里的内容不受影响。'
+      + '若本地还有未提交的改动或未推送的提交，后端会拒绝执行，请先自行搬走。确认清空吗？',
+    confirmText: '清空',
+    danger: true,
+  })
+  if (!ok) return
+  resetting.value = true
+  try {
+    await platformApi.projects.resetWorkspace(repo.value.id)
+    pushToast('工作区已清空，可重新初始化')
+    await list.load()
+    await loadWorkspace()
+  } catch (error) {
+    toastError(error, '清空工作区失败')
+  } finally {
+    resetting.value = false
+  }
+}
+
+function syncTone(status: number) {
+  if (status === 2) return 'ok'
+  if (status === 1) return 'info'
+  if (status === 0) return 'neutral'
+  return 'danger'
+}
+
+function shortSha(sha?: string | null) {
+  return sha ? sha.slice(0, 10) : '—'
+}
+
 async function remove(row: ProjectRow) {
   const ok = await confirm({
     title: '删除项目',
@@ -183,7 +285,12 @@ async function remove(row: ProjectRow) {
         <Tag tone="info">{{ row.genBranch }}</Tag>
       </span>
     </template>
-    <template #cell-syncStatusText="{ row }"><span class="muted">{{ row.syncStatusText }}</span></template>
+    <template #cell-syncStatusText="{ row }">
+      <span :title="row.syncMessage || undefined" class="sync-cell">
+        <Tag :tone="syncTone(row.syncStatus)">{{ row.syncStatusText }}</Tag>
+        <Icon v-if="row.syncMessage" name="alert" :size="14" class="sync-alert" />
+      </span>
+    </template>
     <template #cell-lastPublishTime="{ row }"><span class="tnum soft">{{ row.lastPublishTime || '—' }}</span></template>
     <template #cell-status="{ row }"><StatusTag :status="row.status" /></template>
     <template #cell-createTime="{ row }"><span class="tnum soft">{{ row.createTime }}</span></template>
@@ -191,6 +298,7 @@ async function remove(row: ProjectRow) {
     <template #cell-actions="{ row }">
       <div class="row-actions">
         <PermissionButton perm="lowcode:project:edit" icon-only icon="edit" label="编辑" @click="openEdit(row)" />
+        <PermissionButton perm="lowcode:project:sync" icon-only icon="code" label="仓库与工作区" @click="openRepo(row)" />
         <PermissionButton
           perm="lowcode:project:edit"
           icon-only
@@ -202,6 +310,63 @@ async function remove(row: ProjectRow) {
         <PermissionButton perm="lowcode:project:remove" icon-only icon="trash" label="删除" danger @click="remove(row)" />
       </div>
     </template>
+
+    <Drawer
+      :open="Boolean(repo)"
+      :title="repo?.projectName"
+      :sub="repo ? `${repo.projectCode} · ${repo.syncStatusText}` : ''"
+      :width="760"
+      @close="repo = null"
+    >
+      <div class="drawer-toolbar">
+        <span class="soft repo-hint">平台只写发布分支，主干由您在仓库侧掌控</span>
+        <PermissionButton perm="lowcode:project:sync" size="sm" icon="refresh" :loading="checking" @click="runCheck">检查连通性</PermissionButton>
+        <PermissionButton
+          v-if="repo && repo.syncStatus !== 2"
+          perm="lowcode:project:sync"
+          variant="primary"
+          size="sm"
+          icon="upload"
+          :loading="initializing"
+          @click="runInitialize"
+        >初始化固定代码</PermissionButton>
+        <PermissionButton perm="lowcode:project:sync" size="sm" icon="trash" :loading="resetting" :danger="true" @click="runReset">清空工作区</PermissionButton>
+      </div>
+
+      <SectionLabel>仓库绑定</SectionLabel>
+      <Descriptions :column="2">
+        <DescriptionsItem label="仓库地址" :span="2">{{ repo?.repoUrl }}</DescriptionsItem>
+        <DescriptionsItem label="主干分支">{{ repo?.mainBranch }}</DescriptionsItem>
+        <DescriptionsItem label="发布分支">{{ repo?.genBranch }}</DescriptionsItem>
+        <DescriptionsItem label="同步状态">{{ repo?.syncStatusText }}</DescriptionsItem>
+        <DescriptionsItem label="初始化时间">{{ repo?.initTime || '—' }}</DescriptionsItem>
+        <DescriptionsItem label="底座提交">{{ shortSha(repo?.baseScaffoldSha) }}</DescriptionsItem>
+        <DescriptionsItem label="最后推送提交">{{ shortSha(repo?.lastCommitSha) }}</DescriptionsItem>
+        <DescriptionsItem label="最近一次动作" :span="2">{{ repo?.syncMessage || '尚无仓库动作' }}</DescriptionsItem>
+      </Descriptions>
+
+      <SectionLabel>连通性检查</SectionLabel>
+      <div v-if="!check" class="m-surface panel padded">
+        <span class="muted">还没检查过。检查只读远端引用，不改动项目状态，也不推任何东西。</span>
+      </div>
+      <Descriptions v-else :column="2">
+        <DescriptionsItem label="能否访问">{{ check.reachable ? '可访问' : '不可访问' }}</DescriptionsItem>
+        <DescriptionsItem label="仓库是否为空">{{ check.empty === undefined ? '—' : (check.empty ? '空仓库' : '已有内容') }}</DescriptionsItem>
+        <DescriptionsItem label="远端分支" :span="2">{{ check.branches?.length ? check.branches.join('、') : '—' }}</DescriptionsItem>
+        <DescriptionsItem label="下一步">{{ check.message || check.action || '—' }}</DescriptionsItem>
+      </Descriptions>
+
+      <SectionLabel>平台工作区</SectionLabel>
+      <Descriptions :column="2">
+        <DescriptionsItem label="工作区路径" :span="2">{{ workspace?.path || '—' }}</DescriptionsItem>
+        <DescriptionsItem label="是否已建">{{ workspace?.exists ? '已建立' : '未建立' }}</DescriptionsItem>
+        <DescriptionsItem label="未提交改动">{{ workspace?.exists ? (workspace.dirty ? '有' : '无') : '—' }}</DescriptionsItem>
+        <DescriptionsItem label="本地提交">{{ shortSha(workspace?.localSha) }}</DescriptionsItem>
+        <DescriptionsItem label="远端提交">{{ shortSha(workspace?.remoteSha) }}</DescriptionsItem>
+        <DescriptionsItem label="未推送提交">{{ workspace?.exists ? (workspace.unpushed ? '有，禁止清空工作区' : '无') : '—' }}</DescriptionsItem>
+      </Descriptions>
+      <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
+    </Drawer>
 
     <FormDialog :open="dialog" :title="editing() ? '编辑项目' : '新增项目'" :saving="saving" @close="dialog = false" @submit="submit">
       <Field label="项目编码" required hint="租户内唯一，决定生成代码的包名与目录名，创建后不可修改" :error="errors.projectCode">
@@ -233,6 +398,21 @@ async function remove(row: ProjectRow) {
 </template>
 
 <style scoped>
+.sync-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.sync-alert {
+  color: var(--warn);
+}
+.repo-hint {
+  font-size: 12px;
+}
+.drawer-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
 .project-desc {
   font-size: 12px;
 }

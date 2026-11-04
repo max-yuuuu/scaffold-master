@@ -46,6 +46,8 @@
 | 健康检查 | `scaffold-admin/src/main/java/com/scaffold/admin/controller/HealthController.java` | 无独立业务服务 | 无数据库写入 | 已确认 |
 | 低代码平台 · 模型与字段 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/model/controller/LcModelController.java` | `service/LcModelService.java`、`service/LcFieldService.java`；类型映射在 `model/FieldType.java`、命名派生在 `model/Naming.java` | `mapper/LcModelMapper.java`、`mapper/LcFieldMapper.java`；`lc_model` / `lc_field`（带 tenant_id，走拦截器） | 已确认 |
 | 低代码平台 · 项目 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/project/controller/LcProjectController.java` | `service/LcProjectService.java`；`scaffold-lowcode/src/main/java/com/scaffold/lowcode/repo/RepoUrlValidator.java`（仓库地址白名单） | `mapper/LcProjectMapper.java`；`lc_project`（带 tenant_id，走拦截器） | 已确认 |
+| 低代码平台 · 仓库与工作区 | `LcProjectController` 的 `/{id}/repo/check`、`/{id}/initialize`、`GET|DELETE /{id}/workspace` | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/workspace/ProjectRepositoryService.java`（状态机与守卫）；`GitGateway.java`（接口）+ `JGitGateway.java`（JGit 实现，SSH 走主机密钥）；`ScaffoldSourceLocator.java`（定位底座 checkout） | `mapper/LcProjectMapper.java` 的 `selectProjectForSync` / `updateSyncState`；`lc_project` 的 `sync_status` / `sync_message` / `workspace_path` / `base_scaffold_sha` / `last_commit_sha`；工作区落在 `scaffold.lowcode.workspace-root` 卷内 | 已确认 |
+| 交付快照裁剪（发布产物的定义） | 无 Controller，初始化时由 `ProjectRepositoryService` 调用 | `workspace/ScaffoldTrimPolicy.java`（路径白/黑名单 + `scaffold:platform-only` 标记块）、`ScaffoldSnapshotPlanner.java`（读底座 + 残留引用校验）、`PlatformOnlyStripper.java`、`ScaffoldSnapshotWriter.java`、`ProjectMarker.java`（`.scaffold-project.json`） | 输入是本仓库的 git checkout（`base_scaffold_sha` 记它的 HEAD）；输出只进工作区，不直接写库 | 已确认 |
 | 低代码平台 · 租户资产开通 | 同上 `LcTenantController` 的 `/{id}/assets/sync` | `service/TenantProvisionService.java`（菜单 / 字典 / 参数 / 内置管理员角色，注册与补齐共用） | `mapper/LcProvisionMapper.java`；`sys_menu` / `sys_role` / `sys_role_menu` / `sys_dict_type` / `sys_dict_data` / `sys_config`，全部显式带 tenant_id | 已确认 |
 | 低代码平台 · 租户注册开通 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/tenant/controller/TenantRegisterController.java` | `service/TenantRegistrationService.java`（建租户 → 复制菜单树 → 建 `tenant_admin` 角色 → 建管理员 → 回令牌，单事务） | `mapper/LcProvisionMapper.java`；`sys_menu` / `sys_role` / `sys_role_menu` / `sys_user` / `sys_user_role` / `sys_login_log`，全部显式带 `tenant_id` | 已确认 |
 | 低代码平台 · 租户 | `scaffold-lowcode/src/main/java/com/scaffold/lowcode/tenant/controller/LcTenantController.java`、`LcTenantConfigController.java` | 同包域 `service/LcTenantService.java`、`LcTenantConfigService.java` | `mapper/LcTenantMapper.java`（`lc_tenant`，平台表不带 `tenant_id`）、`mapper/LcTenantConfigMapper.java`（`lc_tenant_config`，读写条件由租户拦截器注入） | 已确认 |
@@ -124,6 +126,9 @@
 | 模型 | `GET/POST /lowcode/models`（`projectId` / `keyword` / `status` 过滤）、`PUT/DELETE /lowcode/models/{id}`、`PUT /lowcode/models/{id}/status`、`GET /lowcode/models/options`、`GET /lowcode/models/meta`（类型映射表） | `LcModelController`（`lowcode:model:*`） | 已确认 |
 | 字段 | `GET/POST /lowcode/models/{id}/fields`、`GET /lowcode/models/{id}/field-options`、`PUT/DELETE /lowcode/fields/{id}` | 同上（读用 `lowcode:model:list`，写用 `lowcode:field:*`） | 已确认 |
 | 项目管理 | `GET/POST /lowcode/projects`、`PUT/DELETE /lowcode/projects/{id}`、`PUT /lowcode/projects/{id}/status`、`GET /lowcode/projects/options`（精简列表）、`GET /lowcode/projects/export` | `LcProjectController`（`lowcode:project:*`） | 已确认 |
+| 仓库连通性检查 | `POST /lowcode/projects/{id}/repo/check`（只读 `ls-remote`，返回 `reachable` / `empty` / `branches` / `mainBranchExists` / `genBranchExists` / `action`；失败也回 200，用 `reachable=false` 表达，**不改项目生命周期**） | `LcProjectController`（`lowcode:project:sync`） | 已确认 |
+| 固定代码初始化 | `POST /lowcode/projects/{id}/initialize`（同步执行：按裁剪清单写工作区 → 提交 → 显式推 `refs/heads/{gen_branch}` → 回读校验；`sync_status 0→1→2`，异常写 3/4/5 与 `sync_message`） | 同上（`lowcode:project:sync`） | 已确认 |
+| 工作区读数与重建 | `GET /lowcode/projects/{id}/workspace`（`exists` / `dirty` / `unpushed` / `localSha` / `remoteSha`）、`DELETE /lowcode/projects/{id}/workspace`（有未提交改动或未推送提交时拒绝） | 同上（读用 `lowcode:project:list`，删用 `lowcode:project:sync`） | 已确认 |
 | 补齐租户资产 | `POST /platform/tenants/{id}/assets/sync`（按平台模板补缺少的菜单 / 字典 / 参数并授权内置管理员角色，幂等） | `LcTenantController`（`platform:tenant:edit`） | 已确认 |
 | 租户参数 | `GET /platform/tenant-configs`（分页，`keyword` 命中参数键 / 名称 / 备注）、`GET /platform/tenant-configs/export`、`PUT /platform/tenant-configs`（`{id?, configKey, configValue, remark}`）、`DELETE /platform/tenant-configs/{id}` | `LcTenantConfigController`（`platform:config:list/edit`）；只作用于当前会话租户 | 已确认 |
 | 工作台 | `GET /dashboard/summary`（含 `trendPrev`、`dailyOps`；`stats` 含 `menus` 菜单项、`depts` 部门数） | `DashboardController` | 已确认 |
@@ -182,7 +187,7 @@
 | 代码生成 | `tool:gen:list` | 当前生成器全部接口 |
 | 租户管理 | `platform:tenant:list/add/edit` | 查询导出 / 新增租户 / 编辑与启停（平台运营职责，只下发给 `super_admin`） |
 | 租户参数 | `platform:config:list/edit` | 当前会话租户的键值参数读写；内置参数不可删除 |
-| 项目管理 | `lowcode:project:list/add/edit/remove` | 项目查询导出 / 新增 / 编辑与启停 / 删除（租户自己的开发功能，下发给租户内置管理员） |
+| 项目管理 | `lowcode:project:list/add/edit/remove/sync` | 项目查询导出与工作区读数 / 新增 / 编辑与启停 / 删除 / **仓库动作**（连通性检查、初始化固定代码、清空工作区）。单独一个 `sync` 码是因为「能编辑项目」不等于「能往租户仓库推代码」 |
 | 模型与字段 | `lowcode:model:list/add/edit/remove`、`lowcode:field:add/edit/remove` | 模型查询与字段读取 / 新增 / 编辑与启停 / 删除；字段的增删改单独三个码 |
 
 - 超级管理员角色编码为 `super_admin`，后端操作权限直接放行，菜单按启用和显示状态读取。
@@ -193,6 +198,9 @@
 ## 九、特殊机制备忘
 
 - **多租户地基（PR 1，2026-11-03）**：`TenantContext`（`scaffold-common`，纯 ThreadLocal）+ `TenantFilter`（`scaffold-framework`，`SecurityConfig` 用 `.addFilterAfter(tenantFilter, JwtAuthenticationFilter.class)` 注册）+ `LoginUser.tenantId` + JWT `tenantId` claim 已打通登录链路：`AuthService.login` 依次校验账号密码 → 用户状态 → 租户状态（`AuthMapper.countActiveTenant`），签发 token 携带 `user.getTenantId()`；`SecurityUtils.getTenantId()` 在使用点抛 401。11 张 `sys_*` 表带 `tenant_id NOT NULL DEFAULT 1`；跨租户唯一键改为 `(tenant_id, 原键)`。旧令牌（无 `tenantId` claim）解析出 `tenantId = null`，`TenantFilter` 不抛错，业务层决定是否拒绝。
+- **交付产物由代码里的裁剪清单定义，不在文档里手抄一遍**（PR 4，方案 §6.4）：`ScaffoldTrimPolicy` 是路径白名单 + 黑名单，`PlatformOnlyStripper` 再删文件内的 `scaffold:platform-only:start/end` 标记块（标记必须独占整行）。新增平台侧模块、页面、接口客户端、建表脚本或 compose 挂载时，**三处要一起想清楚**：路径要不要进黑名单、是不是既有文件里的平台专属片段、`ScaffoldSnapshotPlanner` 的残留引用扫描能不能兜住。清单改了必须跑 `ScaffoldSnapshotPlannerTest`（它对真实底座出快照），漏裁不会静默出门 —— 初始化当场失败。交付项目里 `lc_tenant` 与其余 `lc_*` 命运不同：**保留**，因为 `AuthService.login()` 每次都要查租户是否停用；剔除的是 `lc_project` / `lc_model` / `lc_field` / `lc_tenant_config` 等元数据表。
+- **`@MapperScan` 会把包树里所有接口注册成 Mapper**：所以低代码侧要逐个列到 `*.mapper` 包，写成包根 `com.scaffold.lowcode` 会让服务接口（如 `GitGateway`）多出一个 bean 把构造注入打成二义、后端直接起不来。业务包 `com.scaffold.business` 按包根扫是有意的例外，代价是那里的接口一律按 Mapper 注册。
+
 - **Mapper 里带 `OR` 的关键词条件必须整体加括号**：租户拦截器补的是「原 WHERE `AND tenant_id = ?`」，而 SQL 中 `AND` 优先级高于 `OR`。写成 `WHERE #{kw} IS NULL OR #{kw} = '' OR a LIKE .. OR b LIKE ..` 时，注入的租户条件只绑到最后一个 `OR` 分支，带关键词的查询会漏出别的租户数据（`LcTenantConfigMapper` 初版就踩了这一点，已修并补越权用例）。正确写法是 `WHERE (#{kw} IS NULL OR ... OR b LIKE ..)`，底座既有 Mapper 全部是这个形态。
 - **字段类型映射只有一份**：`com.scaffold.lowcode.model.FieldType` 定义「类型 → Java 类型 / 列类型 / 默认控件」，保存时把算好的 `java_type` / `column_type` 落库，模板生成直接读库值，前端读 `GET /api/lowcode/models/meta` —— 库里和前端都不另存映射表。`FieldTypeTest` 逐条钉死这张表，改它等于改所有已生成项目未来发布的产物。连带约束：自增主键固定 `bigint` / `Long`；`ENUM` 必须挂当前租户真实存在的字典；`REF` 必须指向同项目模型（指向自身合法）；一个模型最多一个主键；`RADIO`/`CHECKBOX` 要么挂字典要么给固定选项；查询方式只认 `QueryType` 枚举，认不出来回落等于，任意字符串不得进 SQL 片段。
 - **`Naming` 的三种写法幂等**：`snake` / `pascal` / `camel` 先按分隔符（空格 `.` `-` `_`）切，再按大小写边界切（`HTTPServer` → `http_server`），所以 `orderService`、`OrderService`、`order_service` 得到同一组词；表名 / 类名 / 列名 / 包名都由它派生，列名不给单独改的入口。
@@ -239,8 +247,10 @@
 | 文件业务与防重复提交 | 文件表已保留，统一上传及防重复提交能力未提供完整业务闭环；`Upload` 组件与 `composables/upload.ts` 已按统一鉴权就绪，只缺后端上传接口 | 有实际需求时扩展公共能力 |
 | 资源监测的历史曲线 | 只回传单次快照，近 5 分钟折线由页面自身采样累积，离开页面即丢弃；不落库、不建表 | 需要跨重启的趋势与告警时再设计留存表与采集任务 |
 | 模型没有版本历史 | 模型改动只体现在下次发布的 diff 里，库里不留版本（`lc_model.version` / `config` 本期不建） | 需要「回滚某个模型定义」时再设计，别和 `lc_page_version` 混为一谈 |
-| 仓库连通性 | 本期只校验 `repo_url` 形态（协议白名单），没有真的连过仓库 | PR 4 接 JGit 后做 `ls-remote` 连通性检查与初始化快照推送 |
-| 租户开通流程 | 自助注册路径已交付（建租户 + 管理员 + 角色 + 菜单树）；平台管理员在「租户管理」里手工新增租户仍只建租户与默认参数，不建账号 | PR 3 补手工新增的开通选项，并把菜单模板从「复制平台租户」升级为可维护的模板 |
+| 真机推送一次 | JGit 语义已对本机临时裸仓库验证（空仓库未出生 HEAD、非快进被拒、脏与未推送检测），对真实 GitHub 空仓库只跑过**只读**连通性检查 | 对待推送的租户仓库点一次「初始化固定代码」，同时验证 SSH 部署密钥与 `known_hosts` —— 方案 §10.3 标的本期风险点，属对外写操作，需使用者确认后再做 |
+| 容器里的仓库凭据 | compose 已把 `~/.ssh`、工作区卷、Maven/npm 缓存与底座 checkout 挂进后端，流程写在 `docs/docker-deployment.md` 的「低代码平台的工作区与仓库凭据」一节 | 第一次上容器部署时按那节逐步跑一遍；私钥带口令或 `known_hosts` 缺指纹都会在初始化时如实报错 |
+| 交付快照的「能起能登录」 | 已实测一次：282 文件落盘 → 离线 `mvn package` → 前端 `npm ci` + `build` → 用交付侧 V1–V3 建新库 → 起服务、登录、菜单里没有 `/tool` 与 `/lowcode` | 这条链依赖本机 Maven/npm 缓存；CI 里要长期守住就得把「干净 `npm ci`」也放进去（方案 §九 已列为风险） |
+| 租户开通流程 | 自助注册与「租户管理里手工新增（填了管理员即开通）」两条路径共用 `TenantProvisionService`，菜单模板当前是**复制平台租户的业务菜单** | 菜单模板要成为可维护的一等资产时再建 `lc_menu_template`，避免长期靠「平台租户恰好配得对」 |
 | 注册接口默认公开 | 任何能访问前端的人都能自助开出租户，只靠验证码与编码/账号唯一性挡 | 对外暴露前先决定是否加审核开关或白名单 |
 | 拦截器覆盖不到的写入 | 关联中间表与显式跨租户写参数（`insertForTenant`）靠服务层校验与显式条件 | 后续新增无 `tenant_id` 的关联表时，必须同步加归属校验，不能只靠拦截器 |
 | 业务排序字段白名单 | `PageQuery` 未提供 `orderByClause`，当前所有 Mapper 的 `ORDER BY` 都是静态列名，没有拼接入口 | 业务模块需要按前端传入字段动态排序时，再加白名单与驼峰转下划线，勿直接拼串 |

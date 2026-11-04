@@ -39,17 +39,11 @@ public interface LcProjectMapper {
                    p.repo_url AS repoUrl,
                    p.main_branch AS mainBranch,
                    p.gen_branch AS genBranch,
+                   p.workspace_path AS workspacePath,
                    p.base_scaffold_sha AS baseScaffoldSha,
                    p.last_commit_sha AS lastCommitSha,
                    p.sync_status AS syncStatus,
-                   CASE p.sync_status
-                       WHEN 0 THEN '未初始化'
-                       WHEN 1 THEN '初始化中'
-                       WHEN 2 THEN '就绪'
-                       WHEN 3 THEN '工作区脏'
-                       WHEN 4 THEN '与远端分叉'
-                       ELSE '仓库不可达'
-                   END AS syncStatusText,
+                   p.sync_message AS syncMessage,
                    DATE_FORMAT(p.init_time, '%Y-%m-%d %H:%i') AS initTime,
                    DATE_FORMAT(p.last_publish_time, '%Y-%m-%d %H:%i') AS lastPublishTime,
                    p.status,
@@ -82,6 +76,51 @@ public interface LcProjectMapper {
 
     @Select("SELECT id, project_code AS projectCode, project_name AS projectName, repo_url AS repoUrl FROM lc_project WHERE id = #{id} AND deleted = 0")
     Map<String, Object> selectProjectBrief(@Param("id") Long id);
+
+    /** 仓库与工作区动作要用的全部字段：分支名、当前状态、已有路径与提交号 */
+    @Select("""
+            SELECT id,
+                   project_code AS projectCode,
+                   project_name AS projectName,
+                   repo_url AS repoUrl,
+                   main_branch AS mainBranch,
+                   gen_branch AS genBranch,
+                   workspace_path AS workspacePath,
+                   base_scaffold_sha AS baseScaffoldSha,
+                   last_commit_sha AS lastCommitSha,
+                   sync_status AS syncStatus,
+                   status
+            FROM lc_project
+            WHERE id = #{id} AND deleted = 0
+            """)
+    Map<String, Object> selectProjectForSync(@Param("id") Long id);
+
+    /**
+     * 推进项目生命周期状态。空值一律不覆盖已有列，所以「只改状态与说明」不会把 workspace_path
+     * 或提交号抹平；{@code markInit} 为真时写 init_time。
+     */
+    @Update("""
+            <script>
+            UPDATE lc_project
+            SET sync_status = #{syncStatus},
+                sync_message = #{message},
+                last_sync_time = NOW()
+                <if test="workspacePath != null">, workspace_path = #{workspacePath}</if>
+                <if test="baseScaffoldSha != null">, base_scaffold_sha = #{baseScaffoldSha}</if>
+                <if test="lastCommitSha != null">, last_commit_sha = #{lastCommitSha}</if>
+                <if test="markInit">, init_time = NOW()</if>
+                , update_by = #{operator}
+            WHERE id = #{id} AND deleted = 0
+            </script>
+            """)
+    int updateSyncState(@Param("id") Long id,
+                        @Param("syncStatus") int syncStatus,
+                        @Param("message") String message,
+                        @Param("workspacePath") String workspacePath,
+                        @Param("baseScaffoldSha") String baseScaffoldSha,
+                        @Param("lastCommitSha") String lastCommitSha,
+                        @Param("markInit") boolean markInit,
+                        @Param("operator") String operator);
 
     @Insert("""
             INSERT INTO lc_project (project_code, project_name, project_desc, repo_url, main_branch, gen_branch,

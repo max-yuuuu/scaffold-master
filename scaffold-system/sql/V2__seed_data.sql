@@ -84,9 +84,15 @@ VALUES
     (201, 200, '操作日志', 'menu', 'file', '/monitor/oper-log', 'monitor/operlog/index', 'monitor:operlog:list', 1, 1, 1, 'system', 'system'),
     (2011, 201, '清理操作日志', 'btn', '', '', '', 'monitor:operlog:remove', 1, 1, 1, 'system', 'system'),
     (202, 200, '登录日志', 'menu', 'lock', '/monitor/login-log', 'monitor/loginlog/index', 'monitor:loginlog:list', 2, 1, 1, 'system', 'system'),
-    (2021, 202, '清理登录日志', 'btn', '', '', '', 'monitor:loginlog:remove', 1, 1, 1, 'system', 'system'),
+    (2021, 202, '清理登录日志', 'btn', '', '', '', 'monitor:loginlog:remove', 1, 1, 1, 'system', 'system');
+
+-- scaffold:platform-only:start 「系统工具 / 代码生成」菜单只属于平台底座：交付项目里没有 scaffold-generator 模块，
+-- 带着这两行等于给使用方留一个点开就 404 的菜单
+INSERT IGNORE INTO sys_menu (id, parent_id, menu_name, menu_type, icon, path, component, permission, sort, visible, status, create_by, update_by)
+VALUES
     (300, 0, '系统工具', 'dir', 'tool', '/tool', '', '', 4, 1, 1, 'system', 'system'),
     (301, 300, '代码生成', 'menu', 'command', '/tool/generator', 'tool/gen/index', 'tool:gen:list', 1, 1, 1, 'system', 'system');
+-- scaffold:platform-only:end
 
 -- 超级管理员拥有全部菜单；其余角色由管理员在「角色管理」中按需授权
 INSERT IGNORE INTO sys_role_menu (role_id, menu_id)

@@ -20,6 +20,19 @@ scaffold:
     captcha:
       # 关闭时登录不再校验图形验证码（集成测试用），生产保持开启
       enabled: ${CAPTCHA_ENABLED:true}
+  # scaffold:platform-only:start 低代码平台自身的运行参数，交付项目里整段裁掉
+  lowcode:
+    # 项目工作区根目录：容器里指向工作区卷，本地开发默认 ./lowcode-workspace
+    workspace-root: ${LOWCODE_WORKSPACE_ROOT:./lowcode-workspace}
+    # 底座源码 checkout：留空时从当前目录向上找 scaffold-system/pom.xml + scaffold-vue/package.json
+    scaffold-source-root: ${LOWCODE_SCAFFOLD_SOURCE_ROOT:}
+    git:
+      timeout-seconds: 120
+      commit-name: 元搭平台
+      commit-email: platform@yuanda.local
+      # SSH 主目录：默认取进程用户的 HOME，容器里需要挂 ~/.ssh（含密钥与 known_hosts）
+      ssh-home: ${LOWCODE_GIT_SSH_HOME:}
+  # scaffold:platform-only:end
 
 mybatis-plus:
   configuration:

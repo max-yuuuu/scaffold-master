@@ -33,7 +33,11 @@ docker compose --profile mysql up -d --build
 
 数据持久化在命名卷中，卷名格式是 `<project>_<卷名>`，project 默认取所在目录名（在本目录下即 `scaffold-master_mysql-data`、`scaffold-master_redis-data`）。`down` 保留卷，`down -v` 会连数据一起删，不可恢复。
 
-内置 MySQL 仅首次创建卷时导入 `scaffold-system/sql` **顶层**的 `V1`（建表）→ `V2`（种子数据）→ `V3`（资源监测菜单）→ `V4`（租户参数表与平台管理菜单），按文件名排序执行；`sql/verify/` 子目录不会被递归导入（双租户验收数据要手工执行）。已有卷不会重跑。
+内置 MySQL 仅首次创建卷时导入 `scaffold-system/sql` **顶层**的 `V1`（建表）→ `V2`（种子数据）→ `V3`（资源监测菜单）
+<!-- scaffold:platform-only:start -->
+加上平台自身的 `V4`（租户参数与平台管理菜单）、`V5`（项目表与低代码菜单）、`V6`（模型与字段表）、`V7`（工作区状态与同步权限）
+<!-- scaffold:platform-only:end -->
+，按文件名排序执行；`sql/verify/` 子目录不会被递归导入（双租户验收数据要手工执行）。已有卷不会重跑。
 
 `deploy/mysql-client.cnf` 是必需的：官方 mysql 镜像容器内 locale 为 `C`，导入 SQL 的客户端默认按 latin1 解析 UTF-8 字节，种子中文会被二次编码存库（页面显示成「å‘¨æ˜Žè¿œ」）。这份配置把 `[client]` 字符集固定为 utf8mb4，与 README 要求的 `--default-character-set=utf8mb4` 口径一致。
 
@@ -52,7 +56,7 @@ docker compose up -d --build
 
 `DB_HOST=host.docker.internal` 与 `DB_PORT` 必须成对设置：`DB_PORT` 是后端实际连接的端口，漏改时它会退回默认 3306，打到宿主机上另一个 MySQL 实例（表现为登录报「系统内部错」而不是连不上内置库）。内置 MySQL 的宿主机映射端口是另一个变量 `MYSQL_HOST_PORT`，走外部模式时两者要指到同一个数字。
 
-外部库不会被自动初始化：需先按 README 的口径导入 `sql/` 顶层的四份 SQL（客户端带 `--default-character-set=utf8mb4`、会话 `SET time_zone='+08:00'`），或直接用 `scaffold-admin` 里的 `com.scaffold.admin.util.DbInit`（读同一组 `DB_*` 变量）。自动导入只在内置 `mysql` 服务首次建卷时发生。**升级已有部署**时（例如 PR 2 的 `V4`：新增 `lc_tenant_config`、平台管理菜单，并把 `sys_menu.id` 改成自增），必须手工对目标库执行新增的 `V*.sql` —— 脚本按幂等口径写（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`，重复执行安全），不执行就会出现表缺失或菜单不显示。
+外部库不会被自动初始化：需先按 README 的口径导入 `sql/` 顶层的三份 SQL（交付项目只用 `V1`–`V3`；平台自身再加 `V4`–`V7`）（客户端带 `--default-character-set=utf8mb4`、会话 `SET time_zone='+08:00'`），或直接用 `scaffold-admin` 里的 `com.scaffold.admin.util.DbInit`（读同一组 `DB_*` 变量）。自动导入只在内置 `mysql` 服务首次建卷时发生。**升级已有部署**时（例如 PR 2 的 `V4`：新增 `lc_tenant_config`、平台管理菜单，并把 `sys_menu.id` 改成自增），必须手工对目标库执行新增的 `V*.sql` —— 脚本按幂等口径写（`CREATE TABLE IF NOT EXISTS` + `INSERT IGNORE`，重复执行安全），不执行就会出现表缺失或菜单不显示。
 
 ## 环境变量
 
@@ -69,6 +73,20 @@ docker compose up -d --build
 | `JSON_TIMEZONE` | JSON 序列化时区，须与 `DB_TIMEZONE` 对齐，否则日期整体偏移 | `GMT+8` |
 | `CAPTCHA_ENABLED` | 登录图形验证码开关；生产保持 `true` | `true` |
 
+<!-- scaffold:platform-only:start -->
+### 低代码平台侧变量
+
+交付项目用不到这几项，它们只随平台底座部署：
+
+| 变量 | 中文说明 | 默认值 |
+| --- | --- | --- |
+| `LOWCODE_WORKSPACE_ROOT` | 项目工作区根目录（容器内路径），落在 `lowcode-workspace` 卷上 | `/var/lib/yuanda/workspace` |
+| `LOWCODE_SCAFFOLD_SOURCE_ROOT` | 底座源码 checkout 在容器内的路径，交付快照按裁剪清单从这份代码读 | `/var/lib/yuanda/scaffold-src` |
+| `LOWCODE_SSH_DIR` | 宿主机上存放部署密钥与 `known_hosts` 的目录，只读挂进后端容器 | `/root/.ssh` |
+| `LOWCODE_SCAFFOLD_SRC` | 宿主机上的本仓库 checkout 路径，挂成容器里的底座源码 | compose 文件所在目录 |
+| `LOWCODE_GIT_SSH_HOME` | 后端进程读 SSH 配置的主目录 | `/root` |
+<!-- scaffold:platform-only:end -->
+
 后端与 Redis 的连接在 compose 内固定为 `REDIS_HOST=redis`、`REDIS_PORT=6379`，Redis 未设密码（`REDIS_PASSWORD` 留空），因此 Redis 端口不对宿主机暴露。
 
 ## 日常运维
@@ -80,6 +98,36 @@ docker compose up -d --build             # 代码更新后重建并滚动发布
 docker compose down                      # 停止并移除容器，保留数据卷
 docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除（不可恢复）
 ```
+
+<!-- scaffold:platform-only:start -->
+## 低代码平台的工作区与仓库凭据
+
+平台要往租户自己的 Git 仓库推固定代码，容器需要三样东西，缺一样就会在「初始化固定代码」这一步报错，
+而且报错原因会写进项目的「最近一次动作」，不用翻容器日志：
+
+1. **工作区与构建缓存卷**：`lowcode-workspace`（各项目 clone 目录）、`maven-repo`、`npm-cache`。
+   工作区只是缓存，可以从「clone + 按裁剪清单全量重生成」重建；构建缓存卷一旦没有，每次生成都要全量重下依赖。
+   清空某项目的工作区在「项目管理 → 仓库与工作区 → 清空工作区」里做，
+   本地有未提交改动或未推送提交时后端会拒绝执行，平台不会静默丢代码。
+2. **底座源码 checkout**：容器要能读到本仓库的一份代码（`LOWCODE_SCAFFOLD_SRC` 挂成只读）。
+   发布产物就是从这份 checkout 按裁剪清单读出来的，所以它必须是一个 git 工作副本，
+   平台的 `base_scaffold_sha` 记的就是它当时的提交号。
+3. **主机 SSH 密钥与 `known_hosts`**：库里只有 `repo_url` 与分支名，不存任何 token。
+   私钥必须无口令（或容器内起 ssh-agent），并且目标主机指纹要预先登记：
+
+   ```bash
+   # 在部署主机上执行一次，之后 compose 里的 LOWCODE_SSH_DIR 就指这个目录
+   mkdir -p /root/.ssh && ssh-keyscan github.com >> /root/.ssh/known_hosts
+   ssh -T git@github.com            # 确认部署密钥可用
+   ```
+
+   HTTPS 地址（`https://github.com/...`）走匿名读，私有仓库需要平台侧凭据，本期不支持；
+   推送统一建议用 `git@host:org/repo.git`。平台永不 `force-push`，分支保护导致的拒绝会原样回显。
+
+初始化与推送是同步执行的 HTTP 请求，仓库较大时可能几十秒。nginx 反代默认 60 秒读超时，
+如果超时就给 `/api` 这个 location 加 `proxy_read_timeout 300s;`（`scaffold-vue/nginx.conf`），
+不要为了让它过去而改成异步任务——那会引入一套工作区状态需要持久化。
+<!-- scaffold:platform-only:end -->
 
 ## 验证方法
 

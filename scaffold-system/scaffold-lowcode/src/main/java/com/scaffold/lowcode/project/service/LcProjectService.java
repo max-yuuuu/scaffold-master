@@ -6,6 +6,7 @@ import com.scaffold.common.exception.BusinessException;
 import com.scaffold.common.export.CsvUtils;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.project.domain.ProjectStatusRequest;
+import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import com.scaffold.lowcode.project.domain.ProjectWriteRequest;
 import com.scaffold.lowcode.model.mapper.LcModelMapper;
 import com.scaffold.lowcode.project.mapper.LcProjectMapper;
@@ -41,7 +42,16 @@ public class LcProjectService {
         List<Map<String, Object>> rows = total == 0
                 ? List.of()
                 : mapper.selectProjects(key, status, query.offset(), query.normalizedPageSize());
+        rows.forEach(this::withSyncStatusText);
         return PageResult.of(rows, total, query.normalizedPageNum(), query.normalizedPageSize());
+    }
+
+    /** sync_status 的文案只在 ProjectSyncStatus 里定义一次，SQL 里不再抄一份 CASE */
+    private Map<String, Object> withSyncStatusText(Map<String, Object> row) {
+        Object value = row.get("syncStatus");
+        int syncStatus = value instanceof Number number ? number.intValue() : 0;
+        row.put("syncStatusText", ProjectSyncStatus.text(syncStatus));
+        return row;
     }
 
     public String exportProjects(String keyword, Integer status) {
@@ -56,9 +66,9 @@ public class LcProjectService {
 
     /** 模型/页面模块选择项目用的精简列表：只回启用中的项目 */
     public List<Map<String, Object>> options() {
-        return mapper.selectProjects(null, 1, 0, 200).stream().map(row -> {
+        return mapper.selectProjects(null, 1, 0, 200).stream().map(this::withSyncStatusText).map(row -> {
             Map<String, Object> option = new LinkedHashMap<>();
-            for (String key : List.of("id", "projectCode", "projectName", "mainBranch", "genBranch", "syncStatus", "syncStatusText")) {
+            for (String key : List.of("id", "projectCode", "projectName", "mainBranch", "genBranch", "syncStatus", "syncStatusText", "workspacePath")) {
                 option.put(key, row.get(key));
             }
             return option;

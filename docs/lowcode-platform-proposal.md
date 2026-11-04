@@ -1173,7 +1173,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | 3 | 生成项目配置 | `pom.xml`、`package.json`、`application.yml` |
 | 4 | 复制固定代码（A 档） | scaffold-common、scaffold-framework、系统模块、组件库、样式 |
 | 5 | 初始化数据库 | 执行 V1~V3 SQL 建系统表（项目自带库，`lc_project.db_*` 连接信息） |
-| 6 | 首次提交并推送 | 见 6.3；`sync_status` 0 → 1 → 2 |
+| 6 | 首次提交并推送 | 见 6.3；`sync_status` 0 → 1 → 2。落地时这一步**同步执行**（单机研发期工具，放请求线程里租户上下文与失败原因都能如实回给人），并发用 `sync_status=1` + 进程内按项目互斥挡；仓库动作的失败原因写进新列 `lc_project.sync_message`，界面直接显示 |
 
 ### 6.3 空仓库边界
 
@@ -1201,7 +1201,13 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 
 裁剪清单要作为**代码里的一份显式配置**（路径白/黑名单），不是手工拷一遍目录 —— 它是发布产物的定义，改了就要能测试。建议随 PR 4 一起落地并配一份"裁剪后项目能编译、能起、能登录"的集成用例。
 
-`lc_project.base_scaffold_sha`（§2.2）记录该项目快照取自本仓库哪个提交，用于日后判断"这个项目落后多少"，也是 §〇 方案②（用合并请求下发 A 档升级）的起点。
+**落地事实（PR 4，2026-11-04）** —— 清单写在 `ScaffoldTrimPolicy`，机制与原表有三处出入，都按代码为准：
+
+1. 手段是**路径白/黑名单 + 文件内的 `scaffold:platform-only:start/end` 标记块**两层。第二层是因为有些平台专属内容长在必须保留的文件里：父 pom 的 `<module>`、admin pom 的依赖、`docker-compose.yml` 的工作区卷、`application.yml` 的平台参数段、`V1`/`V2` 里的 `gen_table` 与「系统工具」菜单种子、前端 `api/index.ts` 的平台客户端、启动类里平台模块的 Mapper 扫描包。标记独占整行，写完快照还会扫一遍残留引用（`com.scaffold.lowcode`、`/api/lowcode`、`lc_project` 等），漏裁就拒绝初始化而不是带病出门。
+2. **`lc_tenant` 保留在交付项目的库结构里**，与原表「剔除 `lc_*` 建表语句」字面不同。理由：`AuthService.login()` 每次登录都要查租户是否停用、`currentUser()` 要读租户编码与名称，删了这张表要么登录直接报错，要么给交付项目维护第二套认证代码 —— 与原表「避免两套 schema、两套认证代码」的约定相反。剔除的是其余元数据表（`lc_project` / `lc_model` / `lc_field` / `lc_tenant_config` 与后续 `lc_page`、`lc_publish_log`、`lc_merge_request`）。交付项目里这张表恒为一行（1 号租户）。
+3. **组件的归属按实际引用裁**：`OrgCanvas` / `PermissionMatrix` / `PermissionTrace` / `MenuStarMap` / `DictSwatchbook` / `InsightPanel` / `AskDock` 原表列为「平台与演示专属、不进项目」，实测它们分别被部门 / 角色 / 菜单 / 字典四个基础页在用；把它们剔掉交付项目就编译不过。本期只剔真正只服务于被删页面的 `GeneratorPipeline`。这批组件的归属应在 PR 4B 抽 `@scaffold/ui` 时用「进包 / 留宿主 / 进项目」三态重新判定，而不是继续靠这份表。
+
+`lc_project.base_scaffold_sha`（§2.2）记录该项目快照取自本仓库哪个提交，用于日后判断"这个项目落后多少"，也是 §〇 方案②（用合并请求下发 A 档升级）的起点；交付项目根上的 `.scaffold-project.json` 里写同一份提交号，两边互相能核对。
 
 ---
 
@@ -1259,11 +1265,11 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 |------|------|--------|------|
 | **P0-A：多租户地基** | — | `lc_tenant` 建表、`sys_*` 加 `tenant_id` 与复合唯一键、`TenantContext` / `TenantFilter` / `LoginUser.tenantId` / JWT claim / 登录三段校验 | ✅ 已完成（`be2145d`） |
 | **P0-B：租户隔离收口** | 2 周 | `TenantLineInnerInterceptor` 自动过滤（表白名单 + DDL 反向校验）、`super_admin` 切换租户旁路、登录 `tenantCode`、关联表写入归属校验、租户管理 UI、`lc_tenant_config` | ✅ 已完成（PR 2，2026-11-03；租户开通流程移入 P1） |
-| **P1：项目 + 模型** | 3 周 | `lc_project`（含 §2.2 新增的仓库字段）、`lc_model` / `lc_field`、项目管理与模型设计 UI、仓库绑定与连通性检查、租户开通流程的**手工新增分支**（PR 2 已交付自助注册即开通，平台管理员在租户管理里手工建租户时还不建账号） | 待做 |
+| **P1：项目 + 模型** | 3 周 | `lc_project`（含 §2.2 新增的仓库字段）、`lc_model` / `lc_field`、项目管理与模型设计 UI、仓库绑定与连通性检查、租户开通流程的**手工新增分支**（PR 2 已交付自助注册即开通，平台管理员在租户管理里手工建租户时还不建账号） | ✅ 已完成（PR 3a / 3b / 3c，2026-11-04）；连通性与初始化的 Git 部分在 PR 4 交付 |
 | **P1.5：组件抽包 `@scaffold/ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable 迁入；**解 28 处 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 git tag 并让宿主改依赖 | 待做，**P2/P3 的硬前置** |
 | **P2：可视化设计器** | 5 周 | 三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板；**第一期只覆盖列表页 + 表单弹窗两类模板**，看板/详情/流程后置 | 待做 |
 | **P3：代码生成升级** | 3 周 | FreeMarker 模板替换 `StringBuilder`、完整 CRUD 生成、A/B/C 文件分档与 C 档扩展点骨架、`renderFiles` 出参提为公共类型；**模板产物的 import 走 `@scaffold/ui`**；自定义接口只生成 `custom:{name}` 的 TODO handler 桩（§4.5） | 待做 |
-| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 待做 |
+| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化）已完成，只剩对真实租户仓库推一次固定代码的真机验证；tag、`lc_publish_log`、合并请求与回滚留给 PR 8 |
 | **P5：联调测试** | 2 周 | 端到端（建项目 → 建模 → 设计 → 发布 → 合并 → clone 起来跑通）、租户隔离回归 | 待做 |
 
 **总计约 21.5 周（一人约 5 个月）**
@@ -1339,7 +1345,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 2**<br>P0-B | `TenantLineInnerInterceptor` 自动注入；`super_admin` 切换租户旁路；登录 `tenantCode` 与按 `userId` 的身份解析；关联表写入归属校验；`lc_tenant_config`；租户管理 UI（列表/新增/编辑/启停/进入租户）；**租户自助注册**（登录页切换注册表单，提交即开通租户 + 管理员 + 菜单） | ✅ 已完成：双租户种子数据下 A 租户令牌查 B 租户记录为空、`super_admin` 切换后可见且身份权限不变、非管理员切换被拒、停用租户账号登录被拒、跨租户角色授权被拦、租户参数只在当前租户内读写（`TenantIsolationApiTest` 9 例 + 拦截器单测 5 例） | PR 1 ✅ |
 | **PR 3a**<br>P1 上 | ✅ 已完成：`lc_project` 建表（`db_*` / `deploy_*` 等无读写方的列留到 PR 5 以 ALTER 补）、`RepoUrlValidator` 协议白名单、项目 CRUD 与 `ListPage` 版式的项目管理页面、500 段「低代码」菜单，以及「补齐租户资产」接口（已有租户获得迁移新增的菜单 / 字典 / 参数） | 项目从新增到软删全链路；非法仓库地址与同分支被拒；跨租户同名编码各自可见且改删被拒（`ProjectApiTest` 3 例 + `RepoUrlValidatorTest` 4 例） | PR 2 ✅ |
 | **PR 3b / 3c**<br>P1 上 | ✅ 已完成：`lc_model` / `lc_field` 建表与 CRUD、`FieldType` 作为类型映射的唯一事实源（库里存算好的 `java_type` / `column_type`，前端读 `/models/meta`）、字段配置走 `ListPage` + `Drawer` 主从形态；手工新增租户时填了管理员就走同一套开通流程 | 建模型、配字段；`FieldTypeTest` 7 例钉死映射表；`ModelApiTest` 5 例覆盖派生/约束/跨租户；手工开通的租户能用该账号登录并看到菜单 | PR 3a ✅ |
-| **PR 4**<br>P1 下 | JGit 接入（依赖只落 `scaffold-lowcode`）；`repo_url` 协议白名单校验 + `ls-remote` 连通性检查；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单（代码里的显式白/黑名单）+ `scaffold-business` 空壳预置**；空仓库首次初始化（§6.3） | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止 | PR 3 |
+| **PR 4**<br>P1 下 | ✅ 已完成（2026-11-04）：JGit 依赖只落 `scaffold-lowcode`（7.7.1 + `ssh.apache`）；`ls-remote` 连通性检查（只读，不改生命周期）；工作区卷与 Maven/npm 缓存卷；**§6.4 裁剪清单代码化**（`ScaffoldTrimPolicy` 路径白/黑名单 + `scaffold:platform-only` 标记块 + 交付产物的平台残留引用扫描）+ `scaffold-business` 空壳预置；空仓库首次初始化（未出生 HEAD、显式 `refs/heads/{gen_branch}`、推完回读校验）与 `sync_status` 推进、`sync_message` 失败原因（V7）。初始化同步执行，不引入异步任务表 | 对一个真实空仓库跑通「绑定 → clone → 全量提交固定代码 → 推 `gen_branch` → `sync_status=2`」；**裁剪后的项目能编译、能起、能登录，且不含 `views/tool` 与 `lc_*` 表**；`file://` 等非法 URL 被拒；未推送提交时重建工作区被阻止。**实测补记**：交付快照 282 个文件离线 `mvn package` 通过、前端 `npm ci` + `vite build` 通过、用交付侧 V1–V3 建新库能起能登录，菜单里没有 `/tool` 与 `/lowcode`；`lc_tenant` 因登录链路每次都要查租户状态而保留（§6.4 已回写）。**待做一次真机推送**：对真实租户仓库点「初始化固定代码」，同时验证部署密钥与 `known_hosts` | PR 3 |
 | **PR 4B**<br>P1.5 | **抽 `@scaffold/ui`**：`packages/scaffold-ui` + npm workspaces；73 组件 + 17 composable + 7 个 css（合并为 `theme.css`）迁入；`installScaffoldUi(app, {http, permission, dict})` 注入点；解 28 处 app 层 import；平台/演示专属组件划出包外；打 tag 发布，宿主与文档改依赖。**分两步提交**：先搬路径建 workspace（行为不变），再改注入点解耦 | 平台自身跑通且行为无回归（`vue-tsc` + 现有测试全绿）；148 处引用中不再有组件间 `@/` 互引；包被一个最小 demo app 以 git tag 依赖消费成功 | PR 3，**必须在 PR 5 之前** |
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@scaffold/ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |

@@ -58,6 +58,11 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: ""
       CAPTCHA_ENABLED: ${CAPTCHA_ENABLED:-true}
+      # scaffold:platform-only:start 低代码平台侧参数，交付项目里这一段会被裁掉
+      LOWCODE_WORKSPACE_ROOT: /var/lib/yuanda/workspace
+      LOWCODE_SCAFFOLD_SOURCE_ROOT: /var/lib/yuanda/scaffold-src
+      LOWCODE_GIT_SSH_HOME: /root
+      # scaffold:platform-only:end
       TZ: Asia/Shanghai
     depends_on:
       redis:
@@ -66,6 +71,17 @@ services:
       mysql:
         condition: service_healthy
         required: false
+    # scaffold:platform-only:start 低代码平台的工作区与构建缓存：项目 clone、底座 checkout、
+    # Maven 与 npm 缓存、主机 SSH 密钥。交付项目里后端不需要任何挂载，整段裁掉。
+    volumes:
+      - lowcode-workspace:/var/lib/yuanda/workspace
+      # 底座源码 checkout：交付快照按裁剪清单从这份代码里读，只读挂载
+      - ${LOWCODE_SCAFFOLD_SRC:-./}:/var/lib/yuanda/scaffold-src:ro
+      - maven-repo:/root/.m2/repository
+      - npm-cache:/root/.npm
+      # 仓库凭据走主机密钥：私钥需无口令或经 ssh-agent，known_hosts 必须预置目标主机指纹
+      - ${LOWCODE_SSH_DIR:-/root/.ssh}:/root/.ssh:ro
+      # scaffold:platform-only:end
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/health"]
       interval: 15s
@@ -87,3 +103,8 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  # scaffold:platform-only:start 平台侧持久卷：工作区丢了可以从「clone + 全量重生成」重建，但构建缓存丢了每次生成都要全量重下依赖
+  lowcode-workspace:
+  maven-repo:
+  npm-cache:
+  # scaffold:platform-only:end

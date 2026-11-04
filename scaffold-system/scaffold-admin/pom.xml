@@ -24,12 +24,20 @@
         </dependency>
         <dependency>
             <groupId>com.scaffold</groupId>
+            <artifactId>scaffold-business</artifactId>
+        </dependency>
+        <!-- scaffold:platform-only:start scaffold-generator 是平台侧能力，交付项目不带 -->
+        <dependency>
+            <groupId>com.scaffold</groupId>
             <artifactId>scaffold-generator</artifactId>
         </dependency>
+        <!-- scaffold:platform-only:end -->
+        <!-- scaffold:platform-only:start scaffold-lowcode 是平台侧能力，交付项目不带 -->
         <dependency>
             <groupId>com.scaffold</groupId>
             <artifactId>scaffold-lowcode</artifactId>
         </dependency>
+        <!-- scaffold:platform-only:end -->
         <dependency>
             <groupId>com.github.xiaoymin</groupId>
             <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>

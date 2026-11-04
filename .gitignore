@@ -46,3 +46,7 @@ scaffold-vue/.tmp-*
 # 前端品牌配置与业务类型是必要源码，覆盖本机可能存在的 data/ 全局忽略。
 !/scaffold-vue/src/data/
 !/scaffold-vue/src/data/**
+
+# 低代码平台本地工作区（项目 clone 目录），默认相对后端进程工作目录，不入库
+/lowcode-workspace/
+**/lowcode-workspace/

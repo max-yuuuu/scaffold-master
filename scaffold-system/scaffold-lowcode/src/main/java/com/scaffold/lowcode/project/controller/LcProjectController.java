@@ -9,6 +9,7 @@ import com.scaffold.framework.web.CsvResponse;
 import com.scaffold.lowcode.project.domain.ProjectStatusRequest;
 import com.scaffold.lowcode.project.domain.ProjectWriteRequest;
 import com.scaffold.lowcode.project.service.LcProjectService;
+import com.scaffold.lowcode.workspace.ProjectRepositoryService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,9 +33,11 @@ import java.util.Map;
 public class LcProjectController {
 
     private final LcProjectService service;
+    private final ProjectRepositoryService repositoryService;
 
-    public LcProjectController(LcProjectService service) {
+    public LcProjectController(LcProjectService service, ProjectRepositoryService repositoryService) {
         this.service = service;
+        this.repositoryService = repositoryService;
     }
 
     @GetMapping
@@ -92,5 +95,36 @@ public class LcProjectController {
     public R<Void> delete(@PathVariable Long id) {
         service.delete(id);
         return R.success(null);
+    }
+
+    /** 仓库连通性检查：只读远端引用，不改项目状态（方案 §6.2 第 1 步） */
+    @PostMapping("/{id}/repo/check")
+    @RequiresPermission("lowcode:project:sync")
+    @OperLog(module = "项目管理", action = "检查仓库连通性")
+    public R<Map<String, Object>> checkRepo(@PathVariable Long id) {
+        return R.success(repositoryService.check(id));
+    }
+
+    /** 首次初始化：clone（空仓库走未出生 HEAD）→ 写固定代码 → 提交 → 推发布分支 → 回读校验 */
+    @PostMapping("/{id}/initialize")
+    @RequiresPermission("lowcode:project:sync")
+    @OperLog(module = "项目管理", action = "初始化固定代码")
+    public R<Map<String, Object>> initialize(@PathVariable Long id) {
+        return R.success(repositoryService.initialize(id));
+    }
+
+    /** 工作区读数：路径、是否脏、有没有未推送提交 */
+    @GetMapping("/{id}/workspace")
+    @RequiresPermission("lowcode:project:list")
+    public R<Map<String, Object>> workspace(@PathVariable Long id) {
+        return R.success(repositoryService.workspace(id));
+    }
+
+    /** 清空工作区：有未提交改动或未推送提交时拒绝执行，平台不静默丢人的代码 */
+    @DeleteMapping("/{id}/workspace")
+    @RequiresPermission("lowcode:project:sync")
+    @OperLog(module = "项目管理", action = "重建工作区")
+    public R<Map<String, Object>> resetWorkspace(@PathVariable Long id) {
+        return R.success(repositoryService.resetWorkspace(id));
     }
 }
