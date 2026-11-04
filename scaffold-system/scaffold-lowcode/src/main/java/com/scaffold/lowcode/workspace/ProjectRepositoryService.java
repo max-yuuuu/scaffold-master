@@ -144,6 +144,7 @@ public class ProjectRepositoryService {
 
             String commitSha;
             int fileCount;
+            int pruned = 0;
             if (refs.isEmpty()) {
                 // §6.3 空仓库：clone 得到的是没有 HEAD 的未出生状态，直接在目标分支上提交第一次
                 gateway.initEmpty(workspace, repoUrl, genBranch);
@@ -164,6 +165,9 @@ public class ProjectRepositoryService {
                 String startPoint = "origin/" + (branches.contains(genBranch) ? genBranch : mainBranch);
                 gateway.checkoutBranch(workspace, genBranch, startPoint);
                 fileCount = ScaffoldSnapshotWriter.write(workspace, snapshot);
+                // 发布分支由平台维护，快照就是它应有的全量内容：上一版遗留的文件（如抽包前的组件源码拷贝）
+                // 必须一起删，否则项目里会同时存在「npm 包里的组件」和「本地拷贝的组件」两份物料
+                pruned = ScaffoldSnapshotWriter.pruneOutsideSnapshot(workspace, snapshot);
                 ProjectMarker.write(workspace, text(project.get("projectCode")), text(project.get("projectName")),
                         baseScaffoldSha, mainBranch, genBranch);
                 commitSha = gateway.commitAll(workspace, commitMessage(project, "同步底座固定代码"));
@@ -185,8 +189,9 @@ public class ProjectRepositoryService {
                 throw new WorkspaceGitException(ProjectSyncStatus.DIVERGED,
                         "推送后回读远端 " + genBranch + " 得到的提交是 " + confirmed + "，与本次提交 " + commitSha + " 不一致");
             }
-            update(projectId, ProjectSyncStatus.READY, "固定代码已推送到 " + genBranch, relativePath,
-                    baseScaffoldSha, commitSha, true, operator);
+            update(projectId, ProjectSyncStatus.READY,
+                    "固定代码已推送到 " + genBranch + (pruned > 0 ? "，并清理快照外旧文件 " + pruned + " 个" : ""),
+                    relativePath, baseScaffoldSha, commitSha, true, operator);
             return result(project, ProjectSyncStatus.READY, "初始化完成", relativePath, fileCount, commitSha);
         } catch (WorkspaceGitException e) {
             update(projectId, e.getSyncStatus(), e.getMessage(), null, null, null, false, operator);
@@ -248,7 +253,19 @@ public class ProjectRepositoryService {
         String genBranch = requireBranch(project.get("genBranch"));
         Path workspace = workspaceRoot.resolve(workspaceRelativePath(project));
         if (!Files.isDirectory(workspace)) {
-            throw new BusinessException("工作区不存在，无需重建");
+            // 目录不在（换过服务器、清过卷，或手工删过目录）而状态还停在就绪，项目会被两端守卫同时挡死：
+            // 「已就绪不许再初始化」+「没有工作区不许清空」。这里只把平台侧状态清回未初始化，
+            // 远端分支与已推送内容一概不动，因此不需要脏工作区/未推送提交那些守卫。
+            if (number(project.get("syncStatus"), ProjectSyncStatus.UNINITIALIZED) == ProjectSyncStatus.UNINITIALIZED) {
+                throw new BusinessException("工作区不存在，无需重建");
+            }
+            update(projectId, ProjectSyncStatus.UNINITIALIZED, "工作区目录不在，状态已重置，可重新初始化",
+                    null, null, null, false, operator());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("path", workspaceRelativePath(project));
+            result.put("cleared", true);
+            result.put("syncStatus", ProjectSyncStatus.UNINITIALIZED);
+            return result;
         }
         if (!running.add(projectId)) {
             throw new BusinessException("同一项目的仓库动作正在执行中，请稍后重试");

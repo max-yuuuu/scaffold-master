@@ -230,13 +230,19 @@ const syncState = computed(() => repo.value?.syncStatus ?? 0)
 /** 未初始化与上次不可达都可以推固定代码；就绪与初始化中不行 */
 const canInitialize = computed(() => syncState.value === 0 || syncState.value === 5)
 
-/** 只有工作区真的存在才给「清空工作区」入口 */
-const canResetWorkspace = computed(() => Boolean(workspace.value?.exists))
+/** 工作区在 → 给「清空工作区」；工作区已不在但状态还记着就绪/异常也要给，
+    否则项目被「已就绪不许再初始化」和「没有工作区不许清空」两头挡死（换服务器、清过卷就会遇到） */
+const canResetWorkspace = computed(() => Boolean(workspace.value?.exists) || syncState.value !== 0)
 
 /** 顶部一句话说清当前能做什么，比让人对着按钮猜 */
 const statusHint = computed(() => {
   if (syncState.value === 1) return '正在读写远端仓库，这一步完成前不要再触发其他仓库动作'
-  if (syncState.value === 2) return '固定代码已在发布分支上；平台不再覆盖 A 档文件，要重来先清空工作区'
+  if (syncState.value === 2) {
+    if (workspace.value && !workspace.value.exists) {
+      return '状态仍是就绪，但服务器上的工作区目录已不在；先清空工作区把状态重置回未初始化，再重新初始化'
+    }
+    return '固定代码已在发布分支上；平台不再覆盖 A 档文件，要重来先清空工作区'
+  }
   if (syncState.value === 3) return '平台工作区有未提交改动，先处理掉再推，平台不会覆盖它们'
   if (syncState.value === 4) return '远端与本地不一致（分支保护或历史分叉），需在仓库侧处理后重试'
   if (syncState.value === 5) return '上次没能连上仓库，按下面的原因处理后重试'

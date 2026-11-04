@@ -2,6 +2,7 @@ package com.scaffold.admin;
 
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.RemoteRef;
+import com.scaffold.lowcode.workspace.ScaffoldSnapshotWriter;
 import com.scaffold.lowcode.workspace.ScaffoldTrimPolicy;
 import com.scaffold.lowcode.workspace.WorkspaceGitException;
 import org.junit.jupiter.api.AfterEach;
@@ -103,6 +104,34 @@ class ProjectWorkspaceApiTest {
     }
 
     @Test
+    void 非空仓库全量初始化会清掉快照外的旧物料文件() {
+        String admin = platformToken();
+        String code = newCode("itlegacy");
+        long id = createProject(admin, code, REPO);
+        try {
+            // 远端已有主干与发布分支，clone 出来的是「抽包前的旧形态」：组件源码被拷在项目里
+            gateway.remoteRefs = List.of(new RemoteRef("refs/heads/main", "1".repeat(40)),
+                    new RemoteRef("refs/heads/platform-generated", "2".repeat(40)));
+            gateway.legacyFormOnClone = true;
+
+            ResponseEntity<Map<String, Object>> response = post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(dataOf(response.getBody())).containsEntry("syncStatus", 2);
+
+            Path workspace = workspaceRoot().resolve(workspaceRelative(code));
+            // 快照内的东西在
+            assertThat(Files.isRegularFile(workspace.resolve("README.md"))).isTrue();
+            assertThat(Files.isRegularFile(workspace.resolve("scaffold-vue/src/components/layout/AppShell.vue"))).isTrue();
+            // 快照外的旧拷贝必须一起删干净，否则项目里两份物料并存（抽包就白做了）
+            assertThat(Files.isRegularFile(workspace.resolve("scaffold-vue/src/components/business/ListPage.vue"))).isFalse();
+            assertThat(Files.isDirectory(workspace.resolve("scaffold-vue/src/components/business"))).isFalse();
+            assertThat(String.valueOf(projectRow(id).get("sync_message"))).contains("清理快照外旧文件");
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
     void 仓库不可达时状态与原因都写进项目() {
         String admin = platformToken();
         String code = newCode("itreach");
@@ -174,6 +203,42 @@ class ProjectWorkspaceApiTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
             assertThat(messageOf(response)).contains("未推送提交");
             assertThat(Files.isDirectory(workspaceRoot().resolve(workspaceRelative(code)))).isTrue();
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    @Test
+    void 工作区目录丢失时清空动作把状态重置回未初始化() {
+        String admin = platformToken();
+        String code = newCode("itlost");
+        long id = createProject(admin, code, REPO);
+        try {
+            gateway.remoteRefs = List.of();
+            assertThat(post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+            Path workspace = workspaceRoot().resolve(workspaceRelative(code));
+            // 换服务器 / 清过卷 / 手工删过目录：远端内容还在，但本地工作区没了
+            ScaffoldSnapshotWriter.deleteWorkspace(workspace);
+            assertThat(Files.isDirectory(workspace)).isFalse();
+            assertThat(projectRow(id)).containsEntry("sync_status", 2);
+
+            ResponseEntity<Map<String, Object>> response = delete("/api/lowcode/projects/" + id + "/workspace", admin);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            Map<String, Object> row = projectRow(id);
+            assertThat(row).containsEntry("sync_status", 0);
+            assertThat(String.valueOf(row.get("sync_message"))).contains("状态已重置");
+
+            // 重置过一次之后再来一次才是真的无事可做
+            ResponseEntity<Map<String, Object>> again = delete("/api/lowcode/projects/" + id + "/workspace", admin);
+            assertThat(again.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+            assertThat(messageOf(again)).contains("无需重建");
+
+            // 状态回到未初始化后，初始化入口重新可用（远端非空走全量同步分支，仓库要认得出脚手架）
+            gateway.legacyFormOnClone = true;
+            gateway.remoteRefs = List.of(new RemoteRef("refs/heads/main", "1".repeat(40)));
+            assertThat(post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(Files.isRegularFile(workspace.resolve("README.md"))).isTrue();
+            assertThat(Files.isRegularFile(workspace.resolve("scaffold-vue/src/components/business/ListPage.vue"))).isFalse();
         } finally {
             cleanup(code, id);
         }
@@ -364,6 +429,8 @@ class ProjectWorkspaceApiTest {
         WorkspaceGitException transportFailure;
         String localShaOverride;
         boolean dirty;
+        /** clone 出来的仓库按「抽包前的旧形态」铺几个文件，用来验全量初始化会清理快照外的遗留 */
+        boolean legacyFormOnClone;
         final List<String> pushedBranches = new ArrayList<>();
 
         void reset() {
@@ -371,6 +438,7 @@ class ProjectWorkspaceApiTest {
             transportFailure = null;
             localShaOverride = null;
             dirty = false;
+            legacyFormOnClone = false;
             pushedBranches.clear();
         }
 
@@ -390,6 +458,16 @@ class ProjectWorkspaceApiTest {
         @Override
         public void cloneBranch(Path dir, String repoUrl, String branch) {
             touchRepo(dir);
+            if (legacyFormOnClone) {
+                // 模拟抽包之前推出去的旧形态：认得出脚手架（marker），但组件源码是拷进项目的
+                try {
+                    Files.createDirectories(dir.resolve("scaffold-vue/src/components/business"));
+                    Files.writeString(dir.resolve("scaffold-vue/src/components/business/ListPage.vue"), "<template>旧拷贝</template>");
+                    Files.writeString(dir.resolve(ScaffoldTrimPolicy.MARKER_FILE), "{\"projectCode\":\"x\"}");
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }
         }
 
         /** 假远端只补一个 .git 目录，让「工作区是不是已就绪的仓库」这个判断在测试里也成立 */
