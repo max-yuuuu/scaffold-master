@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-04（PR 5E：A/B/C 分档落成代码、C 档扩展点骨架、两条 sink）
+
+模板链到这里收成一个出口：`ModelCodeGenerator.renderFiles(项目行, 模型行, 字段行)` → `List<GeneratedFile>`，两条 sink 吃同一份产物（方案 §4.4「生成逻辑不动，只换 sink」）。
+
+- **档位是从路径反推的，不是模板自述的**：`GeneratedPaths` 把方案 §4.3 那张表落成代码，`GeneratedFile.of(path, content)` 是唯一构造入口，档位由 `GeneratedPaths.tier(path)` 判。理由是让「这次发布会不会覆盖这个文件」只有一个出处 —— 模板各自声明档位，就要人工在 11 份 .ftl 和分档表之间对齐，错一次就冲掉人的代码。判档用**白名单形状匹配**（正则逐条列 B/C 的形状）而不是前缀排除：`scaffold-vue/src/api/` 前缀下就住着 A 档的 `index.ts` 汇总出口，按前缀放行等于把 §10.2 第 ⑤ 条的约定写破。认不出来的路径当场抛错，消息里点名 A 档都有哪些。`{Cls}Extension.java` 也落在 `service/` 下，形状是 B 档的子集，所以 C 档先判。
+- **C 档骨架 = `backend/Extension.java.ftl`**：七个钩子 —— `afterRows(List<Row>)` 一个（列表与导出共用）、create/update/delete 各 `before*` / `after*`。B 档 `Service` 的构造器把它当依赖（`OrderService(OrderMapper, OrderExtension)`）并逐个调用。这是方案 §5.2「钩子方法签名是平台契约，改名或删方法下次发布直接编译失败（可见失败优于静默改行为）」的落地：契约成立的前提是两边都生成、都进同一次发布，`GeneratedCodeCompilesTest` 现在把 7 个 java 文件一起交给 javac，就是这个保证。骨架里写明**钩子都在 Service 的 `@Transactional` 里跑**，`after*` 抛异常会连带回滚 —— 「先落库再通知外部系统」得自己处理补偿，这条不写人就当 `after` 是提交后执行。
+- **两条 sink 的语义**：`GeneratedFileWriter`（git 侧，落进工作区）按档走 —— B 档整文件覆盖、C 档「存在即跳过」，返回每个产物 `CREATED` / `OVERWRITTEN` / `SKIPPED` 供发布日志汇总；落盘前再判一次路径不越出工作区（`resolve` 遇上绝对路径会直接丢掉工作区前缀，这层不看模板而看磁盘）。`GeneratedFileZip`（zip 侧，给人手工取产物）**照样带着 C 档骨架、不做跳过** —— 下载方要不要覆盖自己那份扩展点由人判断，平台在这条路上代替不了。
+- **「存在即跳过」有一条前提，写在 javadoc 里而不是藏起来**：调用方给的工作区必须反映项目当前的内容。发布分支落后主干时，主干上人工改过的扩展类在这份工作区里不存在，骨架会被重新生成，两边在合并请求里以 `both added` 冲突暴露 —— 不静默丢代码，但要 PR 7 组工作区时把这条做对。
+- **明确拒绝两个还没实现的模型开关**：`isTree` / `enableDataScope` 在 `renderFiles` 进模板**之前**抛错，消息指向 C 档手写或取消勾选。不选「忽略勾选、把能生成的生成出来」：那两个开关是人在设计器里明确表达的需求，静默忽略等于交付一个「看着配置对了、实际没有」的项目，比报错更难发现。库里那两列的注释还留着「生成 /tree 接口」「生成 @DataScope」的说法，本期不改表（注释记的是列的设计意图，边界当前写在生成入口与 UI 上，比 ALTER 一次 COMMENT 更靠近读的人）；`models.vue` 两个开关的 hint 改成「本期不生成：勾选后发布会被拒绝」。
+- 验证：新增 `GeneratedPathsTest` 5、`ModelCodeGeneratorTest` 5、`ExtensionContractTest` 4、`GeneratedFileWriterTest` 4、`GeneratedFileZipTest` 3，共 **21 例**；`GeneratedCodeCompilesTest` 改吃 `renderFiles` 的出参（不再自己维护一份模板清单），`TemplateFixture` 里没人用的 `BACKEND_TEMPLATES` 常量删掉。`ExtensionContractTest` 那条「Service 里出现的每个 `extension.xxx(...)` 都能在骨架里找到同名同参声明」是扫渲染结果得出的，不抄签名，所以模板改一边就会红。后端全量 **202 例**（common 8 + framework 17 + lowcode 94 + admin 83）`mvn test` BUILD SUCCESS。
+- **未做**：产物预览与 zip 下载还没有前端消费方（`renderFiles` 的两个调用方是 PR 5F 的老生成器与 PR 7 的发布链路），所以这一步不加平台侧的 preview 接口；前端 `overrides/` 只在分档表里认下形状（让 §5.2 的 C 档定义完整、PR 6 的 `custom:{name}` 桩有合法落点），**加载与覆写机制仍未定**（方案 §10.2 开放项 3）。
+
 ## 2026-11-04（PR 5D：前端两份模板，产物在宿主里过了 vue-tsc）
 
 `frontend/Api.ts.ftl`（→ `src/api/{module}/{resource}.ts`）与 `frontend/ListView.vue.ftl`（→ `src/views/{module}/{Cls}.vue`）。写之前先把底座的真实写法读了一遍：`views/lowcode/models.vue` 的 ListPage 版式、`composables/list.ts` 的 `useListPage` 契约（含 `exporter` / `exportName` / `params()` 丢空值）、`utils/validate.ts` 的 `validate(form, rules)`、`DictTag` 的 `{type, value}`、`composables/auth.ts` 的 `resolveComponent` → `../views/${component}.vue`。
