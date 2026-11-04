@@ -836,6 +836,7 @@ scaffold-system/scaffold-lowcode/src/main/resources/templates/lowcode/
 | Service | 单类，无 interface + impl；构造器注入 Mapper 与 **C 档 `{Cls}Extension`** |
 | 命名 | `{Cls}` / `{Cls}WriteRequest` / `{Cls}Row`（不再有 `VO` / `DTO` / `Query` / `types.ts`） |
 | 接口路径 | 单数 `/{module}/{resource}`，`resource` 用蛇形（`/api/sales_order/sales_order`） |
+| 品牌与话术 | 交付项目的登录页、侧栏与浏览器标签读 `scaffold-vue/src/data/index.ts` 那一份 `APP`，初始化时按 `lc_project.project_name` 改写（交付改写表里那条 `{PROJECT_NAME}`）；生成物注释写「低代码设计器」而不是平台名，也不引用交付清单里没有的本文档章节。守卫在 `ScaffoldSnapshotPlanner`：交付产物里出现平台品牌关键字就当场拒绝初始化 |
 | 前端物料 | 一律从 `@yuanda-lowcode-ai/scaffold-ui` 的子路径引，业务接口直引 `@/api/{module}/{resource}`，不经过 `@/api` 汇总出口（A 档） |
 | 版式 | `ListPage` + `useListPage`（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），弹窗内联在同一个 `.vue` |
 | 新增还是编辑 | 由一个独立的 `editing` ref 记着主键值，不借表单里某个字段的值猜 —— 主键可能根本不进表单（自增），也可能由人填（业务编号） |
@@ -874,7 +875,7 @@ import java.math.BigDecimal;
 /**
  * 销售订单主表（表 {@code sales_order}）的接口。
  *
- * <p>本类由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖，要加接口请回到设计器，
+ * <p>本类由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖，要加接口请回到设计器，
  * 或在同包的 {@code SalesOrderExtension}（C 档）里做，别在这里塞业务分支。
  *
  * <p>五个入口固定成一套（列表 / 导出 / 新增 / 修改 / 删除），路径与权限点由模型编码派生；
@@ -963,10 +964,10 @@ import { required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validat
 import { salesOrderApi, type SalesOrderRow, type SalesOrderWriteRequest } from '@/api/sales_order/sales_order'
 
 /* ============================================================
-   销售订单主表管理。由元搭低代码平台按模型定义生成，属 B 档：每次发布整文件覆盖。
+   销售订单主表管理。由低代码设计器按模型定义生成，属 B 档：每次发布整文件覆盖。
    版式固定走 ListPage + useListPage（查询 / 重置 / 分页 / 导出 / 行操作都是公共能力），
    页面只声明字段、列与动作。要加区块写到 src/views/sales_order/overrides/ 里；
-   整页接管见方案 §5.2 —— 那个页面从此脱离平台托管。
+   要长期人工接管这一页，就把它改名并让发布不再产出它 —— 现在它每次发布都会被整文件覆盖。
    ============================================================ */
 
 type SalesOrderQuery = {
@@ -1029,7 +1030,7 @@ async function submit() {
 </script>
 
 <template>
-  <ListPage title="销售订单主表管理" desc="本页由元搭低代码平台按模型定义生成；要改字段回到设计器改模型再发布。"
+  <ListPage title="销售订单主表管理" desc="本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。"
             table-title="销售订单列表" :list="list" :columns="columns">
     <template #actions>
       <PermissionButton perm="sales_order:sales_order:add" variant="primary" icon="plus" @click="openCreate">新增销售订单</PermissionButton>
@@ -1391,6 +1392,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 
 `lc_project.base_scaffold_sha`（§2.2）记录该项目快照取自本仓库哪个提交，用于日后判断"这个项目落后多少"，也是 §〇 方案②（用合并请求下发 A 档升级）的起点；交付项目根上的 `.scaffold-project.json` 里写同一份提交号，两边互相能核对。
 
+6. **交付品牌跟着项目走（PR 5G 真机演练后补，2026-11-04）**。演练时看见的客户项目登录页写着「元搭低代码平台」、侧栏写着「元搭低代码」，还宣传「代码生成」这个已被裁掉的功能 —— 交付的是项目自己的后台，不是平台的副本，所以这是缺陷不是外观。做法是给交付改写表再加两条：`scaffold-vue/src/data/index.ts` 里 `APP.name` / `APP.shortName` 两行换成 `{PROJECT_NAME}`（初始化时按 `lc_project.project_name` 填，空名拒绝交付；自由文本进 TS 字面量前转义引号与反斜杠），`views/Login.vue` 的「代码生成」那条能力直接删。底座自己那份不动，平台界面仍显示平台名。同一层守卫扩到品牌：交付产物里出现平台品牌关键字就当场拒绝初始化。**连带改了生成物话术** —— 11 份模板的注释与页面文案原样写着「由元搭低代码平台按模型定义生成」，「整页接管见方案 §5.2」引用的又是交付清单里不存在的本文档章节，统一换成「由低代码设计器按模型定义生成」与一句能执行的话；这条由 `ModelCodeGeneratorTest` 扫产物断言（改实现前它是红的，红得正好：列出的就是模板原话）。注意品牌改写属 A 档，**存量项目要等 PR 8 的底座升级才拿得到**。
+
 ---
 
 ## 七、技术架构总览
@@ -1532,7 +1535,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **PR 5**<br>P3 | FreeMarker 模板引擎替换 `GeneratorService` 的 StringBuilder；A/B/C 文件分档与 C 档扩展点骨架；`renderFiles()` 出参提为公共类型，zip sink 与 git sink 并存；**模板产物 import 走 `@yuanda-lowcode-ai/scaffold-ui`** | 生成的代码能编译、`vue-tsc` 通过；产物与 `scaffold-system` 现有同类文件逐行比对达到同等质量；zip 下载行为不回退 | PR 3（可与 PR 4 并行）、**PR 4B** |
 | ↳ 5A–5E | ✅ 已完成（2026-11-04，分片进度与踩坑见 `changelog.md`）：5A 渲染骨架 + 实体（`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`，否则 MyBatis 的 `#{}` 被引擎吃掉）；5B 后端 CRUD 五套 + `SqlIdentifiers` 保留字拦截 + 生成前守卫；5C 建表与菜单种子（真机在一个临时库里各跑两遍验幂等）；5D 前端接口与列表页（产物塞进宿主跑 `vue-tsc` + `vite build` 验）；**5E 分档落成代码** —— `GeneratedPaths` 持路径表并按路径白名单反推档位、`ModelCodeGenerator.renderFiles()` 出 `List<GeneratedFile>`、`{Cls}Extension` 七钩子骨架与 B 档调用点、`GeneratedFileZip` / `GeneratedFileWriter` 两条 sink、`is_tree` / `enable_data_scope` 明确拒绝 | 常驻测试 `GeneratedCodeCompilesTest` 把 7 个 java 产物按交付路径落盘后真起 javac（审计×逻辑删除四种组合）；`ExtensionContractTest` 扫渲染结果核对钩子契约；后端 202 例全绿 | — |
 | ↳ 5F | ✅ 已完成（2026-11-04）：老 `GeneratorService` 的 StringBuilder 全删，改由 `ImportedTableInput` 把 `gen_table` / `gen_table_column` 适配成模型形状后吃同一套模板；`javaType()` / `formType()` 并入 `FieldType.ofColumn`（连带补 `FieldType.LONG` 与 `FormType.code()`），`date` 两条链路都是 `LocalDate`；主键 / 自增 / 可空 / 长度 / 精度改为现查 `information_schema`（不再靠列名叫 `id` 猜），表已不存在时拒绝生成；审计四列齐且类型对才交给模板、`deleted` → 逻辑删除、`tenant_id` 只读不进列表；`LIKE` 只给文本列 | zip 下载与预览两个入口都在且**产物是交付形状**：`GeneratorImportApiTest` 4 例（含 zip 内 7 个 java 真起 javac、菜单 SQL 在真库执行后回滚）+ `ImportedTableInputTest` 6 例 + `FieldTypeTest` 反推表 2 例；后端 212 例全绿 | 5E |
-| ↳ 5G | ✅ 已完成（2026-11-04）。**发布与合并属 PR 7 / PR 8，还没实现，所以这一趟是「已有各段全用真东西，人肉补上发布那一跳」**：真实交付快照 + 真实模型接口 + 真实工作区提交 + 空目录 clone 真实 GitHub 仓库 + `docker compose --profile mysql up -d --build` 四个服务全 healthy，生成的两份 SQL 手工执行两遍验幂等，浏览器里走完登录 → 菜单 → 页面 → 新增（弹窗无主键格）→ 列表 → 修改 → 唯一查重 → 必填校验 → 导出 → 逻辑删除。§4.1 的模板清单与 §4.2 的示例改成实际产物原文（示例那个模型就是演练用的「销售订单」）。新增常驻端到端 `DeliveryGenerationApiTest`（交付快照 + 生成落盘 + 前端实物引用 + 菜单/权限点一致 + 二次发布 B 覆盖 C 跳过，5 例） | **一趟撞出六处「编得过、单测绿、真机才炸」的接缝缺陷**：① `NumberInput` 不带 `precision` → 金额 1234.5 被静默抹成 1235（数据错且不报错）；② 自增主键进表单 + 页面类型里 `id` 声明两遍 → 交付项目 `vue-tsc` 报错，前端镜像构建不出来；③ `@Options(keyProperty = "id")` 在多参数方法上回写不了自增号 → 第一次「新增」500；④ 列表与导出不带审计列 → 页面「创建时间」一列恒空；⑤ CSV 里时间是 ISO 带 `T` 的写法，与页面两种口径；⑥ 页面 `@/api` 引用用驼峰而文件落点是蛇形（单字词夹具看不出）。顺带定死两条边界：只支持数字主键、`lc_field.column_type` 已是完整写法不再二次拼长度。另发现交付链两处 A 档要改（Dockerfile 缺 Maven 依赖缓存挂载：第一次构建 14 分钟、加挂载后 4.7 秒；`CsvUtils` 时间口径），存量项目要等 PR 8 的底座升级下发 | 5F |
+| ↳ 5G | ✅ 已完成（2026-11-04）。**发布与合并属 PR 7 / PR 8，还没实现，所以这一趟是「已有各段全用真东西，人肉补上发布那一跳」**：真实交付快照 + 真实模型接口 + 真实工作区提交 + 空目录 clone 真实 GitHub 仓库 + `docker compose --profile mysql up -d --build` 四个服务全 healthy，生成的两份 SQL 手工执行两遍验幂等，浏览器里走完登录 → 菜单 → 页面 → 新增（弹窗无主键格）→ 列表 → 修改 → 唯一查重 → 必填校验 → 导出 → 逻辑删除。§4.1 的模板清单与 §4.2 的示例改成实际产物原文（示例那个模型就是演练用的「销售订单」）。顺带把两件事收进本 PR：交付品牌按 `project_name` 改写（登录页 / 侧栏 / 浏览器标签，见 §6.4 第 6 条）与生成物话术去平台名。新增常驻端到端 `DeliveryGenerationApiTest`（交付快照 + 生成落盘 + 前端实物引用 + 菜单/权限点一致 + 二次发布 B 覆盖 C 跳过，5 例） | **一趟撞出六处「编得过、单测绿、真机才炸」的接缝缺陷**：① `NumberInput` 不带 `precision` → 金额 1234.5 被静默抹成 1235（数据错且不报错）；② 自增主键进表单 + 页面类型里 `id` 声明两遍 → 交付项目 `vue-tsc` 报错，前端镜像构建不出来；③ `@Options(keyProperty = "id")` 在多参数方法上回写不了自增号 → 第一次「新增」500；④ 列表与导出不带审计列 → 页面「创建时间」一列恒空；⑤ CSV 里时间是 ISO 带 `T` 的写法，与页面两种口径；⑥ 页面 `@/api` 引用用驼峰而文件落点是蛇形（单字词夹具看不出）。顺带定死两条边界：只支持数字主键、`lc_field.column_type` 已是完整写法不再二次拼长度。另发现交付链两处 A 档要改（Dockerfile 缺 Maven 依赖缓存挂载：第一次构建 14 分钟、加挂载后 4.7 秒；`CsvUtils` 时间口径），存量项目要等 PR 8 的底座升级下发 | 5F |
 | **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；**发布前 C 档引用体检**（扫扩展代码对已删字段的引用，默认阻断，可显式放行） | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上；删掉字段后带着旧引用的扩展代码发布不出去 | PR 6 |
 | **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |

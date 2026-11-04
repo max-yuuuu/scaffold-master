@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-04（交付品牌跟着项目走，生成物话术里不再出现平台名）
+
+5G 真机演练时顺手看的一眼：客户项目的登录页大字写着「元搭低代码平台」、侧栏写着「元搭低代码」、浏览器标签是「销售订单主表 · 元搭低代码平台」，登录页还在宣传「代码生成 · 导入数据表」（那个页面属 `scaffold-generator`，交付时已被裁掉）。交付的是**这个项目自己的后台**，不是平台的一个副本，所以这不算外观问题。
+
+- **品牌只有一份**：`scaffold-vue/src/data/index.ts` 里的 `APP` —— `name` 进登录页大字与浏览器标签（`router/index.ts` 拼 `title · APP.name`），`shortName` 进侧栏。所以改写也只钉这一处：`ScaffoldTrimPolicy` 的交付改写表新增一条 `APP.name` / `APP.shortName` 两行，值用新占位符 `{PROJECT_NAME}`，由 `ScaffoldSnapshotPlanner.plan(sourceRoot, scaffoldUiVersion, projectName)` 在初始化时按 `lc_project.project_name` 填入 —— 底座那份照旧留着（平台自己的界面要显示平台名），只有交付出来那份被换掉。项目名是人在页面上打的自由文本，进 TS 单引号字面量前按 `tsLiteral` 把反斜杠和引号翻倍。项目名为空当场拒绝：交付一份没有名字的品牌比报错更难发现。
+- **不吹交付里没有的功能**：登录页 `CAPABILITIES` 里那条「代码生成」同样走改写表删掉 —— `scaffold-generator` 与 `views/tool` 在裁剪清单的黑名单里，留着就是向客户宣传一个点不开的菜单。
+- **生成物的话术跟着改**：11 份模板里的注释与页面文案原样写着「由元搭低代码平台按模型定义生成」，客户每天在自己的源码里读到平台名；「整页接管见方案 §5.2」更糟 —— 方案文档属平台、不进交付清单，读者按图索骥翻到一个不存在的文件。统一改成「由低代码设计器按模型定义生成」，§5.2 那句换成一句能执行的话（要长期接管就改名并让发布不再产出它）。
+- **守卫**：`ScaffoldSnapshotPlanner.validate` 多扫一组品牌关键字（`元搭低代码平台` / `元搭低代码`），交付产物里出现就拒绝初始化，消息说清要么补改写、要么把它裁掉 —— 与平台代码引用残留同一套做法。用例：`ScaffoldSnapshotPlannerTest` 新增 2 例（按项目名改写、交付里不出现平台品牌与被裁功能），`ModelCodeGeneratorTest` 新增 1 例（11 份产物不含品牌关键字与方案章节引用，**这条是先跑出红的**：改实现前它列出了模板里的原话），`DeliveryGenerationApiTest` 走真初始化链路再钉一遍（工作区里的 `data/index.ts` 是项目名、`Login.vue` 没有「代码生成」、生成物不含「元搭」与「方案 §」）。
+- **真机复核**：把那两条交付改写应用到还在跑的演练容器上重建前端镜像（`vue-tsc` + `vite build` 过），浏览器里 `document.title` = 「登录 · 订单中台」→ 登录后「工作台 · 订单中台」，侧栏大字 = 「订单中台」，能力条目只剩角色与按钮权限 / 数据权限 / 操作审计三条，生成页面的说明行是「本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。」，整页 `body.innerText` 里搜不到「元搭」。
+- 后端 **263 例**全绿（common 10 + framework 42 + lowcode 106 + generator 6 + admin 99）。品牌与话术属 A 档与产物文本：**存量项目要等 PR 8 的底座升级才拿得到品牌改写**，而它们已有的生成物注释里带着平台名，那部分只能靠下次发布覆盖 B 档文件时顺带改掉（C 档扩展点是人工写的，平台不碰）。
+
 ## 2026-11-04（PR 5G：端到端真机验证，一次跑撞出六处接缝缺陷）
 
 方案 §10.3 那条 5G 写的是「建项目 → 建模 → 生成 → 发布 → 合并 → 干净机器 `docker compose up`」。发布与合并是 PR 7 / PR 8 的范围，还没实现，所以这一步的实际形状是：**链路里已有的段全用真东西**（真实交付快照、真实模型接口、真实工作区提交、真实 GitHub 仓库的 clone、真实容器），只有「发布」那一跳由一次性脚本人肉顶上，跑完删除 —— 这趟演练的目的本来就是把接缝上的错找出来，顺便把 PR 7 要补什么钉清楚。
@@ -16,7 +27,7 @@
 - **交付链的两处 A 档改动**（要等底座升级下发给存量项目，属 PR 8 范围）：① `scaffold-system/Dockerfile` 的 `mvn package` 加 `--mount=type=cache,target=/root/.m2` —— 干净机器上第一次构建后端镜像光下载 Maven 依赖就 14 分钟（交付项目的 Dockerfile 没有依赖层，改一行业务代码就重下一遍），加挂载后同一趟构建 **4.7 秒**；② `CsvUtils` 的时间规范串。这两处不在页面发布权限内（B/C 档），项目侧要等一次底座升级才拿得到。
 - **真机验证记录**：空目录 `git clone` 交付仓库的 `platform-generated` → 写 `.env`（`WEB_PORT=8099`、`MYSQL_HOST_PORT=3327`，本机 3306/3316 都被占着）→ `docker compose --profile mysql up -d --build` 四个服务全 healthy，内置 MySQL 首次建卷自动导入 V1–V3 → 手工执行生成的 `sales_order_table.sql` 与 `sales_order_menu.sql`（客户端带 `--default-character-set=utf8mb4`，中文注释入库正常；**两遍执行结果一致**，菜单仍是 4 条、授权仍是 4 条，`SHOW CREATE TABLE` 与模板给的一致）→ 浏览器登录 → 侧栏出现「销售订单主表」→ 页面按 `ListPage` 版式渲染（查询区四个条件、八个列、导出 / 刷新 / 分页都在）→ 新增弹窗里没有主键格，填 `1234.5` 落库仍是 `1234.5` → 列表「创建时间」有值 → 修改 / 唯一列查重（400「订单编号已存在」）/ 必填校验（400「订单编号不能为空」）/ 导出 CSV（表头带「创建时间」）/ 删除后详情 400「销售订单不存在或已删除」而库里 `deleted=1` 行还在，全部走通。
 - 测试规模：后端 **260 例**全绿（common 10 + framework 42 + lowcode 103 + generator 6 + admin 99，基点已含 PR 9 那趟租户权限边界）；新增或改写的用例是 `DeliveryGenerationApiTest` 5、`CsvUtilsTest` 2、`FrontendTemplatesTest` +3（自增主键、业务主键、小数精度）、`CrudTemplatesTest` +1（审计列，另把导出那条的期望改成带「创建时间」）、`SqlTemplatesTest` +1（列类型已是完整写法）、`ModelCodeGeneratorTest` +2（引用落点、非数字主键拒绝）、`ModelApiTest` +1（自增主键的写入位被压掉）。
-- **没在这一步做的**：① 发布入口（`lc_publish_log`、哈希对比 no-op、C 档引用体检）仍是 PR 7；② 底座升级下发上面那两处 A 档改动是 PR 8；③ **交付项目的登录页与侧栏仍写着「元搭低代码平台」** —— 品牌配置 `scaffold-vue/src/data/index.ts` 是 A 档，初始化时没按项目名改写过，该由谁改、什么时候改是 PR 7/8 的一个待决项（`ProjectMarker` 里已经存了 `projectName`）；④ 前端 `overrides/` 的加载机制仍未定（§10.2 开放项 3）。
+- **没在这一步做的**：① 发布入口（`lc_publish_log`、哈希对比 no-op、C 档引用体检）仍是 PR 7；② 底座升级下发上面那两处 A 档改动是 PR 8；③ 交付项目的品牌与生成物话术还带着平台名 —— 已收在下一条（同日「交付品牌跟着项目走」）；④ 前端 `overrides/` 的加载机制仍未定（§10.2 开放项 3）。
 
 
 
