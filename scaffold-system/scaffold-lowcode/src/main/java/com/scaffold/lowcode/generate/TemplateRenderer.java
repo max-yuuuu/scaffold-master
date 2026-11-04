@@ -26,6 +26,9 @@ public class TemplateRenderer {
 
     public TemplateRenderer() {
         configuration = new Configuration(Configuration.VERSION_2_3_32);
+        // MyBatis 的参数占位写成 #{x}，而 FreeMarker 兼容模式下同样认 #{...} 是插值 ——
+        // 不显式锁定 dollar 语法，每一段生成的 SQL 都会被模板引擎当成自己的表达式解析掉。
+        configuration.setInterpolationSyntax(Configuration.DOLLAR_INTERPOLATION_SYNTAX);
         configuration.setClassLoaderForTemplateLoading(TemplateRenderer.class.getClassLoader(), TEMPLATE_BASE);
         configuration.setDefaultEncoding(StandardCharsets.UTF_8.name());
         configuration.setNumberFormat("computer");

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-04（PR 5B：后端 CRUD 五套模板，产物真编译）
+
+5A 只搭了骨架 + 实体，这一步把 `WriteRequest` / `Row` / `Mapper` / `Service` / `Controller` 四套补齐，并给每条口径找到出处。扩展点（`{Cls}Extension` 骨架与调用点）留到 5E —— 现在加会让这一步编译不过。
+
+- **口径来源**：先读底座自己的 CRUD 竖切（`SystemManagementController/Service/Mapper` 的岗位那五段 + `PostWriteRequest`）再定形状，落实 §10.2 已定的「生成物向底座看齐」。定下来的形状记在 `PROJECT_MAP.md` 的「生成物口径」条里：单类 Service；查询条件**逐个参数平铺**（不塞 Map、不造 Query 对象）；SQL 写成「参数为空就是不限制」的静态语句，不用 `<script>` 拼 WHERE，运算符只来自 `QueryType`；日期出入参在**生成字段上**写 `@JsonFormat`，钉成前端 `dateValue` 只认的 `yyyy-MM-dd` / `yyyy-MM-dd HH:mm:ss` 两种规范串（不改全局 Jackson —— 那是 A 档，平台不该为一个模型去动交付项目的序列化设置）；创建/更新时间交给表上的 `DEFAULT CURRENT_TIMESTAMP` / `ON UPDATE CURRENT_TIMESTAMP`；列表排序固定主键倒序，不猜「哪个字段才是排序列」。两处偏离底座并写了理由：区间查询拆 `xxxStart` / `xxxEnd`（`BETWEEN` 一端为空会整条失效），多选收逗号串走 `FIND_IN_SET`（注解 SQL 里省掉 `<foreach>`）。
+- **新增守卫**：`SqlIdentifiers` —— 生成物的表名与列名**不加反引号**（加了每行 SQL 都读不动），所以 MySQL 保留字必须在建模时拦住；接在 `LcModelService.requireUsableTable`（原 `requireUniqueTable`，顺带把两条表名检查合进一个名字）与 `LcFieldService.buildRow` 的列名派生处，整词判定、大小写无关，`order_no` / `description` 不受影响，报错带着可照着改的建议。`GenerationInput` 另加三条生成前拦截：没有主键、没有任何「可录入」字段、没有任何「可编辑」字段 —— 放过去就是缺列的残缺 INSERT / UPDATE。
+- **派生仍全在 Java 侧**：`GenerationInput` 新增 `queryConditions`（SQL 用的一组）与 `queryParams`（方法签名用的一组）、`insertFields` / `updateFields` / `rowFields` / `uniqueFields`、`entityVar`、`hasDateQuery`，以及**每个文件自己的 import**（`entityImports` / `rowImports` / `writeImports` / `queryParamImports`，不留无用 import）。共用片段收进 `_shared/`：`pojo.ftl`（字段块 + 访问器块，实体/行/入参三份共用）、`queryWhere.ftl`（count 与分页、导出同一段 WHERE）、`methodParams.ftl`（参数排版与 `declare`，零参数时收成一行 `name()`）。
+- **三个踩到的模板坑**（都改了模板并写进 `PROJECT_MAP.md`）：① FreeMarker 兼容模式同样认 `#{...}` 是插值，于是每段 MyBatis SQL 都被引擎当表达式解析报错 —— `TemplateRenderer` 显式锁 `DOLLAR_INTERPOLATION_SYNTAX`；② `.ftl` 里「整行只有 FTL 标签」才会被剥掉，所以循环续行的缩进必须写在**带真实内容的那一行**上（`SELECT` 与 `SET` 两处一开始写歪，续行挤到行首）；③ 条件里的空值判断要写 `#{x} IS NULL`，裸写 `x` 会被 MyBatis 当列名，运行期才炸。
+- **产物真编译做成常驻测试**：新增 `GeneratedCodeCompilesTest`，把渲染出的六个文件写到临时目录、用本模块测试的类路径（已含 `scaffold-common` + `scaffold-framework` + mybatis + spring，与交付项目 `scaffold-business` 那三个依赖同批）起 javac 真编一遍 —— 审计×逻辑删除四种组合全过。这个测试抓到了 `Mapper` / `Service` / `Controller` 缺 `BigDecimal` / `LocalDateTime` import 的问题，形状断言对这类错完全无感。夹具抽成 `TemplateFixture`（订单全套 + 最小模型），形状测试与编译测试吃同一份。
+- 验证：后端 **163** 用例全绿（`mvn test` BUILD SUCCESS；lowcode 38→55，新增 `CrudTemplatesTest` 12 + `GeneratedCodeCompilesTest` 2 + `SqlIdentifiersTest` 3，`ModelApiTest` 加两条保留字用例）。渲染产物肉眼复核过一遍（`/tmp/gen/out`）：注释带中文与列名/列类型、`#{}` 与参数名一一对应、软删与物删两条路。
+- **未落地**：模型的「树形」「数据权限」两个开关后端模板还没实现，5E 接进发布链路时要明确拒绝这两种组合，不能出一个静默忽略勾选的页面；`custom:{name}` 动作的 TODO 桩、`{Cls}Extension` 骨架与 A/B/C 分档同样留给 5E。
+
 ## 2026-11-04（底座升级的两个缺口：base 侧留痕落地 + 两条部署不变式）
 
 用户对 §5.2「A 档固定」提出两点质疑：① 配置文件与 app 壳不随发布更新，那平台级的框架迭代怎么下发到存量项目；② 模型删了字段而扩展代码还在引用，只靠交付时编译 + 合并时 diff 不友好。方案文档先按建议改定（A 档另设人工发起的「底座升级」动作 + 三方合并 + 合并请求人审；C 档发布前做引用体检、默认阻断；命名口径收口为 `{Cls}Extension`，`VO`/`Query`/`types.ts` 作废），随后追问「具体怎么升级」，暴露出两个真缺口，这一轮把它们处理掉。
