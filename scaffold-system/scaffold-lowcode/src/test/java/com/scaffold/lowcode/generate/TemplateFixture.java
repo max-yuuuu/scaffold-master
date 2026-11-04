@@ -57,8 +57,14 @@ final class TemplateFixture {
                 new Field("remark", "备注", "String", "text").input().build());
     }
 
-    /** 最小可用模型：一个主键 + 一个可写可查的名称，用来验各种「没有」的分支 */
-    static List<Map<String, Object>> simpleFields() {
+    /** 说明里带单引号的字段：SQL 字面量必须把引号翻倍，否则建表语句从中间被截断 */
+    static List<Map<String, Object>> quotedRemarkFields() {
+        return List.of(
+                new Field("id", "主键", "Long", "bigint").primary().autoIncrement().build(),
+                new Field("flag", "状态'正常'的说明", "String", "varchar").input().list().build());
+    }
+
+    /** 最小可用模型：一个主键 + 一个可写可查的名称，用来验各种「没有」的分支 */    static List<Map<String, Object>> simpleFields() {
         return List.of(
                 new Field("id", "主键", "Long", "bigint").primary().autoIncrement().build(),
                 new Field("name", "名称", "String", "varchar").input().list().build());
