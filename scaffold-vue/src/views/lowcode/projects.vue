@@ -96,6 +96,10 @@ async function submit() {
     repoUrl: form.repoUrl.trim(),
     mainBranch: form.mainBranch.trim(),
     genBranch: form.genBranch.trim(),
+    // 这张 payload 是逐字段白名单：加表单字段时忘了加这里，表现就是「点了保存也提示成功，但值没变」
+    // （负责人第一次就栽在这上面）。注意后端那条 UPDATE 用的是 COALESCE，
+    // 与其他列同一口径 —— 只能换人，做不到由前端清空负责人
+    ownerUserId: form.ownerUserId ?? undefined,
     status: form.status,
     remark: form.remark.trim() || undefined,
   }
