@@ -1,8 +1,10 @@
 package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.workspace.ChangedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.JGitGateway;
+import com.scaffold.lowcode.workspace.MergeCheck;
 import com.scaffold.lowcode.workspace.ProjectMarker;
 import com.scaffold.lowcode.workspace.RemoteRef;
 import org.eclipse.jgit.api.Git;
@@ -105,6 +107,23 @@ public class LocalBareGitGateway implements GitGateway {
             throw new BusinessException("远端拒绝接收 tag " + tagName + "（用例摆的 tag 保护）");
         }
         jgit.pushTag(dir, tagName);
+    }
+
+    /* ── 合并请求的只读原语：都是读本份工作区，不涉及远端，直接转给真 JGit ── */
+
+    @Override
+    public String mergeBase(Path dir, String oneRev, String otherRev) {
+        return jgit.mergeBase(dir, oneRev, otherRev);
+    }
+
+    @Override
+    public List<ChangedFile> diffFiles(Path dir, String baseSha, String headSha) {
+        return jgit.diffFiles(dir, baseSha, headSha);
+    }
+
+    @Override
+    public MergeCheck checkMerge(Path dir, String oursRev, String theirsRev) {
+        return jgit.checkMerge(dir, oursRev, theirsRev);
     }
 
     /* ── 用例侧的远端读数与「第三方」动作 ── */

@@ -71,4 +71,30 @@ public interface GitGateway {
      * 调用方只该把它当告警，不该拿它改 {@code sync_status}。
      */
     void pushTag(Path dir, String tagName);
+
+    /**
+     * 两条历史的分叉点，等价于 {@code git merge-base}。
+     *
+     * <p>合并请求的清单要按 {@code merge-base..源} 算而不是 {@code 目标..源}：后者会把主干上
+     * 别人新提交的内容反向显示成「发布分支要删掉的东西」。
+     *
+     * @param oneRev 分支名或提交号
+     * @param otherRev 分支名或提交号
+     * @return 分叉点提交号；两条历史没有共同祖先（各自初始化的仓库）或任一侧解析不出来时返回 {@code null}
+     */
+    String mergeBase(Path dir, String oneRev, String otherRev);
+
+    /** {@code baseSha..headSha} 之间的变更文件清单（含改名识别与行级增删数） */
+    List<ChangedFile> diffFiles(Path dir, String baseSha, String headSha);
+
+    /**
+     * 试算一次合并的<b>结论</b>：不落提交、不写索引、不动工作区文件。
+     *
+     * <p>与真实合并同形（同一套递归三路算法），所以「预检说可自动合」与「真合会不会炸」之间
+     * 只剩仓库内容变化这一个变量。冲突时只报哪些文件要人解，不替人取舍。
+     *
+     * @param oursRev 目标分支（人工主干）的分支名或提交号；调用方的工作区应停在目标分支这一侧
+     * @param theirsRev 源分支（平台发布分支）的分支名或提交号
+     */
+    MergeCheck checkMerge(Path dir, String oursRev, String theirsRev);
 }

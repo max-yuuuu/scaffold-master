@@ -44,7 +44,7 @@ class JGitGatewayTest {
     }
 
     @Test
-    void 空仓库首次初始化能显式建出发布分支() {
+    void 空仓库首次初始化能显式建出发布分支() throws IOException {
         assertThat(gateway.lsRemote(remoteUrl)).isEmpty();
 
         Path workspace = tempDir.resolve("workspace");
@@ -65,6 +65,14 @@ class JGitGatewayTest {
             assertThat(ref.sha()).isEqualTo(sha);
         });
         assertThat(gateway.localBranchSha(workspace, "platform-generated")).isEqualTo(sha);
+        // 本地引用名要正好是 refs/heads/{分支}：JGit 的 resolve 会宽松补前缀，双层的
+        // refs/heads/refs/heads/{分支} 照样读得到号，而 findRef 是精确查的 —— checkoutBranch 那句
+        // 「这条分支本地有了吗」就会答错，回头去新建一条已经存在的分支（initEmpty 曾踩过）
+        try (Git git = Git.open(workspace.toFile())) {
+            assertThat(git.getRepository().findRef("refs/heads/platform-generated")).isNotNull();
+            assertThat(git.getRepository().getRefDatabase().getRefs())
+                    .allSatisfy(ref -> assertThat(ref.getName()).doesNotStartWith("refs/heads/refs/"));
+        }
     }
 
     @Test
@@ -250,6 +258,112 @@ class JGitGatewayTest {
         assertThat(gateway.headSha(repo)).isEqualTo(sha);
         // 不是 git 仓库的目录返回 null，不阻断初始化
         assertThat(gateway.headSha(tempDir)).isNull();
+    }
+
+    @Test
+    void 分叉点与变更清单只含源分支自己改的那些文件() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "README.md", "a\nb\nc\n");
+        write(workspace, "obsolete.txt", "x\n");
+        String base = gateway.commitAll(workspace, "chore: 底座快照");
+        gateway.pushBranch(workspace, "main");
+
+        // 主干上人工补的文档：与发布分支无关，不该混进「这次要合进去什么」的清单
+        write(workspace, "main-only.md", "manual\n");
+        gateway.commitAll(workspace, "docs: 人工补的主干文档");
+        gateway.pushBranch(workspace, "main");
+
+        gateway.checkoutBranch(workspace, "gen", base);
+        write(workspace, "README.md", "a\nB\nc\nd\n");
+        write(workspace, "GenPage.java", "class GenPage {}\n");
+        delete(workspace, "obsolete.txt");
+        String gen = gateway.commitAll(workspace, "feat: 生成的页面代码");
+
+        assertThat(gateway.mergeBase(workspace, "main", gen)).isEqualTo(base);
+
+        List<ChangedFile> files = gateway.diffFiles(workspace, base, gen);
+        assertThat(files).extracting(ChangedFile::path)
+                .containsExactlyInAnyOrder("README.md", "GenPage.java", "obsolete.txt");
+
+        assertThat(changeOf(files, "README.md")).isEqualTo(Change.MODIFY);
+        assertThat(files).anySatisfy(file -> {
+            assertThat(file.path()).isEqualTo("README.md");
+            // b→B 一行改、末尾加一行 d：列表页上「+2 −1」就是这个数，diff 文本本身不入库
+            assertThat(file.additions()).isEqualTo(2);
+            assertThat(file.deletions()).isEqualTo(1);
+        });
+        assertThat(changeOf(files, "GenPage.java")).isEqualTo(Change.ADD);
+        assertThat(changeOf(files, "obsolete.txt")).isEqualTo(Change.DELETE);
+    }
+
+    @Test
+    void 试算合并认出冲突文件且一点不动工作区() throws Exception {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "shared.txt", "line1\n");
+        String base = gateway.commitAll(workspace, "chore: 共同祖先");
+        gateway.pushBranch(workspace, "main");
+
+        write(workspace, "shared.txt", "MAIN\n");
+        String mainSha = gateway.commitAll(workspace, "docs: 主干改了这一行");
+        gateway.pushBranch(workspace, "main");
+
+        gateway.checkoutBranch(workspace, "gen", base);
+        write(workspace, "shared.txt", "GEN\n");
+        String genSha = gateway.commitAll(workspace, "feat: 发布分支也改了同一行");
+        // 回到主干再试算：预检算的是「theirs 合进 ours」，工作区停在目标分支这一侧才与真实合并同形
+        gateway.checkoutBranch(workspace, "main", null);
+
+        MergeCheck check = gateway.checkMerge(workspace, mainSha, genSha);
+        assertThat(check.clean()).isFalse();
+        assertThat(check.conflictedPaths()).containsExactly("shared.txt");
+        assertThat(check.summary()).contains("shared.txt");
+
+        // 预检必须不留痕迹：工作区干净、分支没动、文件还是当前分支那一份、没写冲突标记文件
+        assertThat(gateway.isDirty(workspace)).isFalse();
+        assertThat(gateway.localBranchSha(workspace, "main")).isEqualTo(mainSha);
+        assertThat(Files.readString(workspace.resolve("shared.txt"), StandardCharsets.UTF_8)).isEqualTo("MAIN\n");
+        assertThat(workspace.resolve("shared.txt.orig")).doesNotExist();
+    }
+
+    @Test
+    void 试算合并不相干的改动判为可自动合且不产生合并提交() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "base.txt", "1\n");
+        String base = gateway.commitAll(workspace, "chore: 共同祖先");
+        gateway.pushBranch(workspace, "main");
+
+        write(workspace, "main-only.txt", "main\n");
+        String mainSha = gateway.commitAll(workspace, "docs: 主干自己的文件");
+        gateway.pushBranch(workspace, "main");
+
+        gateway.checkoutBranch(workspace, "gen", base);
+        write(workspace, "gen-only.txt", "gen\n");
+        String genSha = gateway.commitAll(workspace, "feat: 发布分支自己的文件");
+        gateway.checkoutBranch(workspace, "main", null);
+
+        MergeCheck check = gateway.checkMerge(workspace, mainSha, genSha);
+        assertThat(check.clean()).isTrue();
+        assertThat(check.conflictedPaths()).isEmpty();
+
+        // 可自动合 ≠ 已经合：这一刀只做预检，主干提交号必须还停在原地
+        assertThat(gateway.localBranchSha(workspace, "main")).isEqualTo(mainSha);
+        assertThat(gateway.isDirty(workspace)).isFalse();
+    }
+
+    private static Change changeOf(List<ChangedFile> files, String path) {
+        return files.stream().filter(file -> file.path().equals(path)).findFirst()
+                .orElseThrow(() -> new AssertionError("清单里没有 " + path)).change();
+    }
+
+    private static void delete(Path workspace, String relative) {
+        try {
+            Files.delete(workspace.resolve(relative));
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String remoteShaOf(List<RemoteRef> refs, String branch) {

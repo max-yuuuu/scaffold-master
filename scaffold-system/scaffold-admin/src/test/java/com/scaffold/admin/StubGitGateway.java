@@ -1,7 +1,9 @@
 package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.workspace.ChangedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
+import com.scaffold.lowcode.workspace.MergeCheck;
 import com.scaffold.lowcode.workspace.RemoteRef;
 import com.scaffold.lowcode.workspace.ScaffoldTrimPolicy;
 import com.scaffold.lowcode.workspace.WorkspaceGitException;
@@ -148,6 +150,23 @@ public class StubGitGateway implements GitGateway {
         }
         pushedTags.add(tagName);
         remoteRefs = withTag(remoteRefs, tagName, localTags.get(tagName));
+    }
+
+    /* ── 合并请求的只读原语：桩不模拟仓库内容，被调到就是用例走错了门 ── */
+
+    @Override
+    public String mergeBase(Path dir, String oneRev, String otherRev) {
+        throw new UnsupportedOperationException("StubGitGateway 不模拟提交历史：分叉点要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public List<ChangedFile> diffFiles(Path dir, String baseSha, String headSha) {
+        throw new UnsupportedOperationException("StubGitGateway 不模拟文件差异：清单要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public MergeCheck checkMerge(Path dir, String oursRev, String theirsRev) {
+        throw new UnsupportedOperationException("StubGitGateway 不试算合并：预检要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
     }
 
     private String remoteSha(String branch) {
