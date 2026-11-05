@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-06（PR 8 第一段：合并请求的两张表与四条只读 Git 原语，顺带修掉一条藏了很久的双层 ref 名）
+
+用户选的口径是「只读那一半：建表 + diff + 预检」，确认合并与推送留到下一刀。三段提交：`V10 建表` / `网关三条原语 + initEmpty 修复` / `fetch`。
+
+- **V10 两张表的取舍写在建表注释里**（照 V9 的规矩）：`lc_merge_request` 记 `source_sha` / `target_sha` / `merge_base_sha` 三个提交号，`status`（待审 / 陈旧 / 已合并 / 已关闭）与 `check_status`（未预检 / 可自动合 / 有冲突）**分两列** —— 目标分支前进不改变内容是否冲突，有冲突也不表示请求过期，合成一列要么互相覆盖要么出现没人能显示的枚举值。`target_sha` 存下来而不是只存一个陈旧布尔值，因为列表要能说「主干已经前进到 abc123，这条请求比它旧」。三样故意不存：文件数与冲突数由文件表现算（同 V9 挡掉 `files_added/modified/deleted` 的理由）、unified diff 不入库（两个提交号已把范围钉死，详情页按需现算）、审批人与意见不建（这刀没有「批准」这个动作）。
+- **租户登记与裁剪清单同刀补**：先只建表跑出 `ScaffoldTenantLineHandlerTest` 的红（`lc_merge_request 在 V10 里带 tenant_id，必须登记进白名单`）再补 `TENANT_TABLES`；`ScaffoldSnapshotPlannerTest` 整类 12 条挂过 `裁剪清单遗漏：交付文件 V10 仍引用 lc_project` —— 这就是 AGENTS.md 那条老规矩的形状，前端与单测对此完全无感，只有交付快照的残留扫描能看见。
+- **四条只读原语**（`GitGateway` + `JGitGateway`）：`mergeBase` 走 `RevFilter.MERGE_BASE`；`diffFiles` 走 `DiffFormatter` + 改名识别，档位对齐 `change_type`（JGit 7 那一档叫 `ADD`，旧版叫 `INSERT`，写错直接编译不过），行级增删数按单文件 unified diff 现算；`checkMerge` 用 `RECURSIVE` 的 in-core merger 再配一份 `DirCache.newInCore()`，两份保险确保真实 `.git/index` 不被一次预检写脏；`fetch` 带回 `refs/remotes/origin/*` 并清掉远端已删的引用，**不动本地分支与工作站**（用例钉 `localBranchSha` 不变 + `isDirty` 为 false）。
+- **修掉一条真缺陷**：`initEmpty` 把分支名套了两层（`setInitialBranch` 自己补 `refs/heads/`，调用处又传了 `HEADS_PREFIX + branch`），实际建出 `refs/heads/refs/heads/{branch}`。之所以一直没暴露：`resolve` 会宽松补前缀，本地读数、提交、推送、远端全都对（PR 4/7 真机推上去的分支名是干净的），而 `findRef` 是精确查的 —— `checkoutBranch` 那句「这条分支本地有了吗」答错，会去新建一条已经存在的分支。断言按精确名钉住并做反向验证：改回旧写法立刻红（1 failure + 2 errors）。已初始化工作区里那条双层 ref 不做迁移（工作区是平台本机 clone，不含独有内容，重新初始化即恢复），这条与理由一起写进 `PROJECT_MAP.md` 第九节。
+- **两条只有踩过才知道的细节**：十六进制提交号哪怕对象不在本地对象库也能被 `resolve` 出来，不查 `ObjectReader.has` 就会炸成 JGit 的 `Missing unknown <sha>`，而「提交还没 fetch 回来」是正常状态不是错误；`ResolveMerger.getFailingPaths()` 在没有失败项时返回 **null 而不是空 map**，直接 `.entrySet()` 就 NPE。
+- **图标**：菜单图标 `branch` 在注册表里原本不存在（`Icon.vue` 查不到会静默画 `file`），补进 `ICON_PATHS` 与 `MENU_ICON_OPTIONS`，并新增 `packages/scaffold-ui/src/__tests__/icons.test.ts` 钉「选择器列出的每个名字都能解析」+「路径不以绘图命令开头的算空」；反向验证过：抽掉 `branch` 路径当场红，报错原话是「静默兜底成 file：branch」。包单测 14 → 16 例。
+- **桩的口径**：`StubGitGateway` 三条只读原语显式抛 `UnsupportedOperationException` 而不是返回空清单（用例走错门要当场喊，给它一份「看起来像没有变更」的空清单最坏），`fetch` 记进 `fetches` 供断言；`LocalBareGitGateway` 直接转给真 JGit。
+- **e2e 实际跑了什么**：`JGitGatewayTest` 11 → 15 例（本机裸仓库真跑，新四条先跑红再实现）；`scaffold-lowcode` 全模块 147 例全绿；依赖这两个桩的集成用例 `ProjectWorkspaceApiTest` 15 + `PagePublishApiTest` 9 + `DeliveryGenerationApiTest` 5 全绿（IT 库 `DB_PORT=3316 REDIS_PORT=6380`，`JWT_SECRET` 现生成）；V10 在临时库 `scaffold_v10_rehearsal` 真跑 V1–V10 一遍 + V10 再跑一遍，两次 rc=0，核对到 2 条菜单行、2 条角色授权、2 张新表、默认值与 `UNIQUE(request_id,path)`，跑完 `DROP DATABASE`，没动正式 IT 库。
+- **还没做的**（如实留着）：`MergeRequestService`、接口与前端审查页、把「diff + 预检 + 陈旧」串起来的端到端用例，以及确认合并与推送那一半。**这一段没有对外接口，交付面只有 V10 被裁掉这一点变化，无需重跑物化演练。**
+
+
 ## 2026-11-05（PR 8C 补刀：复制出来的那一格根本存不出去）
 
 e2e 阶段查出来的缺陷，不是用户报的。对着后端读 `duplicate()` 的产物时发现的：副本 `props` 整份照抄，`field` 也一起抄了。
