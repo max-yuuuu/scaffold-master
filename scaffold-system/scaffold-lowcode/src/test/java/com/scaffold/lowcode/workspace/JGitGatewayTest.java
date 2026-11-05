@@ -353,6 +353,108 @@ class JGitGatewayTest {
         assertThat(gateway.isDirty(workspace)).isFalse();
     }
 
+    @Test
+    void 单个文件的差异能按行取回来() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "README.md", "a\nb\nc\n");
+        String base = gateway.commitAll(workspace, "chore: 起点");
+
+        write(workspace, "README.md", "a\nB\nc\nd\n");
+        String head = gateway.commitAll(workspace, "docs: 改一行加一行");
+
+        String diff = gateway.fileDiff(workspace, base, head, "README.md");
+        // 行内单栏视图要的就是这份原始差异：带文件头、带 hunk 标记、带 +/-
+        assertThat(diff).contains("--- ", "+++ ", "@@", "-b", "+B", "+d");
+        // 只要这一个文件的差异：清单上别的文件不该混进来
+        assertThat(gateway.fileDiff(workspace, base, head, "不存在的文件.txt")).isEmpty();
+    }
+
+    @Test
+    void 合并会把两侧改动落到目标分支并推上去() {
+        Path author = tempDir.resolve("author");
+        gateway.initEmpty(author, remoteUrl, "main");
+        write(author, "base.txt", "1\n");
+        gateway.commitAll(author, "chore: 起点");
+        gateway.pushBranch(author, "main");
+        String base = gateway.localBranchSha(author, "main");
+
+        gateway.checkoutBranch(author, "gen", base);
+        write(author, "gen-only.txt", "gen\n");
+        String genSha = gateway.commitAll(author, "feat: 发布分支的产物");
+        gateway.pushBranch(author, "gen");
+
+        gateway.checkoutBranch(author, "main", base);
+        write(author, "main-only.txt", "main\n");
+        String mainSha = gateway.commitAll(author, "docs: 主干上人的改动");
+        gateway.pushBranch(author, "main");
+
+        String merged = gateway.mergeIntoTarget(author, remoteUrl, "main", mainSha, genSha, "合并发布分支");
+
+        assertThat(merged).isNotBlank();
+        // 远端主干真的前进了，而且是一个有两个父亲的合并提交
+        assertThat(gateway.lsRemote(remoteUrl)).anySatisfy(ref -> {
+            assertThat(ref.branchName()).isEqualTo("main");
+            assertThat(ref.commitSha()).isEqualTo(merged);
+        });
+        // 两侧内容都在：合并不是把发布分支整个盖上去
+        Path reader = tempDir.resolve("reader");
+        gateway.cloneBranch(reader, remoteUrl, "main");
+        assertThat(reader.resolve("gen-only.txt")).exists();
+        assertThat(reader.resolve("main-only.txt")).exists();
+        assertThat(reader.resolve("base.txt")).exists();
+    }
+
+    @Test
+    void 目标分支在预检之后又前进时拒绝合并而不是合到错的东西上() {
+        Path author = tempDir.resolve("author");
+        gateway.initEmpty(author, remoteUrl, "main");
+        write(author, "base.txt", "1\n");
+        gateway.commitAll(author, "chore: 起点");
+        gateway.pushBranch(author, "main");
+        String seen = gateway.localBranchSha(author, "main");
+
+        gateway.checkoutBranch(author, "gen", seen);
+        write(author, "gen.txt", "gen\n");
+        String genSha = gateway.commitAll(author, "feat: 发布分支");
+        gateway.pushBranch(author, "gen");
+
+        // 预检之后，主干又被别人推了一步：人点的这条请求算的是旧的那一对提交
+        gateway.checkoutBranch(author, "main", seen);
+        write(author, "late.txt", "late\n");
+        gateway.commitAll(author, "docs: 晚来的一笔");
+        gateway.pushBranch(author, "main");
+
+        assertThatThrownBy(() -> gateway.mergeIntoTarget(author, remoteUrl, "main", seen, genSha, "合并发布分支"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("已前进");
+    }
+
+    @Test
+    void 真冲突时拒绝合并且主干一个提交都没多() {
+        Path author = tempDir.resolve("author");
+        gateway.initEmpty(author, remoteUrl, "main");
+        write(author, "shared.txt", "line1\n");
+        String base = gateway.commitAll(author, "chore: 起点");
+        gateway.pushBranch(author, "main");
+
+        gateway.checkoutBranch(author, "gen", base);
+        write(author, "shared.txt", "GEN\n");
+        String genSha = gateway.commitAll(author, "feat: 发布分支改了这一行");
+        gateway.pushBranch(author, "gen");
+
+        gateway.checkoutBranch(author, "main", base);
+        write(author, "shared.txt", "MAIN\n");
+        String mainSha = gateway.commitAll(author, "docs: 主干也改了同一行");
+        gateway.pushBranch(author, "main");
+
+        assertThatThrownBy(() -> gateway.mergeIntoTarget(author, remoteUrl, "main", mainSha, genSha, "合并发布分支"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("shared.txt");
+        // 拒绝得干干净净：远端主干还停在原来那个提交
+        assertThat(remoteShaOf(gateway.lsRemote(remoteUrl), "main")).isEqualTo(mainSha);
+    }
+
     private static Change changeOf(List<ChangedFile> files, String path) {
         return files.stream().filter(file -> file.path().equals(path)).findFirst()
                 .orElseThrow(() -> new AssertionError("清单里没有 " + path)).change();

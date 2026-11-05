@@ -131,6 +131,23 @@ public class LocalBareGitGateway implements GitGateway {
         return jgit.checkMerge(dir, oursRev, theirsRev);
     }
 
+    @Override
+    public String fileDiff(Path dir, String baseSha, String headSha, String path) {
+        return jgit.fileDiff(dir, baseSha, headSha, path);
+    }
+
+    /**
+     * 合并照真 JGit 走，但远端地址要映射到本机裸仓库 —— 否则用例会去推真 GitHub。
+     *
+     * <p>平台代码传进来的是库里的 {@code https://} / {@code git@} 地址，这条映射是本文件其余
+     * 方法一直在做的那件事，合并这条路同样不能漏。
+     */
+    @Override
+    public String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
+                                  String sourceSha, String message) {
+        return jgit.mergeIntoTarget(workspace, bareUrl(repoUrl), targetBranch, expectedTargetSha, sourceSha, message);
+    }
+
     /* ── 用例侧的远端读数与「第三方」动作 ── */
 
     /** 让下一次推送（分支或 tag）失败一次，之后的恢复原样 */

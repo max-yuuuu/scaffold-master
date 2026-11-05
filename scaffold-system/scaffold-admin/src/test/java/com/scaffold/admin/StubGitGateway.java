@@ -177,6 +177,17 @@ public class StubGitGateway implements GitGateway {
         throw new UnsupportedOperationException("StubGitGateway 不试算合并：预检要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
     }
 
+    @Override
+    public String fileDiff(Path dir, String baseSha, String headSha, String path) {
+        throw new UnsupportedOperationException("StubGitGateway 没有文件内容可 diff：见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
+                                  String sourceSha, String message) {
+        throw new UnsupportedOperationException("StubGitGateway 不真合并也不推主干：合并执行要用真 JGit，见 LocalBareGitGateway");
+    }
+
     private String remoteSha(String branch) {
         return remoteRefs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
     }
