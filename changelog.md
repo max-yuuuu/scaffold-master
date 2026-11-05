@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-05（PR 8A 返工：设计器不套外壳，独占整个标签页）
+
+上一条 8A 我把方向判断错了 —— 判断成「复用平台外壳，设计器只补一条工作区工具条」，因为外壳的 `Topbar.vue` 已经有面包屑、⌘K 和外观设置，再画一条顶栏像是重复。口径不对：**点「设计」开出来的那条标签页就是设计器本身**，没有左侧导航轨、没有控制台 header，UI 与原型一模一样。这一条把 8A 的外壳部分重做到那个形状，并把原型里除「所见即所得渲染」之外的浮层一次搬完。
+
+- **路由换形状**：`/lowcode/designer/:页面 ID` 一条静态路由挂在 `AppShell` 之外（`router/index.ts` 的 `staticRoutes`，仍走同一个登录守卫、不是 public）。`pages.vue` 里那套「同路由带 `?design=页面 ID`、列表整屏换成设计器」的装配全删了 —— 深链从查询参数挪进路径，别人拿到 `/lowcode/designer/59` 不用先猜 `design` 是干什么的。取数（`pages.detail` + `models.fields`）跟着搬进 `DesignerView.vue`，打不开就留在原地说明原因，不悄悄跳回列表。
+- **原型那条 64px 顶栏整个搬过来**：返回 / 品牌标 / 面包屑（项目 › 页面设计器 › 页面名 + 发布状态胶囊）/ ⌘K 入口 / 撤销重做 / 结构代码 / 深浅色 / 预览运行态 / 保存草稿 / 发布上线。**没有新写一套 CSS**：`.app-frame`（10px 深色机身 + 38px 圆角 + 两团漫射光）、`.brand-mark`、`.crumbs`、`.cmd-trigger`、`.kbd`、`.code-chip`、`.float-bar` 全是 `layout.css` / `components.css` / `instruments.css` 里的全局类，原型那条顶栏本来就是照这套令牌画的，所以复用即一致；`.dz-frame` 只把 `.app-frame` 的两列导航轨改成「顶栏 + 工作区」两行。
+- **一份会话收在一处**（`designer/session.ts`）：store、tick、脏状态、浮层栈、拖拽/点选、预览、两栏收起、保存与发布全在这一份里，六个组件读同一个对象。之前用 props 往下传十几格，漏一格的表现就是「画布动了但顶栏撤销还是灰的」—— 上一刀我就真漏了 `canUndo`/`canRedo` 一格，靠给每个读数手动挂 `tick` 才兜住。
+- **搬 UI 时暴露的三处缺陷**（都是先复现再修）：① **脏状态是个计数器**，撤销回到基线之后浮条还挂着「有 1 项画布改动尚未保存」；改成与库里那一份逐字比对（`JSON.stringify(store.json()) !== baseline`），并且这个 computed 一开始还没挂上 `tick`，删掉一个区块浮条根本不出来。② **`title="发布「{{ page.pageName }}」`** —— mustache 在属性位不插值，弹窗标题原样显示成模板字符串；改 `:title` 绑定。③ **落点被当场拒绝时我把报错吞了**，还顺手 `act()` 一步空操作 —— 撤销栈里多出一条什么都没改的历史、脏计数白加一格；现在报错原样弹出来，只 `refresh()` 重算读数。
+- **自己引入的一处交付链回归（这刀唯一由我弄坏的）**：新路由写在 `scaffold-vue/src/router/index.ts` 里引用 `@/views/lowcode/designer/DesignerView.vue`，而 `router/index.ts` 是要进交付项目的、`views/lowcode/` 是黑名单剔除的 —— `ScaffoldSnapshotPlanner.validate` 的残留引用扫描当场拒绝：`裁剪清单遗漏：交付文件 scaffold-vue/src/router/index.ts 仍引用 @/views/lowcode`，`ScaffoldSnapshotPlannerTest` 12 例全挂。修法是给这一段套 `scaffold:platform-only:start/end` 标记块（`PlatformOnlyStripper` 写快照时整块删掉，标记必须独占整行），而不是把 `router/index.ts` 塞进黑名单 —— 交付项目要自己的路由表。**前端 typecheck、单测、`vite build` 全绿照样看不见这一条**：它只在交付快照初始化时跑。第一次跑全量后端时 `| tail` 把退出码吞成了 0，差点当成全绿过去，第二次改成重定向到文件再看 `$?` 才认出来。
+- **后端补三格**：`selectPageBrief` 加 `p.current_version` / `p.publish_status` 与 `LEFT JOIN lc_project` 取 `projectName`。库里 V9 起就有这两列，只是详情查询没读 —— 不补的代价是顶栏那句「已发布 v2」要么写死要么不写，发布弹窗要说清版本号怎么来也拿不到当前号。`PageApiTest` 加三条断言钉住。
+- **发布客户端这刀补上**：`POST /lowcode/pages/{id}/publish` 后端在 PR 7 就通了，前端一直没有客户端（`platformApi.pages` 只有 CRUD + detail + updateStatus）。入参只有 `force` 与 `changeDesc`，**版本号由后端按 `current_version` 算**，所以原型里那格「发布版本号」输入框砍掉；「目标运行环境」下拉也砍 —— 环境跟着项目走，切环境是换项目而不是在下拉里选一个，库里没有这个维度。引用体检命中时后端抛的是 `BusinessException`，消息以「就带 force 再来一次」结尾，弹窗按这句话才放出「我已确认，仍然发布」那颗按钮（这层字符串耦合写在注释里，后端换成结构化错误码要跟着改）。发布前如果画布是脏的，弹窗会拦住并给一颗「保存并发布」：发出去的是库里那份，不是画布上这份。
+- **预览运行态**：收起两栏、画布摘掉所有 × 与落点缝，只读渲染 —— 这一条按原型是「按发布后的样子看这一页」，第一期先做到「不可编辑」，还没做到「按生成物的版式渲染」（那是刀 3 的所见即所得）。
+- **测试**：`platform.test.ts` 新增那条先跑出 `api.pages.publish is not a function` 再实现转绿；前端 typecheck 两包 + 单测 14 + 24 例 + `vite build` 全绿；后端全量 **314 例全绿**（common 10 + framework 42 + generator 6 + lowcode 142 + admin 114，IT 库 3316），其中 `PageApiTest` 6 例带着新加的三条断言、`ScaffoldSnapshotPlannerTest` 12 例在补上标记块之后从全挂转全绿。
+- **真机验收**（`:5173` + `:8080`，页面 59，1600×1000 同域 iframe 量）：路由 `/lowcode/designer/59` 下 `.sidebar` 与 `.topbar` 都不存在，机身 `.app-frame` 在；顶栏实测 64px、未滚动时背景透明、只留一条下边线；三栏实测 `236px / 968px / 312px`，面板底色 `#fbfcfc`；结构代码抽屉打开是真 `design_json`（`version 1.0 / pageType list / modelRef sales_order`），深色铭牌底 `rgba(21,24,26,.9)`，脚部读数与「复制结构代码」都在；⌘K 面板 35 条分「指令 / 组件物料 / 画布节点」三组，输入「查询区」过滤到 2 条、Enter 执行、面板自动收起；预览态 grid 变 `0px / 1516px / 0px`、两栏与全部 × 消失、按钮文案翻成「退出运行预览」；删一个区块 → 浮条出现（「画布上有未保存改动 / 放弃改动 / 立即保存草稿」），撤销 → 区块回来、浮条消失、撤销按钮重新禁用。**没有真的发布也没有保存**：弹窗打开后取消，库里那份设计原样。
+- **没验到的一格**：本机 `:8080` 那个后端进程还是改动前的类，所以界面上顶栏胶囊显示「未归属项目 / 未发布」，而页面 59 实际已经发到 v2。那三格由 `PageApiTest` 在真接口上验过，**界面上的读数要等后端重启才能看到**；重启会动到 `:8080` 上那个进程（可能是另一个会话在用），没有擅自动它。
+- **窄屏仍未处理**：627px 视口下中栏被挤到 0px（236 + 312 已经吃满），归刀 6。
+
+
 ## 2026-11-05（PR 8A：设计器外壳第一刀 —— 按 Figma 新稿重排三栏，顺手修掉三处既有缺陷）
 
 `designer/` 那份 Figma Make 原型（React 19 + Tailwind v4，6846 行）跑起来逐屏点过之后定下口径：**Vue 重写、原型只当视觉与交互规格书、第一期保守到后端 `ComponentCatalog` 白名单以内**（物料 19 种 kind 里生成器产不出的那些不进面板）。这一刀只做外壳，六刀串行，后面依次是左栏、画布、右栏、浮层与发布、窄屏。
