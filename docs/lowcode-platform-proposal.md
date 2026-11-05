@@ -214,7 +214,7 @@ installScaffoldUi({ http, permission, dict })         // 三个能力由宿主�
 
 ### 2.2 核心表设计
 
-> **实现状态（2026-11-03）**：`lc_tenant` 与 `sys_*` 的 `tenant_id` 改造已在 PR 1 落地，**权威定义以 [scaffold-system/sql/V1__init_schema.sql](../scaffold-system/sql/V1__init_schema.sql) 为准**（本文档早期草稿的 `lc_tenant` 片段缺 `deleted`、`remark` 列与 `idx_lc_tenant_status` 索引，已按实际 DDL 校正）。`lc_project` / `lc_model` / `lc_field` / `lc_page` / `lc_page_version` / `lc_publish_log` / `lc_merge_request` / `lc_merge_request_file` 尚未建表，下面的 DDL 是 PR 2 的设计稿，落库前需按 §〇之二 与 §5.3 的口径复核。
+> **实现状态（2026-11-05）**：`lc_tenant` 与 `sys_*` 的 `tenant_id` 改造已在 PR 1 落地，**权威定义以 [scaffold-system/sql/V1__init_schema.sql](../scaffold-system/sql/V1__init_schema.sql) 为准**（本文档早期草稿的 `lc_tenant` 片段缺 `deleted`、`remark` 列与 `idx_lc_tenant_status` 索引，已按实际 DDL 校正）。`lc_project` / `lc_model` / `lc_field` / `lc_page` / `lc_page_version` / `lc_publish_log` **已建表，权威定义以同目录的 `V5`–`V9` 为准**：下面的 DDL 是设计稿，实际落库与它有三处出入 —— ① 没有读写方的列一律不建（`lc_publish_log` 的 `files_added` / `files_modified` / `files_deleted` 与 `remote_url`、`lc_page` 的 `route_parent` / `menu_id` / `permission_prefix` 都留到真需要时再 ALTER）；② 版本行按草稿保留 `files_snapshot`，内容就是「路径 → 内容哈希」；③ 列类型与注释按底座口径写全（`utf8mb4`、`deleted`、审计四字段）。`lc_merge_request` / `lc_merge_request_file` 仍未建，属 PR 8。
 
 ```sql
 -- ========== 平台库 ==========
@@ -1183,6 +1183,28 @@ scaffold-system/         # 后端 Maven 聚合
 - 全部 Git 操作用 **JGit**（纯 Java，不经过 shell，避免 `repo_url` / `project_code` 等用户输入拼进命令行造成注入）；
 - 发布成功打 tag `v{projectCode}-{pageCode}-{version}`，作为合并与回滚的锚点。
 
+**落地事实（PR 7，2026-11-05）**，实现是 `com.scaffold.lowcode.publish.PagePublishService`：
+
+- **上图的「哈希对比」由 Git 本身完成**：产物落进工作区后 `commitAll` 在没有任何改动时返回 `null`，
+  这就是 no-op —— 不再另算一套哈希，否则「平台认为变了而 Git 认为没变」会出现一个空提交或一个漏掉的发布。
+  版本号与 `lc_page_version` 只在推送成功、tag 落到远端之后才写（**先落到仓库、再记库里的账**）；
+  库里说发过 v3 而仓库里查无此提交，PR 9 的回滚就会去取不存在的内容。
+- **发布现场有四条守卫**，都在动手之前拒绝并说清怎么办：项目 `sync_status` 必须是就绪（发布不替人初始化）；
+  工作区目录得是真仓库；工作区必须干净（提交是整目录暂存，脏着就会把人在工作区里的临时改动一起推上去）；
+  本地与远端的发布分支必须一致，不一致时按 `last_commit_sha` 分辨是谁前进的 —— 远端仍停在平台上次推上去
+  那个提交就是「上次推送没成功、这次补推」，否则是别人往发布分支推过东西，要求先重建工作区（不强推、
+  不自动合并、不"修好"）。配套把 `resetWorkspace` 的守卫改成同一口径，否则人往发布分支推过一次之后，
+  重建会被当成「有未推送提交」而永久发不动。
+- **`lc_page_version` 与 `lc_publish_log` 分工**：前者只在成功发布时有行（一个版本号一条，带当时的设计原文
+  与产物哈希，是 PR 9 的取数来源），后者每次动作一条（成功 / 无变更 / 失败都留）。失败必须留痕：
+  「库里说这个项目今天发布过三次而仓库里只有两个版本」只有靠日志才说得清是哪一次推送没出去。
+- **踩到的一处真缺陷**：`ls-remote` 对附注 tag 返回两行，第一行是 tag 对象自己的号。原来只读第一行，
+  「tag 与 `commit_sha` 对不对得上」这条验收就永远对不上，而 PR 9 按 tag 取内容也会拿一个不是提交的号。
+  现在 `RemoteRef.commitSha()` 给出解引用后的提交（`JGitGatewayTest` 钉住语义，PR 7 的 IT 钉住链路）。
+- 用例是 `PagePublishApiTest` 9 例，**远端用真 JGit 打在本机裸仓库上**而不是 `StubGitGateway`：
+  这四条验收全是 Git 语义，桩只能证明平台自己怎么记账，证明不了仓库里真有什么。首次发布的产物
+  还顺手真起 `javac` 编一遍。
+
 ### 5.2 文件所有权三档（替代原「CUSTOM-START/END 文本级合并」）
 
 生成分支是平台唯一的产物出口，主干由人掌控。文件分档的作用不是"保证合并无冲突"，而是：
@@ -1203,7 +1225,7 @@ scaffold-system/         # 后端 Maven 聚合
 
 C 档后端的骨架是一份 `{Cls}Extension`，七个钩子：`afterRows(List<{Cls}Row>)`（列表与导出共用）、create / update / delete 各一对 `before*` + `after*`。B 档 Service 的构造器把它当依赖注入并逐个调用，所以"改名或删方法就编译失败"这条契约是真的（常驻测试 `GeneratedCodeCompilesTest` 把七个 java 文件一起交给 javac）。钩子都在 Service 的 `@Transactional` 里跑，`after*` 抛异常连带回滚 —— 骨架的类注释里写明了，别把 `after` 当提交后执行。
 
-**"存在即跳过"的前提**：调用方给的工作区要反映项目当前内容。发布分支落后主干时，主干上人工改过的扩展类在这份工作区里不存在，骨架会被重新生成，两边在合并请求里以 `both added` 冲突暴露 —— 不静默丢代码，但 PR 7 组工作区时要把这条做对。
+**"存在即跳过"的前提**：调用方给的工作区要反映项目当前内容。发布分支落后主干时，主干上人工改过的扩展类在这份工作区里不存在，骨架会被重新生成，两边在合并请求里以 `both added` 冲突暴露 —— 不静默丢代码，但 PR 7 组工作区时要把这条做对（**已兑现，见下方「落地事实」**：发布前要求本地与远端一致，重铺固定代码时放过 B/C 档形状）。
 
 > 原方案的 `CUSTOM-START / CUSTOM-END` 标记 + 文本级 diff 合并机制**取消**：它是"平台覆盖文件"与"保留手写代码"两个诉求在同一文件上的强行调和，实现复杂且最容易静默丢代码。分档 + 分支隔离 + 人工审 diff 三重手段已覆盖该诉求。若个别场景仍需在一个文件里混排，可自行在 C 档文件内用标记，但平台不参与解析。
 
@@ -1251,6 +1273,14 @@ A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平�
 1. **删字段入口就拦**：与页面一样先反查影响面 —— 哪些页面引用（`lc_page.ref_fields`，PR 3b 已落）、该模型的扩展代码里有哪些符号还在用它，合成「受影响清单」要求操作者确认。字段**改名 = 删 + 建**（列名由编码派生），所以改名同样走这道检查。
 2. **发布前引用体检**：从工作区/远端读该项目的 C 档文件，按模型字段派生符号（`get{Field}()` / `set{Field}(` / `.{javaField}`）做文本级反查，命中「当前模型已不存在的字段」就在发布预检里列出 `文件:行 + 字段名`，**默认阻断发布**，操作者可显式选择「我已确认，仍发布」（可能是同名局部变量或注释）。
 3. **口径**：宁多报不漏报。本期只做正则级检查，不引 Java AST 解析器 —— 目标是把"删了字段还引用"这类高频事故提前 5 分钟暴露，编译器仍是最后防线，不是第一道。
+
+**落地事实（PR 7，2026-11-05）**，实现是 `ExtensionReferenceCheck` + `PagePublishService.staleReferences`：第 2 条已进发布链路（默认阻断，`force` 显式放行，命中仍原样留在发布结果里），**第 1 条「删字段入口就拦」还没做** —— 那需要删字段时就去读工作区里的扩展代码，而工作区可能根本不存在（换过服务器、清过卷），静默跳过等于这条规则时灵时不灵；先只做发布前那一层，删字段侧仍按 `lc_page.ref_fields` 反查页面。三处判据的取舍：
+
+- **「合法」按本次发布真正生成的 `domain/` 里声明的成员算，不按 `lc_field` 的字段清单**：主键与审计列是模板补到类上的、字段表里没有它们，照字段清单判就会把 `row.getCreateTime()` 报成错引用。
+- `package` / `import` 的包名段在文本上长得和「对象.字段」一模一样，而任何一份 java 都有这两行 —— 不排掉就是每一次发布都被自己这份清单拦下（这条是 IT 第一次跑就撞出来的，九个用例全被噪音挡住）。方法调用（`.setScale(`、`.size()`）与类名限定的静态访问（`System.out`）也不算字段引用；`type.getName()` 这种分不清读取对象的命中**照报**，代价由 `force` 承担。
+- 人自己在扩展点里声明的方法与字段不报（那是这个文件的私有词汇）。
+
+**"存在即跳过"的前提已经兑现**：重铺固定代码（`pruneOutsideSnapshot`）现在会**放过 `GeneratedPaths` 认得出的 B/C 档形状**。少了这层判断，「重建工作区 + 重新初始化」会连人写的扩展点一起从发布分支删掉 —— 而 C 档正是平台唯一产不出来的东西（`PagePublishApiTest` 里那条「人往发布分支推一行代码 → 平台拒绝 → 重建 → 那一行还在」钉的就是这件事）。工作区的定位规则也抽成了 `WorkspacePaths`，初始化与发布两处不再各拼一遍 `{tenantId}/{projectCode}`。
 
 其余更新策略：
 
@@ -1322,6 +1352,11 @@ A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平�
 - **发布级**：revert 某次发布对应的提交或合并提交。
 
 C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚它。
+
+> **实现状态（2026-11-05）**：三级回滚本身属 PR 9，还没实现；PR 7 已经把回滚要用的**锚点**备齐 ——
+> 版本 tag 推到远端且指得到那个提交（`v{projectCode}-{pageCode}-{version}`）、`lc_page_version`
+> 固化了每一版的设计原文与「路径 → 内容哈希」、`lc_publish_log` 记下每次动作的提交号。
+> `lc_page_version.publish_type` 目前只会写 `CREATE` / `UPDATE`，`ROLLBACK` 那一支等 PR 9。
 
 ---
 
@@ -1454,7 +1489,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **P1.5：组件抽包 `@yuanda-lowcode-ai/scaffold-ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；组件与 composable 迁入；**解 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 npm 包并让生成项目按版本号依赖 | **抽包与注入点已完成**（2026-11-04，PR 4B），包名 `@yuanda-lowcode-ai/scaffold-ui`，`files` 白名单已收；剩正式 `npm publish --access public` 与 demo app 消费验证，**P2/P3 的硬前置** |
 | **P2：可视化设计器** | 5 周 | 三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板；**第一期只覆盖列表页 + 表单弹窗两类模板**，看板/详情/流程后置 | 待做 |
 | **P3：代码生成升级** | 3 周 | FreeMarker 模板替换 `StringBuilder`、完整 CRUD 生成、A/B/C 文件分档与 C 档扩展点骨架、`renderFiles` 出参提为公共类型；**模板产物的 import 走 `@yuanda-lowcode-ai/scaffold-ui`**；自定义接口只生成 `custom:{name}` 的 TODO handler 桩（§4.5） | 待做 |
-| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化）已完成，只剩对真实租户仓库推一次固定代码的真机验证；tag、`lc_publish_log`、合并请求与回滚留给 PR 8 |
+| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 7 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化与真机推送）✅、PR 7（页面发布链路：提交 → 推送 → tag → `lc_publish_log`、no-op 幂等、发布前引用体检）✅ 已完成；只剩合并请求与底座升级（PR 8）、三级回滚与端到端联调（PR 9） |
 | **P5：联调测试** | 2 周 | 端到端（建项目 → 建模 → 设计 → 发布 → 合并 → clone 起来跑通）、租户隔离回归 | 待做 |
 
 **总计约 21.5 周（一人约 5 个月）**
@@ -1516,7 +1551,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 1. ~~`super_admin` 跨租户旁路口径~~ **已定（PR 2）**：走"会话内切换租户"，见 §10.1 与 §2.3。留下的实现细节 —— 切换态下顶栏常驻「回到平台租户」，平台管理菜单不下发给租户。
 2. ~~**生成物命名约定跟底座还是跟模板**~~ **已定（2026-11-04，PR 5 开工第一刀）：选 (a) 生成物向底座看齐**，判据是可读性 —— 生成代码是给项目里的人读和改的，底座已经是一套一致的形状（`{Entity}WriteRequest`、`PageQuery` + 逐个 `@RequestParam`、`R.success(...)`、单类 Service、`views/{module}/{Cls}.vue`），再造一套 interface+impl / DTO+Query+types.ts 只会让一个项目里出现两种风格，而教科书分层对单人维护的项目并不更好读。连带定死五件事：① `{Cls}VO` / `{Cls}Query` / `types.ts` 三类文件不再存在，列表行用 `{Cls}Row`；② 扩展点统一 `{Cls}Extension`（`ServiceImplCustom` 那个旧名作废）；③ 生成物包名 `com.scaffold.business.{module}`，与「一个项目只有一个业务模块」一致；④ 接口路径用单数 `/{module}/{resource}`，不做英文自动变复数（底座 `/system/users` 的复数是人工历史命名，自动变格只会生成 `Categorys` 一类错名）；⑤ 前端接口文件**按模型一份** `src/api/{module}/{resource}.ts` —— 本项是 PR 5D 的修订，原写模块级单文件 `src/api/{module}.ts`，多模型时任何一个字段变化都要重写整文件、diff 会盖到别人的接口上；按模型分文件后一次发布只动一个文件，且不引 `@/api` 汇总出口（那是 A 档，平台不往里加导出行）。§4.2 的示例代码按此重写，见 PR 5G。
 3. **C 档扩展点的文件约定**：~~后端一个扩展类是否够用~~ **已定（2026-11-04，PR 5E）**：后端就一个 `{Cls}Extension`，七个钩子（`afterRows` 一个 + create/update/delete 各一对 `before*`/`after*`），由 B 档 Service 构造器注入并逐个调用；自定义接口不生成端点、直接在这个类里加方法（§4.5 ②）。不再往下拆（`{Cls}QueryExtension` / `{Cls}Validator` 之类）的理由：钩子签名是平台契约，每多一套就多在下次发布时咬人一次的面积，而人能随便加自己的方法，一个类不是瓶颈。**前端 `overrides/` 仍开放**：PR 5E 只把它的形状认进分档表（§4.3、§5.2，为的是分档判定完整、PR 6 的 `custom:{name}` 桩有合法落点），**覆写怎么被发现、盖到 B 档哪个区块上、整页接管怎么退出**这三个问题还没定，定稿前生成器不产出这类文件。
-4. **`design_json` 是否对齐 LCE 搭建协议**：对齐能白捡一份别人验证过的 schema 与文档，代价是字段冗余（本项目只需列表/表单两类）。倾向"借结构不借全协议"。
+4. ~~`design_json` 是否对齐 LCE 搭建协议~~ **已定（2026-11-05，PR 6A）：借结构、不借全协议**。理由：本项目走代码生成路线，没有生产运行时要渲染这份 JSON，引进整套 LCE 协议等于为一套不需要的能力付全套复杂度（组件注册表、作用域、事件总线、数据源绑定都要跟着来）。落定的形状见 §3.4 与 `com.scaffold.lowcode.design.PageDesign`：`{version, pageType, modelRef, layout}` 一棵树，区块白名单、控件-容器相容、`field` 必须是模型真实字段、按钮只认内置动作，保存时就与 `lc_field` 逐格对完，报错带节点路径（`layout.children[0].children[1]`）。协议版本号 `version` 留在这里是为了将来要加东西时能认出旧数据。
 5. **多项目工作区并发**：同一台机器上两个项目同时发布是否加文件锁。单租户自己用时不会发生，平台给别人用时才会。
 6. **`installScaffoldUi` 的三个契约**（PR 4B 的第一刀）：`http`（请求与统一返回结构 `R` 的解包，是否复用 `scaffold-vue/src/api/http.ts`）、`permission`（`v-perm` 需要的权限集合从哪来、何时刷新）、`dict`（`useDict` 的缓存归属 —— 包内缓存还是宿主提供）。这三个定不好，28 处解耦会改成 28 个各写各的 prop，包就白抽了。
 7. **状态流转要不要元数据化**（本期结论：不要，见 §4.5）。若将来做，形态是模型下挂"动作"定义（源状态 → 目标状态、权限点、附加校验），代价是动作 DSL + 生成器分支 + 一套 UI。触发条件建议明确为：**真实项目里出现 3 个以上形态一致的状态机需求**，再上；否则一条 `updateStatus` 手写 20 行更便宜。
@@ -1536,8 +1571,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | ↳ 5A–5E | ✅ 已完成（2026-11-04，分片进度与踩坑见 `changelog.md`）：5A 渲染骨架 + 实体（`TemplateRenderer` 必须锁 `DOLLAR_INTERPOLATION_SYNTAX`，否则 MyBatis 的 `#{}` 被引擎吃掉）；5B 后端 CRUD 五套 + `SqlIdentifiers` 保留字拦截 + 生成前守卫；5C 建表与菜单种子（真机在一个临时库里各跑两遍验幂等）；5D 前端接口与列表页（产物塞进宿主跑 `vue-tsc` + `vite build` 验）；**5E 分档落成代码** —— `GeneratedPaths` 持路径表并按路径白名单反推档位、`ModelCodeGenerator.renderFiles()` 出 `List<GeneratedFile>`、`{Cls}Extension` 七钩子骨架与 B 档调用点、`GeneratedFileZip` / `GeneratedFileWriter` 两条 sink、`is_tree` / `enable_data_scope` 明确拒绝 | 常驻测试 `GeneratedCodeCompilesTest` 把 7 个 java 产物按交付路径落盘后真起 javac（审计×逻辑删除四种组合）；`ExtensionContractTest` 扫渲染结果核对钩子契约；后端 202 例全绿 | — |
 | ↳ 5F | ✅ 已完成（2026-11-04）：老 `GeneratorService` 的 StringBuilder 全删，改由 `ImportedTableInput` 把 `gen_table` / `gen_table_column` 适配成模型形状后吃同一套模板；`javaType()` / `formType()` 并入 `FieldType.ofColumn`（连带补 `FieldType.LONG` 与 `FormType.code()`），`date` 两条链路都是 `LocalDate`；主键 / 自增 / 可空 / 长度 / 精度改为现查 `information_schema`（不再靠列名叫 `id` 猜），表已不存在时拒绝生成；审计四列齐且类型对才交给模板、`deleted` → 逻辑删除、`tenant_id` 只读不进列表；`LIKE` 只给文本列 | zip 下载与预览两个入口都在且**产物是交付形状**：`GeneratorImportApiTest` 4 例（含 zip 内 7 个 java 真起 javac、菜单 SQL 在真库执行后回滚）+ `ImportedTableInputTest` 6 例 + `FieldTypeTest` 反推表 2 例；后端 212 例全绿 | 5E |
 | ↳ 5G | ✅ 已完成（2026-11-04）。**发布与合并属 PR 7 / PR 8，还没实现，所以这一趟是「已有各段全用真东西，人肉补上发布那一跳」**：真实交付快照 + 真实模型接口 + 真实工作区提交 + 空目录 clone 真实 GitHub 仓库 + `docker compose --profile mysql up -d --build` 四个服务全 healthy，生成的两份 SQL 手工执行两遍验幂等，浏览器里走完登录 → 菜单 → 页面 → 新增（弹窗无主键格）→ 列表 → 修改 → 唯一查重 → 必填校验 → 导出 → 逻辑删除。§4.1 的模板清单与 §4.2 的示例改成实际产物原文（示例那个模型就是演练用的「销售订单」）。顺带把两件事收进本 PR：交付品牌按 `project_name` 改写（登录页 / 侧栏 / 浏览器标签，见 §6.4 第 6 条）与生成物话术去平台名。新增常驻端到端 `DeliveryGenerationApiTest`（交付快照 + 生成落盘 + 前端实物引用 + 菜单/权限点一致 + 二次发布 B 覆盖 C 跳过，5 例） | **一趟撞出六处「编得过、单测绿、真机才炸」的接缝缺陷**：① `NumberInput` 不带 `precision` → 金额 1234.5 被静默抹成 1235（数据错且不报错）；② 自增主键进表单 + 页面类型里 `id` 声明两遍 → 交付项目 `vue-tsc` 报错，前端镜像构建不出来；③ `@Options(keyProperty = "id")` 在多参数方法上回写不了自增号 → 第一次「新增」500；④ 列表与导出不带审计列 → 页面「创建时间」一列恒空；⑤ CSV 里时间是 ISO 带 `T` 的写法，与页面两种口径；⑥ 页面 `@/api` 引用用驼峰而文件落点是蛇形（单字词夹具看不出）。顺带定死两条边界：只支持数字主键、`lc_field.column_type` 已是完整写法不再二次拼长度。另发现交付链两处 A 档要改（Dockerfile 缺 Maven 依赖缓存挂载：第一次构建 14 分钟、加挂载后 4.7 秒；`CsvUtils` 时间口径），存量项目要等 PR 8 的底座升级下发 | 5F |
-| **PR 6**<br>P2 | `lc_page` / `design_json`；设计器第一期：三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板，**只支持列表页 + 表单弹窗** | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 | PR 4、PR 4B、PR 5 |
-| **PR 7**<br>P4 上 | 发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；**发布前 C 档引用体检**（扫扩展代码对已删字段的引用，默认阻断，可显式放行） | 重复点同一版本发布不产生空 commit；推送失败不留下半成品提交；tag 与 `lc_page_version.commit_sha` 对得上；删掉字段后带着旧引用的扩展代码发布不出去 | PR 6 |
+| **PR 6**<br>P2 | ✅ 已完成 6A / 6B / 6C（2026-11-05，PR 11 与 PR 12 已合入 dev）：`lc_page` / `design_json` 入库 + 保存时与模型逐格校验 + `ref_fields` 反查拦截（6A）；生成期合流 `GenerationInput.of(model, fields, PageTarget)`（6B，页面是形、模型是料）；设计器第一期三栏工作台 + 流式拖拽 + 容器嵌套 + 属性面板（6C，只支持列表页 + 表单弹窗，定死一个模型只有一个列表页） | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 —— **JSON→生成→可编译这一段已随 PR 7 的 IT 验掉**（`PagePublishApiTest` 首次发布后对落盘产物真起 `javac`）；**「在设计器里点出来」这一半等设计器重构定稿后复跑**（设计稿未出，UI 正在返工） | PR 4、PR 4B、PR 5 |
+| **PR 7**<br>P4 上 | ✅ 已完成（2026-11-05）：`PagePublishService` 发布链路 —— 读设计并重校验 → `renderFiles` → 落进工作区（B 覆盖 / C 存在即跳过）→ 提交 `gen_branch` → 推送 → 回读远端 → 打 tag `v{projectCode}-{pageCode}-{version}` → 写 `lc_page_version` + `lc_publish_log` → 推进 `lc_page` 发布四列与 `lc_project.last_publish_time`。no-op 幂等；四条现场守卫（未初始化 / 工作区脏 / 分支缺失 / 远端已前进）都在动手前拒绝；发布前 C 档引用体检默认阻断、`force` 显式放行并把命中留在结果里。顺带三处：`ls-remote` 解引用附注 tag、重铺固定代码放过 B/C 档形状、工作区定位规则收成 `WorkspacePaths` | 重复点同一份设计发布不产生空 commit、不涨版本、不打第二个 tag ✅；推送失败不留下半成品（远端拿不到半个提交、库里不记成功版本，重试把那个提交补推上去）✅；tag 与 `lc_page_version.commit_sha` 对得上 ✅；主干全程未被写 ✅；删掉字段后带着旧引用的扩展代码发布不出去（单测 10 例 + IT 一条 force 放行）✅。全部走真 JGit + 本机裸仓库（`PagePublishApiTest` 9 例），后端 312 例全绿 | PR 6 |
 | **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |
 | **PR 9**<br>P5 | 三级回滚（`revert` 新提交）；端到端联调；租户隔离回归 | 建项目 → 建模 → 设计 → 发布 → 合并 → 在干净机器 clone 该仓库 `docker compose up` 跑通并可用 | PR 8 |
 
