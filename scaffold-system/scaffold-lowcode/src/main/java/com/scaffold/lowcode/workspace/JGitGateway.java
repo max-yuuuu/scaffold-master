@@ -61,6 +61,8 @@ public class JGitGateway implements GitGateway {
 
     private static final String REMOTE = "origin";
     private static final String HEADS_PREFIX = "refs/heads/";
+    /** 远端跟踪引用的前缀：fetch 带回的读数落在这里，本地分支一条都不动 */
+    private static final String REMOTE_HEADS_PREFIX = "refs/remotes/" + REMOTE + "/";
     private static final String TAGS_PREFIX = "refs/tags/";
     /** ls-remote 的解引用行后缀：{@code refs/tags/v1^{} } 那一行给的才是 tag 指的提交 */
     private static final String PEEL_SUFFIX = "^{}";
@@ -279,6 +281,23 @@ public class JGitGateway implements GitGateway {
     }
 
     @Override
+    public void fetch(Path dir) {
+        try (Git git = open(dir)) {
+            git.fetch()
+                    .setRemote(REMOTE)
+                    // 与 git 自己给 origin 配的那条一致：带 + 是因为远端分支被强推过也要如实跟上，
+                    // 删掉的分支要一起清掉，否则审查读到的是一条远端已经不存在的旧引用
+                    .setRefSpecs(new RefSpec("+refs/heads/*:" + REMOTE_HEADS_PREFIX + "*"))
+                    .setRemoveDeletedRefs(true)
+                    .setTimeout(timeoutSeconds)
+                    .setTransportConfigCallback(transportConfig())
+                    .call();
+        } catch (GitAPIException | IOException e) {
+            throw new WorkspaceGitException(ProjectSyncStatus.UNREACHABLE, describe("同步远端引用失败", "", e));
+        }
+    }
+
+    @Override
     public boolean isDirty(Path dir) {
         try (Git git = open(dir)) {
             return !git.status().call().isClean();
@@ -326,6 +345,14 @@ public class JGitGateway implements GitGateway {
             // 由调用方决定是拒绝还是先同步
             if (one == null || other == null) {
                 return null;
+            }
+            // 十六进制提交号哪怕对象不在本地也能 resolve 出来，所以要真查一次对象在不在：
+            // 「这两个提交还没进本地对象库」是审查前没 fetch 的正常状态，不是错误，
+            // 让它炸成 Missing unknown 就把「请先同步」这件可解释的事变成一条 JGit 内部报错
+            try (ObjectReader probe = repo.newObjectReader()) {
+                if (!probe.has(one) || !probe.has(other)) {
+                    return null;
+                }
             }
             walk.markStart(walk.parseCommit(one));
             walk.markStart(walk.parseCommit(other));

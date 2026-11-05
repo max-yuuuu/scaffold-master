@@ -42,6 +42,8 @@ public class StubGitGateway implements GitGateway {
     boolean noChangesOnCommit;
     final List<String> pushedBranches = new ArrayList<>();
     final List<String> pushedTags = new ArrayList<>();
+    /** 用例可以据此断言「审查前确实同步过远端读数」 */
+    final List<String> fetches = new ArrayList<>();
     final Map<String, String> localTags = new LinkedHashMap<>();
 
     void reset() {
@@ -55,6 +57,7 @@ public class StubGitGateway implements GitGateway {
         noChangesOnCommit = false;
         pushedBranches.clear();
         pushedTags.clear();
+        fetches.clear();
         localTags.clear();
     }
 
@@ -153,6 +156,11 @@ public class StubGitGateway implements GitGateway {
     }
 
     /* ── 合并请求的只读原语：桩不模拟仓库内容，被调到就是用例走错了门 ── */
+
+    @Override
+    public void fetch(Path dir) {
+        fetches.add(dir.toString());
+    }
 
     @Override
     public String mergeBase(Path dir, String oneRev, String otherRev) {

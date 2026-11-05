@@ -112,6 +112,11 @@ public class LocalBareGitGateway implements GitGateway {
     /* ── 合并请求的只读原语：都是读本份工作区，不涉及远端，直接转给真 JGit ── */
 
     @Override
+    public void fetch(Path dir) {
+        jgit.fetch(dir);
+    }
+
+    @Override
     public String mergeBase(Path dir, String oneRev, String otherRev) {
         return jgit.mergeBase(dir, oneRev, otherRev);
     }

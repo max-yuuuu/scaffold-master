@@ -73,6 +73,14 @@ public interface GitGateway {
     void pushTag(Path dir, String tagName);
 
     /**
+     * 带回远端各分支的读数到 {@code refs/remotes/origin/*}，并清掉远端已删除的那些。
+     *
+     * <p>工作区是按发布分支 clone 的，主干上有什么它本来不知道；审查与预检都要读主干，所以先 fetch。
+     * 只动远端跟踪引用：本地分支、HEAD 与工作区文件一律不碰（这条由 JGitGatewayTest 钉住）。
+     */
+    void fetch(Path dir);
+
+    /**
      * 两条历史的分叉点，等价于 {@code git merge-base}。
      *
      * <p>合并请求的清单要按 {@code merge-base..源} 算而不是 {@code 目标..源}：后者会把主干上

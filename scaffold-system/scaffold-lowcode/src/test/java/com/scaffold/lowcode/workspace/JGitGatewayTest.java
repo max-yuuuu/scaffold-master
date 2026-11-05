@@ -366,6 +366,35 @@ class JGitGatewayTest {
         }
     }
 
+    @Test
+    void fetch带回远端读数而不动本地分支与工作区() {
+        Path author = tempDir.resolve("author");
+        gateway.initEmpty(author, remoteUrl, "main");
+        write(author, "a.txt", "1\n");
+        String first = gateway.commitAll(author, "chore: 第一个提交");
+        gateway.pushBranch(author, "main");
+
+        Path reader = tempDir.resolve("reader");
+        gateway.cloneBranch(reader, remoteUrl, "main");
+
+        // 主干又前进了一步：读侧的工作区此刻还不知道，这正是审查前要先 fetch 的理由
+        write(author, "b.txt", "2\n");
+        String second = gateway.commitAll(author, "chore: 第二个提交");
+        assertThat(second).isNotEqualTo(first);
+        gateway.pushBranch(author, "main");
+
+        assertThat(gateway.mergeBase(reader, "refs/remotes/origin/main", second)).isNull();
+
+        gateway.fetch(reader);
+
+        // fetch 之后第二个提交才进了本地对象库，分叉点才可能算得出来
+        assertThat(gateway.mergeBase(reader, "refs/remotes/origin/main", second)).isEqualTo(second);
+        // 但 fetch 只是带回远端读数：本地分支与该分支上的工作区内容都得原地不动，
+        // 否则一次「看看有没有要合的」就把人（或发布链路）的现场改了
+        assertThat(gateway.localBranchSha(reader, "main")).isEqualTo(first);
+        assertThat(gateway.isDirty(reader)).isFalse();
+    }
+
     private static String remoteShaOf(List<RemoteRef> refs, String branch) {
         return refs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
     }
