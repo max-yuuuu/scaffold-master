@@ -158,4 +158,17 @@ public interface LcProjectMapper {
             WHERE id = #{id} AND deleted = 0
             """)
     int softDeleteProject(@Param("id") Long id, @Param("operator") String operator);
+
+    /**
+     * 页面发布成功之后推进项目的读数。
+     *
+     * <p>不复用 {@link #updateSyncState} —— 那个方法的语义是「仓库生命周期变了」，它会把 sync_status
+     * 一起改掉；发布一次页面不该把「就绪」改成别的状态，也不该被写成一条同步说明。
+     */
+    @Update("""
+            UPDATE lc_project
+            SET last_commit_sha = #{commitSha}, last_publish_time = NOW(), update_by = #{operator}
+            WHERE id = #{id} AND deleted = 0
+            """)
+    int markPublished(@Param("id") Long id, @Param("commitSha") String commitSha, @Param("operator") String operator);
 }

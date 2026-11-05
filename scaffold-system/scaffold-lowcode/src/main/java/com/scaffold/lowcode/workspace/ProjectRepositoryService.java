@@ -1,7 +1,6 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
-import com.scaffold.common.tenant.TenantContext;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import com.scaffold.lowcode.project.mapper.LcProjectMapper;
@@ -41,7 +40,7 @@ public class ProjectRepositoryService {
 
     private final LcProjectMapper projectMapper;
     private final GitGateway gateway;
-    private final Path workspaceRoot;
+    private final WorkspacePaths paths;
     private final String configuredSourceRoot;
     private final String scaffoldUiVersion;
     private final Set<Long> running = ConcurrentHashMap.newKeySet();
@@ -49,13 +48,13 @@ public class ProjectRepositoryService {
     public ProjectRepositoryService(
             LcProjectMapper projectMapper,
             GitGateway gateway,
-            @Value("${scaffold.lowcode.workspace-root:./lowcode-workspace}") String workspaceRoot,
+            WorkspacePaths paths,
             @Value("${scaffold.lowcode.scaffold-source-root:}") String configuredSourceRoot,
             @Value("${scaffold.lowcode.scaffold-ui-version:" + ScaffoldTrimPolicy.DEFAULT_SCAFFOLD_UI_VERSION + "}")
             String scaffoldUiVersion) {
         this.projectMapper = projectMapper;
         this.gateway = gateway;
-        this.workspaceRoot = Path.of(workspaceRoot).toAbsolutePath().normalize();
+        this.paths = paths;
         this.configuredSourceRoot = configuredSourceRoot;
         this.scaffoldUiVersion = scaffoldUiVersion;
     }
@@ -118,7 +117,7 @@ public class ProjectRepositoryService {
         String mainBranch = requireBranch(project.get("mainBranch"));
         String genBranch = requireBranch(project.get("genBranch"));
         String relativePath = workspaceRelativePath(project);
-        Path workspace = workspaceRoot.resolve(relativePath);
+        Path workspace = paths.root().resolve(relativePath);
         if (Files.exists(workspace) && !isEmptyDirectory(workspace)) {
             throw new BusinessException("工作区已有内容：" + relativePath + "。请先重建工作区，再初始化");
         }
@@ -222,7 +221,7 @@ public class ProjectRepositoryService {
         Map<String, Object> project = requireProject(projectId);
         String repoUrl = text(project.get("repoUrl"));
         String genBranch = requireBranch(project.get("genBranch"));
-        Path workspace = workspaceRoot.resolve(workspaceRelativePath(project));
+        Path workspace = workspaceDir(project);
         boolean exists = Files.isDirectory(workspace.resolve(".git"));
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -267,7 +266,7 @@ public class ProjectRepositoryService {
     public Map<String, Object> resetWorkspace(Long projectId) {
         Map<String, Object> project = requireProject(projectId);
         String genBranch = requireBranch(project.get("genBranch"));
-        Path workspace = workspaceRoot.resolve(workspaceRelativePath(project));
+        Path workspace = workspaceDir(project);
         if (!Files.isDirectory(workspace)) {
             // 目录不在（换过服务器、清过卷，或手工删过目录）而状态还停在就绪，项目会被两端守卫同时挡死：
             // 「已就绪不许再初始化」+「没有工作区不许清空」。这里只把平台侧状态清回未初始化，
@@ -292,7 +291,10 @@ public class ProjectRepositoryService {
             }
             String localSha = gateway.localBranchSha(workspace, genBranch);
             String remoteSha = remoteSha(gateway.lsRemote(RepoUrlValidator.normalize(text(project.get("repoUrl")))), genBranch);
-            if (localSha != null && !localSha.equals(remoteSha)) {
+            // 「本地与远端不一样」有两种，只有一种会丢东西：本地那个提交正是平台上次推上去的（记在
+            // last_commit_sha 上），说明是远端被别人推进过，重建只是重新追上远端；本地是记录之外的提交，
+            // 那里面有还没推出去的内容，删掉就是静默丢代码。
+            if (localSha != null && !localSha.equals(remoteSha) && !localSha.equals(text(project.get("lastCommitSha")))) {
                 throw new BusinessException("发布分支 " + genBranch + " 上有未推送提交（本地 " + localSha
                         + "，远端 " + (remoteSha == null ? "无" : remoteSha) + "）。先推送或搬走这些提交，再重建工作区");
             }
@@ -317,17 +319,13 @@ public class ProjectRepositoryService {
         return project;
     }
 
-    /** 工作区相对路径：{租户 ID}/{项目编码}，两个分量都不是用户自由填写的字符串 */
+    /** 定位规则只在 {@link WorkspacePaths} 有一份，这里只是把项目行拆开传给它 */
     private String workspaceRelativePath(Map<String, Object> project) {
-        Long tenantId = TenantContext.getTenantId();
-        if (tenantId == null) {
-            throw new BusinessException("缺少租户上下文，无法定位工作区");
-        }
-        String projectCode = text(project.get("projectCode"));
-        if (projectCode == null || !projectCode.matches("^[a-z][a-z0-9-]{1,31}$")) {
-            throw new BusinessException("项目编码不符合约定，无法定位工作区目录：" + projectCode);
-        }
-        return tenantId + "/" + projectCode;
+        return paths.relative(text(project.get("projectCode")));
+    }
+
+    private Path workspaceDir(Map<String, Object> project) {
+        return paths.root().resolve(workspaceRelativePath(project));
     }
 
     /** §6.3：仓库非空时要求认得出这是脚手架仓库，避免把平台产物推进一个不相干的仓库 */

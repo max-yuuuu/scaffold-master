@@ -1,6 +1,7 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.generate.GeneratedPaths;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -23,6 +24,10 @@ import java.util.stream.Stream;
  * 发布分支，快照就是它应有的全量内容，上一版遗留的文件必须跟着删（{@link #pruneOutsideSnapshot}），
  * 否则会出现「组件已抽成 npm 包、仓库里还留着源码拷贝」这种两份物料并存的状态。
  * 主干上人工写的东西不在此列 —— 平台只写发布分支。
+ *
+ * <p>清理时**放过页面发布可写的形状**（{@link GeneratedPaths}）：那些文件里 B 档是上一次发布的产物，
+ * 下一次发布自己会覆盖；C 档是人在扩展点上写的业务，平台永远无权删（方案 §5.2）。少了这层判断，
+ * 「重建工作区 + 重新初始化」就会把人写的扩展代码从发布分支上删掉，而它是平台唯一产不出来的东西。
  */
 public final class ScaffoldSnapshotWriter {
 
@@ -71,7 +76,8 @@ public final class ScaffoldSnapshotWriter {
                 if (path.equals(workspace) || isGitMetadata(workspace, path) || !Files.isRegularFile(path)) {
                     continue;
                 }
-                if (!keep.contains(path.normalize())) {
+                if (!keep.contains(path.normalize())
+                        && !GeneratedPaths.isPagePublishOwned(workspace.relativize(path).toString())) {
                     doomed.add(path);
                 }
             }

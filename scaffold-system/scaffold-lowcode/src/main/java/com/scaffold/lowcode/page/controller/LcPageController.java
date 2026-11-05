@@ -6,8 +6,10 @@ import com.scaffold.common.domain.R;
 import com.scaffold.framework.audit.OperLog;
 import com.scaffold.framework.security.RequiresPermission;
 import com.scaffold.lowcode.page.domain.PageStatusRequest;
+import com.scaffold.lowcode.page.domain.PagePublishRequest;
 import com.scaffold.lowcode.page.domain.PageWriteRequest;
 import com.scaffold.lowcode.page.service.LcPageService;
+import com.scaffold.lowcode.publish.PagePublishService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -30,9 +32,11 @@ import java.util.Map;
 public class LcPageController {
 
     private final LcPageService pageService;
+    private final PagePublishService publishService;
 
-    public LcPageController(LcPageService pageService) {
+    public LcPageController(LcPageService pageService, PagePublishService publishService) {
         this.pageService = pageService;
+        this.publishService = publishService;
     }
 
     @GetMapping("/pages")
@@ -82,5 +86,18 @@ public class LcPageController {
     public R<Void> delete(@PathVariable Long id) {
         pageService.delete(id);
         return R.success(null);
+    }
+
+    /**
+     * 发布页面：生成产物并推到项目的发布分支（方案 §5.1）。
+     *
+     * <p>权限单独一个 {@code lowcode:page:publish}：能编辑页面的人只是改设计，而这一笔会往租户自己的
+     * 仓库推代码，跟 V7 把「同步仓库」与「编辑项目」分开是同一个理由。
+     */
+    @PostMapping("/pages/{id}/publish")
+    @RequiresPermission("lowcode:page:publish")
+    @OperLog(module = "页面设计", action = "发布页面")
+    public R<Map<String, Object>> publish(@PathVariable Long id, @Valid @RequestBody PagePublishRequest request) {
+        return R.success(publishService.publish(id, request.getChangeDesc()));
     }
 }
