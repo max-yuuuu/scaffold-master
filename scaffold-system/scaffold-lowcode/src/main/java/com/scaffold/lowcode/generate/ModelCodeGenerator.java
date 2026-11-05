@@ -1,6 +1,7 @@
 package com.scaffold.lowcode.generate;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.design.PageTarget;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -30,7 +31,17 @@ public class ModelCodeGenerator {
      * @param fields 该模型的字段，按 {@code sort_order} 排好
      */
     public List<GeneratedFile> renderFiles(Map<String, Object> model, List<Map<String, Object>> fields) {
-        Map<String, Object> root = GenerationInput.of(model, fields);
+        return renderFiles(model, fields, null);
+    }
+
+    /**
+     * 带页面设计的生成（方案 §1.5 ②「页面是形、模型是料」）。
+     *
+     * @param target 发布页面那条链路给的合流入口；{@code null} 就是 zip 下载与老代码生成页，
+     *               页面形状回到模型上的 {@code is_list} / {@code is_query} / {@code is_insert} 三个勾选
+     */
+    public List<GeneratedFile> renderFiles(Map<String, Object> model, List<Map<String, Object>> fields, PageTarget target) {
+        Map<String, Object> root = GenerationInput.of(model, fields, target);
         rejectUnsupportedSwitches(root);
 
         String module = string(root.get("module"));

@@ -77,6 +77,23 @@ public final class GeneratedPaths {
                 + "。A 档（pom、app 壳、组件、样式、Dockerfile）只在项目初始化与底座升级时写入，不随页面发布更新");
     }
 
+    /**
+     * 这个路径是不是页面发布有权写的（B 或 C 档）。
+     *
+     * <p>给重铺固定代码用：A 档快照之外的文件里，凡是页面发布可写的形状都不能删 —— B 档是上一次发布
+     * 的产物（下次发布自己会覆盖），C 档是人在扩展点上写的业务，平台无权清理（方案 §5.2「C 档平台永不碰」）。
+     * 少这一层判断，「重建工作区 + 重新初始化」就会把发布过的页面连人写的扩展代码一起从发布分支删掉。
+     */
+    public static boolean isPagePublishOwned(String path) {
+        try {
+            tier(path);
+            return true;
+        } catch (RuntimeException ignored) {
+            // 认不出形状就是 A 档或不该由平台管的路径，交给快照清理
+            return false;
+        }
+    }
+
     public static String entity(String module, String className) {
         return BUSINESS_ROOT + module + "/domain/" + className + ".java";
     }

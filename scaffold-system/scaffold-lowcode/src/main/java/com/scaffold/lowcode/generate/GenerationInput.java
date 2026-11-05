@@ -210,7 +210,8 @@ public final class GenerationInput {
                 .collect(Collectors.joining(", ")));
         root.put("menuButtons", menuButtons);
         // 页面顶部与按钮：形状由设计给，没有设计就回到 PR 5 那三件固定动作
-        root.put("pageTitle", target == null ? blankToDefault(text(model.get("modelDesc")), modelName) + "管理" : target.design().title());
+        root.put("pageTitle", target == null ? blankToDefault(text(model.get("modelDesc")), modelName) + "管理"
+                : blankToDefault(target.design().title(), blankToDefault(target.pageName(), modelName)));
         root.put("pageDesc", target == null || target.design().description() == null
                 ? "本页由低代码设计器按模型定义生成；要改字段回到设计器改模型再发布。" : target.design().description());
         root.put("toolbarButtons", pageButtons(target, "Toolbar", modelName, permissionPrefix));
@@ -246,7 +247,9 @@ public final class GenerationInput {
             return MENU_BUTTONS;
         }
         List<String> actions = new ArrayList<>(actionsOf(target, "Toolbar"));
-        actionsOf(target, "RowActions").stream().filter(actions::contains).forEach(actions::add);
+        // 行操作里的动作要并进来而不是「只留工具栏里已经有的」：编辑与删除通常只出现在行上，
+        // 按交集筛就把它们全丢了 —— 页面上按钮在、菜单不种权限点，点下去是 403
+        actionsOf(target, "RowActions").stream().filter(action -> !actions.contains(action)).forEach(actions::add);
         List<Map<String, Object>> buttons = new ArrayList<>();
         int sort = 1;
         for (String suffix : List.of("add", "edit", "remove")) {

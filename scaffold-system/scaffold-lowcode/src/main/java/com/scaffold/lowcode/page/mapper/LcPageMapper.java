@@ -153,6 +153,51 @@ public interface LcPageMapper {
     @Select("SELECT COUNT(*) FROM lc_page WHERE project_id = #{projectId} AND deleted = 0")
     long countPagesOfProject(@Param("projectId") Long projectId);
 
+    /**
+     * 发布要吃的页面行：除了设计原文，还要当前版本号与最近一次发布结果。
+     *
+     * <p>不复用 {@link #selectPageBrief(Long)} 是因为那份是给设计器读的，它不带发布四列；
+     * 而发布这条链路每次都要按 {@code current_version} 算下一个版本号，缺了它就得再查一次表。
+     */
+    @Select("""
+            SELECT p.id,
+                   p.project_id AS projectId,
+                   p.model_id AS modelId,
+                   p.page_code AS pageCode,
+                   p.page_name AS pageName,
+                   p.route_path AS routePath,
+                   p.menu_icon AS menuIcon,
+                   p.menu_sort AS menuSort,
+                   p.design_json AS design,
+                   p.status,
+                   p.current_version AS currentVersion,
+                   p.publish_status AS publishStatus,
+                   m.model_code AS modelCode
+            FROM lc_page p
+            LEFT JOIN lc_model m ON m.id = p.model_id
+            WHERE p.id = #{id}
+              AND p.deleted = 0
+            """)
+    Map<String, Object> selectPageForPublish(@Param("id") Long id);
+
+    /**
+     * 推进页面的发布状态。{@code version} 传 null 表示这次动作不认新版本号（无变更与失败）。
+     */
+    @Update("""
+            <script>
+            UPDATE lc_page
+            SET publish_status = #{status},
+                last_publish_time = NOW(),
+                publish_message = #{message}
+                <if test="version != null">, current_version = #{version}</if>
+                , update_by = #{operator}
+            WHERE id = #{id} AND deleted = 0
+            </script>
+            """)
+    int updatePublishState(@Param("id") Long id, @Param("version") Integer version,
+                           @Param("status") int status, @Param("message") String message,
+                           @Param("operator") String operator);
+
     @Insert("""
             INSERT INTO lc_page (project_id, model_id, page_code, page_name, page_desc, page_type,
                                  route_path, menu_icon, menu_sort, design_json, ref_fields,
