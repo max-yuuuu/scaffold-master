@@ -18,7 +18,7 @@
   - 同样的设计再点一次 → `status=2`、`version` 仍是 1、`tagName` 为空、远端既没有第二个提交也没有 `tag-2`：no-op 幂等在真仓库上成立。
   - 修完下面两处缺陷后发第三次 → v2（`f53b2a3` + `tag-2`），产物里菜单权限点变成 `list/add/edit/remove` 四个、页面大标题变成「销售订单页」。
 - **真机产物暴露的两处 PR 6B 合流缺陷**（都先写成红用例再修，`DesignGenerationTest` 现 7 例）：① `menuButtonsOf` 把行操作并进工具栏那份清单时写成了交集（`filter(actions::contains)`），而编辑 / 删除通常只出现在行上 —— 于是菜单只种了 `:add`，生成页面两颗按钮照渲染、Controller 上 `@RequiresPermission(:edit / :remove)` 也在，项目里的角色拿不到这两个权限点，**按钮看得见、点下去 403**；② `PageDesign.title()` 在画布没填标题时兜到 `modelRef`，客户页面的大标题显示成 `sales_order` 这样的英文编码（画布自己在 `9f20981` 已经改成兜页面名，生成物没跟着同一口径）。这两处各段单测都只看半边：`DesignGenerationTest` 原来只断言「设计里没有删除就不该有 `:remove`」，那句拿错的实现同样是绿的；页面标题则从没被断过。
-- **还没做/没验的**：① 设计器 UI 正在重构，「在页面上点发布按钮」这一段没验（接口层与真仓库那一跳都是真东西）；② `lc_page_version.publish_type` 只写 `CREATE` / `UPDATE`，页面下线的 `DELETE` 与 PR 9 的 `ROLLBACK` 都还没有产出方。
+- **还没做/没验的**：① 设计器 UI 正在重构，「在页面上点发布按钮」这一段没验（接口层与真仓库那一跳都是真东西）；② `lc_page_version.publish_type` 只写 `CREATE` / `UPDATE`，页面下线的 `DELETE` 与 PR 9 的 `ROLLBACK` 都还没有产出方。、
 
 
 ## 2026-11-05（PR 6 前两刀：页面设计入库，生成期把「形」与「料」合流）

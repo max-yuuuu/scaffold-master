@@ -1,0 +1,10 @@
+{
+  "description": "为企业团队提供低代码页面设计工作台，可通过拖拽组件、编辑属性和实时预览快速构建与发布业务界面。",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
