@@ -61,10 +61,10 @@ async function openDetail(row: MergeRequestRow) {
   }
 }
 
-/** 重算按项目走：一个项目一份仓库，选哪个项目就算哪个 */
+/** 按项目算：一个项目一份仓库，选哪个项目就算哪个 —— 这一笔会真连远端仓库 */
 async function refresh() {
   if (!list.query.projectId) {
-    pushToast('先选项目再重算：合并请求是按项目的仓库算的', 'info')
+    pushToast('先选项目再生成：合并请求是按项目的仓库算的', 'info')
     return
   }
   refreshing.value = true
@@ -72,7 +72,7 @@ async function refresh() {
     const result = await platformApi.mergeRequests.refresh({ projectId: Number(list.query.projectId) })
     detail.value = result
     detailOpen.value = true
-    pushToast(`已重算：${result.title}`, result.checkStatus === 2 ? 'danger' : 'ok')
+    pushToast(`已生成：${result.title}`, result.checkStatus === 2 ? 'danger' : 'ok')
     await list.search()
   } catch (error) {
     toastError(error, '重算合并请求失败')
@@ -87,14 +87,14 @@ const CHANGE_TONE: Record<string, string> = { ADD: 'ok', MODIFY: 'info', DELETE:
 <template>
   <ListPage
     title="合并请求"
-    desc="平台只把生成物推到发布分支；主干上的每一笔都得人看过清单、确认过能不能自动合，才由合并进去。"
+    desc="平台只把生成物推到发布分支；主干上的每一笔都得人看过清单、确认过能不能自动合，才由合并进去。这一页没有单独的「新建」：选一个项目，点「生成合并请求」就是发起 —— 它按项目仓库现算一份清单与预检结论，再点一次是就地刷新同一条（同一分支对只留一条待审请求）。"
     table-title="合并请求列表"
     :list="list"
     :columns="columns"
   >
     <template #actions>
       <PermissionButton perm="lowcode:merge-request:sync" variant="primary" icon="refresh" :loading="refreshing" @click="refresh">
-        重算所选项目
+        生成合并请求
       </PermissionButton>
     </template>
 
