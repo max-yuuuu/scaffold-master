@@ -229,8 +229,8 @@ function blockSummary(block: UINode) {
           type="button"
           @click="pick(null)"
         >
-          <strong>{{ root.props.title || '未命名页面' }}</strong>
-          <em>{{ root.props.desc || '点这里改页面标题与说明' }}</em>
+          <strong>{{ root.props.title || page.pageName || '未命名页面' }}</strong>
+          <em>{{ root.props.desc || '点这里写页面说明' }}</em>
         </button>
 
         <section v-for="(block, bi) in blocks" :key="block.key" class="dz-block" :data-type="block.type">
