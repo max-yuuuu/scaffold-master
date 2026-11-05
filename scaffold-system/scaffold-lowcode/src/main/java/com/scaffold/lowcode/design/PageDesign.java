@@ -118,9 +118,14 @@ public final class PageDesign {
         return modelRef;
     }
 
-    /** 页面标题（画布最顶上那一行，也是生成菜单里的菜单名） */
+    /**
+     * 画布最顶上那一行标题，人在属性面板里填。
+     *
+     * <p>没填就是 {@code null} 而不是模型编码：兜底要由读它的人按自己的语境决定（菜单与页面标题兜到
+     * 页面名，PR 7 真机产物上那页曾把 {@code sales_order} 这样的编码显示成客户页面的大标题）。
+     */
     public String title() {
-        return root.text("title", modelRef);
+        return root.text("title", null);
     }
 
     /** 页面说明，对应 ListPage 的 desc */

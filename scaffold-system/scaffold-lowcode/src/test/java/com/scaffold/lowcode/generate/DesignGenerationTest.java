@@ -159,6 +159,49 @@ class DesignGenerationTest {
         assertThat(renderer.render("sql/Menu.sql.ftl", root)).contains("'订单主表'", "'grid'");
     }
 
+    /**
+     * 菜单权限点要收设计里出现过的全部动作，不能只看在工具栏那几个。
+     *
+     * <p>这条是 PR 7 真机演练撞出来的：设计把「改」「删」摆在行操作里，页面上两颗按钮都在，
+     * 菜单却只种了 :add —— 项目里的角色拿不到 :edit / :remove，按钮点了就是 403。
+     * 「看着配置对了、实际不能用」比报错难查得多，所以这里既钉工具栏那半边，也钉行操作那半边。
+     */
+    @Test
+    void 行操作里的动作也要种进菜单权限点() {
+        Map<String, Object> root = GenerationInput.of(model(true, true), richFields(), target());
+        String menu = renderer.render("sql/Menu.sql.ftl", root);
+        assertThat(menu).contains("order:order:add").contains("order:order:edit").doesNotContain("order:order:remove");
+
+        String withDelete = DESIGN.replace("{ \"type\": \"Button\", \"props\": { \"label\": \"改\", \"action\": \"edit\" } }",
+                "{ \"type\": \"Button\", \"props\": { \"label\": \"改\", \"action\": \"edit\" } }, "
+                        + "{ \"type\": \"Button\", \"props\": { \"label\": \"删\", \"action\": \"delete\", \"danger\": true } }");
+        assertThat(withDelete).as("夹具里那行改按钮的原文要先存在，否则这条替换是空跑").isNotEqualTo(DESIGN);
+        Map<String, Object> both = GenerationInput.of(model(true, true), richFields(),
+                new PageTarget("订单列表", null, null, null, PageDesign.parse(withDelete, DesignContext.of("order", richFields()))));
+        String nextMenu = renderer.render("sql/Menu.sql.ftl", both);
+        assertThat(nextMenu).contains("order:order:edit").contains("order:order:remove");
+        // 排序按「新增 / 编辑 / 删除」固定，不随设计里的摆放顺序漂
+        assertThat(nextMenu.indexOf("order:order:edit")).isLessThan(nextMenu.indexOf("order:order:remove"));
+    }
+
+    /** 设计没填画布标题时，页面标题兜到页面名而不是模型编码（画布上也是这么兜的，两处一个口径） */
+    @Test
+    void 设计没填标题时页面标题兜到页面名而不是模型编码() {
+        String withoutProps = DESIGN.replace(", \"props\": { \"title\": \"订单台账\", \"desc\": \"只看得到已支付的那几单\" }", "");
+        assertThat(withoutProps).as("夹具里 PageContainer 那份属性要先存在").isNotEqualTo(DESIGN);
+        PageTarget target = new PageTarget("销售订单页", null, null, null,
+                PageDesign.parse(withoutProps, DesignContext.of("order", richFields())));
+
+        Map<String, Object> root = GenerationInput.of(model(true, true), richFields(), target);
+        assertThat(root.get("pageTitle")).isEqualTo("销售订单页");
+        // 菜单名本来就用页面名，两处不该给出两个答案
+        assertThat(root.get("menuName")).isEqualTo("销售订单页");
+        assertThat(renderer.render("frontend/ListView.vue.ftl", root)).contains("title=\"销售订单页\"");
+        // 画布上真填了标题就以它为准
+        assertThat(GenerationInput.of(model(true, true), richFields(), target()).get("pageTitle"))
+                .isEqualTo("订单台账");
+    }
+
     /** 字段清单读 code，查询参数清单读 name（同一个键在两张表里叫法不同，断言里不想再分两个方法） */
     private static List<String> codes(Object list) {
         return ((List<?>) list).stream().map(item -> {
