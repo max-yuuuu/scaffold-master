@@ -1,5 +1,7 @@
 package com.scaffold.lowcode.merge.service;
 
+import com.scaffold.common.domain.PageQuery;
+import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.merge.domain.MergeRequestState;
@@ -112,12 +114,25 @@ public class MergeRequestService {
         return detail(requestId);
     }
 
-    /** 列表：按项目看还活着的与已收口的请求，文件数与冲突数在那两个子查询里现算 */
-    public List<Map<String, Object>> list(Long projectId) {
+    /**
+     * 列表：文件数与冲突数在 SQL 的两个子查询里现算，状态文案在这里现给。
+     *
+     * <p>文案只由 {@link MergeRequestState} 给：让前端拿数字自己拼词，两处就会开始各说各话，
+     * 而那时改一个状态词要同时动前后端。
+     */
+    public PageResult<Map<String, Object>> list(PageQuery query, Long projectId) {
         if (projectId != null) {
             requireProject(projectId);
         }
-        return requestMapper.selectRequests(projectId);
+        long total = requestMapper.countRequests(projectId);
+        List<Map<String, Object>> rows = total == 0
+                ? List.of()
+                : requestMapper.selectRequests(projectId, query.normalizedPageSize(), query.offset());
+        rows.forEach(row -> {
+            row.put("statusText", MergeRequestState.text(number(row.get("status"))));
+            row.put("checkStatusText", MergeRequestState.checkText(number(row.get("checkStatus"))));
+        });
+        return PageResult.of(rows, total, query.normalizedPageNum(), query.normalizedPageSize());
     }
 
     /**

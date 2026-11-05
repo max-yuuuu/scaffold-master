@@ -81,3 +81,26 @@ test('发布只送 force 与 changeDesc 两个入参，版本号由后端按 cur
   assert.equal(result.status, 1)
   assert.equal(result.tagName, 'vorder-serive-sales_order_page-2')
 })
+
+test('merge request api maps list detail and refresh to the read-only backend endpoints', async () => {
+  const calls: Array<{ url: string, method: string, body?: string }> = []
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body as string | undefined })
+    return new Response(JSON.stringify({ code: 200, message: 'success', data: [], traceId: 't' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  const api = createPlatformApi(createHttpClient({ baseUrl: '/api', tokenProvider: () => 'token', fetcher }))
+
+  await api.mergeRequests.list({ pageNum: 1, pageSize: 20 })
+  await api.mergeRequests.detail(12)
+  await api.mergeRequests.refresh({ projectId: 3 })
+
+  assert.equal(calls[0].url, '/api/lowcode/merge-requests?pageNum=1&pageSize=20')
+  assert.equal(calls[1].url, '/api/lowcode/merge-requests/12')
+  // 重算是 POST 而不是 GET：它会真连远端仓库（fetch 与 ls-remote），不能挂在「看一眼」上被预取
+  assert.equal(calls[2].method, 'POST')
+  assert.equal(calls[2].url, '/api/lowcode/merge-requests/refresh')
+  assert.deepEqual(JSON.parse(calls[2].body ?? '{}'), { projectId: 3 })
+})

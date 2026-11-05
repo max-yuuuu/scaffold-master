@@ -1,5 +1,7 @@
 package com.scaffold.lowcode.merge.controller;
 
+import com.scaffold.common.domain.PageQuery;
+import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.domain.R;
 import com.scaffold.framework.audit.OperLog;
 import com.scaffold.framework.security.RequiresPermission;
@@ -14,7 +16,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -37,8 +38,8 @@ public class LcMergeRequestController {
 
     @GetMapping("/merge-requests")
     @RequiresPermission("lowcode:merge-request:list")
-    public R<List<Map<String, Object>>> requests(@RequestParam(required = false) Long projectId) {
-        return R.success(service.list(projectId));
+    public R<PageResult<Map<String, Object>>> requests(PageQuery query, @RequestParam(required = false) Long projectId) {
+        return R.success(service.list(query, projectId));
     }
 
     /** 详情带变更文件清单（冲突的排在最前）；打开时若目标分支已前进，这一条会当场转陈旧 */

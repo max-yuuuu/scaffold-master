@@ -33,8 +33,17 @@ public interface LcMergeRequestMapper {
             FROM lc_merge_request r
             WHERE #{projectId} IS NULL OR r.project_id = #{projectId}
             ORDER BY r.id DESC
+            LIMIT #{limit} OFFSET #{offset}
             """)
-    List<Map<String, Object>> selectRequests(@Param("projectId") Long projectId);
+    List<Map<String, Object>> selectRequests(@Param("projectId") Long projectId,
+                                             @Param("limit") int limit,
+                                             @Param("offset") long offset);
+
+    @Select("""
+            SELECT COUNT(*) FROM lc_merge_request r
+            WHERE #{projectId} IS NULL OR r.project_id = #{projectId}
+            """)
+    long countRequests(@Param("projectId") Long projectId);
 
     @Select("""
             SELECT id, project_id AS projectId, title, description,

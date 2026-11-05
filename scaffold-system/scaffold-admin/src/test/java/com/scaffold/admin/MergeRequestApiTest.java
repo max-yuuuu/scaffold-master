@@ -136,6 +136,19 @@ class MergeRequestApiTest {
         // 只算不合：主干还停在人自己那个提交上，一个提交号都没变
         assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(mainBeforeRefresh);
         assertThat(requestRows(fx.projectId)).isEqualTo(1L);
+
+        // 列表那一条也自带文案与那两个数：状态词的口径只在后端 text() 一处，
+        // 让前端自己拿数字去猜词，两处就会开始各说各话。分页沿用底座那套 PageResult，不是裸数组
+        Map<String, Object> page = castMap(get("/api/lowcode/merge-requests?projectId=" + fx.projectId
+                + "&pageNum=1&pageSize=20").get("data"));
+        assertThat(number(page.get("total"))).isEqualTo(1);
+        List<Map<String, Object>> rows = castList(page.get("rows"));
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).get("title")).isEqualTo(data.get("title"));
+        assertThat(number(rows.get(0).get("fileCount"))).isEqualTo(1);
+        assertThat(number(rows.get(0).get("conflictCount"))).isZero();
+        assertThat(String.valueOf(rows.get(0).get("statusText"))).isEqualTo("待审");
+        assertThat(String.valueOf(rows.get(0).get("checkStatusText"))).isEqualTo("可自动合并");
     }
 
     @Test
