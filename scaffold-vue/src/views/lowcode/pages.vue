@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Field, Select, StatusTag, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
@@ -19,6 +20,9 @@ import { initFromModel } from './designer/design.ts'
 
 const projects = ref<ProjectOption[]>([])
 const models = ref<Array<{ id: number, modelCode: string, modelName: string }>>([])
+
+const route = useRoute()
+const router = useRouter()
 
 const list = useListPage<PageRow, { projectId: string, keyword: string }>({
   query: { projectId: '', keyword: '' },
@@ -80,7 +84,7 @@ async function submitCreate() {
     const fields = await platformApi.models.fields(models.value.find(item => item.modelCode === form.modelCode)!.id)
     const design = initFromModel(fields as any)
     design.modelRef = form.modelCode
-    const created = await platformApi.pages.create({
+    await platformApi.pages.create({
       projectId: Number(form.projectId),
       modelCode: form.modelCode,
       pageCode: form.pageCode,
@@ -89,7 +93,9 @@ async function submitCreate() {
     })
     dialog.value = false
     await list.load()
-    await openDesigner(Number((created as { id: number }).id))
+    // 不在这里开新标签页：window.open 跟在 await 之后会被浏览器的弹窗拦截挡掉，
+    // 人点了「确定」却什么都没发生比多一次点击更难解释
+    pushToast('页面已创建，在列表点「设计」会在新标签页打开画布')
   } catch (error) {
     toastError(error, '新建页面失败')
   } finally {
@@ -97,24 +103,50 @@ async function submitCreate() {
   }
 }
 
-/* ── 画布：整屏接管，返回时刷新列表 ── */
+/* ── 画布：开在新的浏览器标签页里，列表这一层不整屏接管 ── */
 const editing = ref<PageDetail | null>(null)
 const editFields = ref<FieldRow[]>([])
 
-async function openDesigner(id: number) {
+/**
+ * 设计器在新标签页打开，而不是把当前这一屏换掉。
+ *
+ * <p>画布是一份要反复改、改完放那里的长活儿：接管列表的话，人一边调设计一边看不到「还有哪些页面没发」，
+ * 想看就得先退出设计器（未保存的改动还得指望它别丢）。开新标签页之后列表与设计稿并排放着，
+ * 地址也带得走 —— 复制一条 `?design=页面 ID` 就能把这一页的设计交给另一个人或另一台机器。
+ */
+function openDesignerInNewTab(id: number) {
+  const { href } = router.resolve({ path: route.path, query: { ...route.query, design: String(id) } })
+  window.open(href, '_blank', 'noopener')
+}
+
+async function loadDesigner(id: number) {
   try {
     const detail = await platformApi.pages.detail(id)
     editFields.value = await platformApi.models.fields(detail.modelId)
     editing.value = detail
   } catch (error) {
     toastError(error, '打开设计器失败')
+    closeDesigner()
   }
+}
+
+/** 新标签页是带着 `?design=页面 ID` 进来的，直接进画布；那个 ID 读不出来就退回列表 */
+async function openDesignerFromQuery() {
+  const id = Number(route.query.design)
+  if (!Number.isInteger(id) || id <= 0) return
+  await loadDesigner(id)
 }
 
 function closeDesigner() {
   editing.value = null
+  // 地址里那个 design 参数是「这次是新标签页进来的」的记号：退出时抹掉，刷新才不会又弹回画布
+  if (route.query.design) {
+    void router.replace({ path: route.path, query: { ...route.query, design: undefined } })
+  }
   list.load()
 }
+
+onMounted(openDesignerFromQuery)
 
 async function toggle(row: PageRow) {
   const next = row.status === 1 ? 0 : 1
@@ -175,7 +207,7 @@ async function remove(row: PageRow) {
 
     <template #cell-actions="{ row }">
       <div class="row-actions">
-        <PermissionButton perm="lowcode:page:edit" icon-only icon="edit" label="设计" @click="openDesigner(row.id)" />
+        <PermissionButton perm="lowcode:page:edit" icon-only icon="edit" label="设计" @click="openDesignerInNewTab(row.id)" />
         <PermissionButton perm="lowcode:page:edit" icon-only icon="refresh" :label="row.status === 1 ? '停用' : '启用'" @click="toggle(row)" />
         <PermissionButton perm="lowcode:page:remove" icon-only icon="trash" label="删除" danger @click="remove(row)" />
       </div>
