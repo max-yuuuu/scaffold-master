@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Button, DataTable, Drawer, Field, Select, Tag, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { Button, Drawer, Field, Select, Tag, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import { ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import { platformApi, type MergeRequestDetail, type MergeRequestRow, type ProjectOption } from '@/api'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
@@ -41,12 +42,6 @@ const columns: Column[] = [
   { key: 'actions', title: '操作', width: 84, className: 'col-actions' },
 ]
 
-const fileColumns: Column[] = [
-  { key: 'path', title: '文件', minWidth: 260 },
-  { key: 'changeType', title: '档位', width: 78 },
-  { key: 'lines', title: '增删', width: 108 },
-]
-
 const projects = ref<ProjectOption[]>([])
 platformApi.projects.options().then(rows => {
   projects.value = rows
@@ -61,31 +56,44 @@ const detailOpen = ref(false)
 const refreshing = ref(false)
 const merging = ref(false)
 
-/* 一次只看一个文件的差异：整份补丁在几百个文件的请求里能有几 MB，
-   抽屉首屏等它就是把「点开看一眼」变成一次下载。 */
-const diffPath = ref<string | null>(null)
-const diffText = ref('')
+/* 风琴式清单：一行展开就是它的行内差异，一次只开一个。
+   差异按路径缓存，收起再展开不必重新拉 —— 审核时反复回看同两三个文件是常态。 */
+const expanded = ref<string | null>(null)
+const diffCache = ref<Record<string, string>>({})
 const diffLoading = ref(false)
+const diffFailed = ref(false)
 
-async function openDiff(path: string) {
+/** 每次打开抽屉都重来：上一条请求展开着哪一格不该带到这一条上 */
+function resetAccordion() {
+  expanded.value = null
+  diffCache.value = {}
+  diffFailed.value = false
+}
+
+async function toggleFile(path: string) {
+  if (expanded.value === path) {
+    expanded.value = null
+    return
+  }
+  expanded.value = path
+  if (diffCache.value[path] !== undefined) {
+    return
+  }
   if (!detail.value) {
     return
   }
-  diffPath.value = path
   diffLoading.value = true
+  diffFailed.value = false
   try {
-    diffText.value = (await platformApi.mergeRequests.fileDiff(detail.value.id, path)).diff
+    // 一次只拉一个文件：几百个文件的请求整份补丁能到几 MB，把「点开看一眼」变成下载就没法用了
+    const result = await platformApi.mergeRequests.fileDiff(detail.value.id, path)
+    diffCache.value = { ...diffCache.value, [path]: result.diff }
   } catch (error) {
-    diffText.value = ''
+    diffFailed.value = true
     toastError(error, '读取差异失败')
   } finally {
     diffLoading.value = false
   }
-}
-
-function closeDiff() {
-  diffPath.value = null
-  diffText.value = ''
 }
 
 /** 能不能合由后端判（负责人或平台超管、状态待审、预检干净），这里只负责别让人点了才发现 */
@@ -130,6 +138,7 @@ async function openDetail(row: MergeRequestRow) {
   try {
     // 详情会重读一次远端：主干在人上一次看和这一次看之间前进过的话，这一条当场转陈旧
     detail.value = await platformApi.mergeRequests.detail(row.id)
+    resetAccordion()
     detailOpen.value = true
   } catch (error) {
     toastError(error, '读取合并请求失败')
@@ -146,6 +155,7 @@ async function refresh() {
   try {
     const result = await platformApi.mergeRequests.refresh({ projectId: Number(list.query.projectId) })
     detail.value = result
+    resetAccordion()
     detailOpen.value = true
     pushToast(`已生成：${result.title}`, result.checkStatus === 2 ? 'danger' : 'ok')
     await list.search()
@@ -159,19 +169,22 @@ async function refresh() {
 const CHANGE_TONE: Record<string, string> = { ADD: 'ok', MODIFY: 'info', DELETE: 'danger', RENAME: 'purple' }
 
 /**
- * 按前缀给每一行分个类，颜色由 CSS 决定。
- * 后端给的就是 git 的 unified diff 原文：hunk 头（@@）、文件头（--- / +++）都要占自己的样式，
- * 不然一个删除的 "--- a/x.ts" 会被当成一整行删除标红。
+ * 展开那一行的补丁按前缀分类，颜色由 CSS 决定。
+ * 后端给的就是 git 的 unified diff 原文：hunk 头（@@）与文件头（--- / +++）都要占自己的类，
+ * 否则一个删除的文件头会被标成整行删除。
  */
-const diffLines = computed<Array<{ text: string, kind: string }>>(() => diffText.value.split('\n').map(line => ({
-  text: line,
-  kind: line.startsWith('@@') ? 'hunk'
-    : line.startsWith('+++') || line.startsWith('---') ? 'head'
-      : line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') ? 'meta'
-        : line.startsWith('+') ? 'add'
-          : line.startsWith('-') ? 'del'
-            : 'ctx',
-})))
+const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
+  const patch = expanded.value ? diffCache.value[expanded.value] ?? '' : ''
+  return patch.split('\n').map(line => ({
+    text: line,
+    kind: line.startsWith('@@') ? 'hunk'
+      : line.startsWith('+++') || line.startsWith('---') ? 'head'
+        : line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') ? 'meta'
+          : line.startsWith('+') ? 'add'
+            : line.startsWith('-') ? 'del'
+              : 'ctx',
+  }))
+})
 </script>
 
 <template>
@@ -230,7 +243,7 @@ const diffLines = computed<Array<{ text: string, kind: string }>>(() => diffText
     :title="detail?.title ?? '合并请求'"
     :sub="detail ? `${detail.sourceBranch} → ${detail.targetBranch} · ${detail.checkStatusText}` : ''"
     :width="720"
-    @close="detailOpen = false; closeDiff()"
+    @close="detailOpen = false; resetAccordion()"
   >
     <template v-if="detail">
       <dl class="mr-facts">
@@ -241,45 +254,52 @@ const diffLines = computed<Array<{ text: string, kind: string }>>(() => diffText
         <div v-if="detail.mergedBy"><dt>合入</dt><dd>{{ detail.mergedBy }} · {{ detail.mergedTime }}</dd></div>
       </dl>
 
-      <!-- 点开一个文件就换成它的行内差异：GitHub 式「清单 → 单文件」，一次只拉一份补丁 -->
-      <section v-if="diffPath" class="mr-diff">
-        <header class="mr-diff-bar">
-          <Button size="sm" variant="text" icon="chevronLeft" @click="closeDiff">返回清单</Button>
-          <span class="mono">{{ diffPath }}</span>
-        </header>
-        <p v-if="diffLoading" class="mr-note">读取差异…</p>
-        <p v-else-if="!diffText" class="mr-note">这个文件不在改动里（或清单和实际内容不一致）。</p>
-        <pre v-else class="mr-diff-body"><div v-for="(line, i) in diffLines" :key="i" :class="'dl dl-' + line.kind">{{ line.text || ' ' }}</div></pre>
-      </section>
-
-      <DataTable v-else :columns="fileColumns" :data="detail.files" row-key="id" empty-text="清单是空的：主干已经包含发布分支的全部内容">
-        <template #cell-path="{ row }">
-          <button type="button" class="mr-file" :title="'查看 ' + row.path + ' 的差异'" @click="openDiff(row.path)">
-            <span class="mono">{{ row.path }}</span>
-            <span v-if="row.oldPath" class="mono dim">← {{ row.oldPath }}</span>
+      <!-- 风琴清单：行头 sticky，下一个文件的行头会把当前这个顶上去（与 GitHub 的文件区同一行为） -->
+      <div class="mr-files">
+        <p v-if="!detail.files.length" class="mr-note">清单是空的：主干已经包含发布分支的全部内容。</p>
+        <article v-for="file in detail.files" :key="file.id" class="mr-file">
+          <button
+            type="button"
+            class="mr-file-head"
+            :aria-expanded="expanded === file.path"
+            @click="toggleFile(file.path)"
+          >
+            <Icon class="mr-chev" :class="{ 'is-open': expanded === file.path }" name="chevronRight" :size="12" />
+            <span class="mono nm">{{ file.path }}</span>
+            <span v-if="file.oldPath" class="mono dim">← {{ file.oldPath }}</span>
+            <span class="mr-file-tail">
+              <Tag v-if="file.isConflict" tone="danger" dot>要人解</Tag>
+              <Tag :tone="CHANGE_TONE[file.changeType] ?? 'neutral'">{{ file.changeType }}</Tag>
+              <span class="tnum add">+{{ file.additions }}</span>
+              <span class="tnum del">−{{ file.deletions }}</span>
+            </span>
           </button>
-          <Tag v-if="row.isConflict" tone="danger" dot>要人解</Tag>
-        </template>
-        <template #cell-changeType="{ row }"><Tag :tone="CHANGE_TONE[row.changeType] ?? 'neutral'">{{ row.changeType }}</Tag></template>
-        <template #cell-lines="{ row }"><span class="tnum">+{{ row.additions }} −{{ row.deletions }}</span></template>
-      </DataTable>
+          <div v-if="expanded === file.path" class="mr-diff">
+            <p v-if="diffLoading" class="mr-diff-empty">读取差异…</p>
+            <p v-else-if="diffFailed" class="mr-diff-empty">这个文件的差异没取到，收起再展开可以重试。</p>
+            <p v-else-if="!diffCache[file.path]" class="mr-diff-empty">没有拿到这份补丁。</p>
+            <pre v-else-if="expandedLines.length" class="mr-diff-body"><div v-for="(line, i) in expandedLines" :key="i" :class="['dl', 'dl-' + line.kind]">{{ line.text || ' ' }}</div></pre>
+            <p v-else class="mr-diff-empty">这个文件不在改动里（二进制或空补丁）。</p>
+          </div>
+        </article>
+      </div>
+    </template>
 
-      <footer class="mr-foot">
-        <p class="mr-note">
-          冲突文件只列出来，谁赢不替人决定；主干前进过就先重算，让人看的永远是最新那一份。
-        </p>
-        <PermissionButton
-          v-if="detail.status === 0"
-          perm="lowcode:merge-request:merge"
-          variant="primary"
-          :disabled="!mergeable"
-          :title="mergeable ? '把这条请求合入 ' + detail.targetBranch : mergeHint"
-          :loading="merging"
-          @click="doMerge"
-        >
-          确认合并
-        </PermissionButton>
-      </footer>
+    <template #footer>
+      <p class="mr-note">
+        冲突文件只列出来，谁赢不替人决定；主干前进过就先重算，让人看的永远是最新那一份。
+      </p>
+      <PermissionButton
+        v-if="detail && detail.status === 0"
+        perm="lowcode:merge-request:merge"
+        variant="primary"
+        :disabled="!mergeable"
+        :title="mergeable ? '把这条请求合入 ' + detail.targetBranch : mergeHint"
+        :loading="merging"
+        @click="doMerge"
+      >
+        确认合并
+      </PermissionButton>
     </template>
   </Drawer>
 </template>
@@ -325,46 +345,104 @@ const diffLines = computed<Array<{ text: string, kind: string }>>(() => diffText
   line-height: 1.6;
 }
 
-.mr-foot {
+.mr-files {
   display: flex;
-  align-items: flex-end;
-  gap: 12px;
-  margin-top: 6px;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  overflow: hidden;
 }
 
-.mr-foot .mr-note {
-  flex: 1;
-  min-width: 0;
+.mr-files > .mr-note {
   margin: 0;
+  padding: 10px;
 }
 
 .mr-file {
-  padding: 0;
+  border-top: 1px solid var(--line);
+}
+
+.mr-file:first-child {
+  border-top: 0;
+}
+
+/* 行头 sticky：滚动读差异时当前文件的标题钉在抽屉体顶部，下一个文件的行头滑上来把它顶掉。
+   这是 sticky 相对各自父块的自然行为，与 GitHub 的文件区同一套，不需要 JS 算位置。 */
+.mr-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
   border: 0;
-  background: none;
+  background: var(--surface-solid);
   color: var(--ink);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
-.mr-file:hover {
-  color: var(--blue);
-  text-decoration: underline;
+.mr-file-head:hover {
+  background: var(--hover-bg);
 }
 
-.mr-diff-bar {
+.mr-file-head .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.mr-file-tail {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  flex: none;
+}
+
+.mr-file-tail .tnum {
+  font-size: 11.5px;
+}
+
+.mr-file-tail .add {
+  color: var(--leaf-text);
+}
+
+.mr-file-tail .del {
+  color: var(--red-text);
+}
+
+.mr-chev {
+  flex: none;
+  color: var(--ink-faint);
+  transition: transform .16s cubic-bezier(.32, .72, 0, 1);
+}
+
+.mr-chev.is-open {
+  transform: rotate(90deg);
+}
+
+.mr-diff {
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.mr-diff-empty {
+  margin: 0;
+  padding: 10px;
+  color: var(--ink-muted);
+  font-size: 12px;
 }
 
 .mr-diff-body {
   margin: 0;
   padding: 6px 0;
-  border: 1px solid var(--line);
-  border-radius: var(--r-xs);
   background: var(--surface);
   overflow-x: auto;
   font-family: var(--font-mono);
@@ -372,8 +450,8 @@ const diffLines = computed<Array<{ text: string, kind: string }>>(() => diffText
   line-height: 1.55;
 }
 
-/* unified diff 按前缀着色；--- / +++ 两行是文件头，不能跟着标成整行删除。
-   绿与红都取底座语义色那一档（tag 的 ok / danger 用的就是它们），不在页面里另配一套色 */
+/* unified diff 按前缀着色；--- / +++ 是文件头，不能跟着标成整行删除。
+   绿与红取底座语义色那一档（tag 的 ok / danger 用的就是它们），不在页面里另配一套色 */
 .dl {
   padding: 0 10px;
   white-space: pre;
