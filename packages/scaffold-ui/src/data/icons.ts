@@ -79,6 +79,7 @@ export const ICON_PATHS: Record<string, string> = {
   // 设计器历史动作：弧形回退与镜像重做，箭头在左为撤销、在右为重做
   undo: 'M8.5 6.5 4 11l4.5 4.5M4 11h10a5.5 5.5 0 0 1 0 11h-3.5',
   redo: 'M15.5 6.5 20 11l-4.5 4.5M20 11H10a5.5 5.5 0 0 0 0 11h3.5',
+  branch: 'M7 4a2 2 0 1 1 0 4 2 2 0 1 1 0-4M7 8v8M7 16a2 2 0 1 1 0 4 2 2 0 1 1 0-4M17 4a2 2 0 1 1 0 4 2 2 0 1 1 0-4M17 8v1c0 3-4 4-10 4',
 
   // 状态与外观
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-10v5m0-8h.01',
@@ -115,5 +116,5 @@ export const ICON_PATHS: Record<string, string> = {
 export const MENU_ICON_OPTIONS = [
   'dashboard', 'gear', 'users', 'user', 'role', 'shield', 'menu', 'dept', 'post', 'dict', 'log', 'file',
   'lock', 'tool', 'command', 'code', 'database', 'monitor', 'layers', 'grid', 'home', 'chart', 'activity',
-  'clock', 'bell', 'mail', 'key', 'sliders',
+  'clock', 'bell', 'mail', 'key', 'sliders', 'branch',
 ]
