@@ -72,6 +72,11 @@ class PageApiTest {
                     .containsEntry("modelRef", "sales_order");
             assertThat(castMap(design.get("layout")).get("type")).isEqualTo("PageContainer");
             assertThat(listOf(detail.get("refFields"))).containsExactly("orderNo", "amount", "deliveryDate", "remark");
+            // 设计器那条顶栏要说清「这是哪个项目的哪一页、上一次发出去是什么结果」，
+            // 这三格缺一个，画布上就只能显示「未归属项目 / 未发布」这种看着自洽其实是假的话
+            assertThat(detail.get("projectName")).isEqualTo("页面用例项目");
+            assertThat(number(detail.get("currentVersion"))).isEqualTo(0);
+            assertThat(number(detail.get("publishStatus"))).isEqualTo(0);
 
             // 菜单落点填了以填的为准：设计器里改了路由与图标，生成的菜单就跟着改
             Map<String, Object> moved = pageBody(projectId, "sales_order_list", "销售订单列表");

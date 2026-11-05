@@ -1,5 +1,173 @@
 # Changelog
 
+## 2026-11-05（PR 8B 第十二刀：折叠箭头贴在悬浮带的圆角上）
+
+用户截图指出：有子组件的行悬停后，左侧那颗展开箭头自己那圈高亮跟整行的悬浮带挤在一起，边距不对。
+
+- **量下来是行根本没有左内距**：`.pf-tree-row` 写的是 `padding: 0 6px 0 0`，实测箭头 `x` 与行 `x` 偏移 **0px**、手柄也是 0px —— 16×16 的箭头方块直接顶在 8px 圆角悬浮带的左沿上，两圈背景叠在一起就成了截图里那道缝。原型是 `paddingLeft: 6 + depth * 12`，每行都有 6px 起手的内距。改成 `padding: 0 6px`，实测箭头与手柄都落在距行左沿 6px 处（行 x=43 → 箭头 x=49；子行 x=66 → 手柄 x=72），名称起点 91px。
+- 箭头自身 hover 用 `--press-bg`（.075）而不是 `--hover-bg`（.045），这一条原本就比行带强一档、能分辨，没动；缩进仍然由 `.pf-thread` 的 `margin/padding + 左边丝线` 负责，行的 6px 是「手从哪儿起手」而不是层级宽度，两者不重复计数。
+- **本轮按上一刀记下的顺序跑**：先 `vite build` 再 typecheck 与单测 —— 模板语法这一关 `vue-tsc` 拦不住，build 才拦得住。三项全绿（34 例单测）。
+
+
+## 2026-11-05（PR 8B 第十一刀：树上的悬浮态与拖拽改位置，按原型的比例判定重做）
+
+用户指出层级树的悬浮态和拖拽改位置还是不对。对照原型 `App.tsx:1187-1232` 那套 `dragover` 逐条比，我这版有四条实质差距。
+
+- **落点位置原来是写死的**：根级行一律 `'inside'`、子级行一律 `'after'`。也就是说把一颗组件拖到「数据表格」那一行上，不管指针落在行的顶上还是底下，都会往表格里塞 —— 而表格没有 children，`treeDrop` 的 inside 分支会直接给它造出一个 `children`。改成原型同一套比例判定（`treeDropPosition()`）：`ratio < 0.32` → before，`0.32–0.68` 且**这一行真的有可放置区域**（复用 `dropZones()`，只有栅格列与插槽腔体）→ inside，其余 → after。
+- **拖拽源从 14px 的手柄换成整行**：原型是行自己 `onDragStart`（锁定时 `preventDefault()`），手柄只是提示。原来只有那颗 14px 手柄能拖，鼠标偏一点就拖不起来。现在整行 `:draggable="!node.locked"`，手柄改成纯视觉件（`pointer-events: none`、锁定行不再亮起、`title` 写「按住整行拖拽排序」），行的光标跟着 `draggable` 变 grab / grabbing。
+- **落点指示画进行自己体内**：原来是行的**兄弟**节点，插一条 2px 线会把后面整行往下顶，指针一挪就跳、位置永远对不上。改成 `position: absolute` 贴在这一行的上/下沿（`is-before` / `is-after`），inside 则给这一行描一圈 `1.5px dashed var(--blue)` + `--blue-soft` 底 —— 与原型 `outline: dropInside` 同一处理。
+- **悬浮态两处修**：① 根行那颗「页面」标签原先包在 `.marks` 里，被 `:hover .marks { visibility: hidden }` 一起藏掉了 —— 而根行根本没有行尾操作栏，藏了就没有任何东西换入，整行悬停时右侧空一块。把标签从 `.marks` 里拿出来直接放 `.mt`，规则只影响真有操作栏的行。② 行高从 `min-height: 30px` 改成 `height: 32px`、根级缩进按原型的 `paddingLeft: 6 + depth * 12` 对齐，悬浮带子才盖得住整行。
+- **`treeDrop` 补上同一道守卫**：`position === 'inside'` 时先查目标是不是真有可放置区域，没有就整个动作不做。这条不变量原先只在画布那条 `dropInsideContainer` 上有，树这条没有 —— 两个入口一条守、一条不守，等于不变量写在视图层而不是模型层。
+- **测试**：`proto.test.ts` 7 → 8 例，新增「树上拖拽：before / after 换顺序，inside 只给容器，锁定的不动」，四条断言分别是拖到上半区排前面、拖到下半区排后面、往表格身上 inside 必须节点树逐字节不变且撤销栈不增、锁定组件自己拖不动但别人可以排它前面。34 例全绿，两包 typecheck、`vite build` 全绿。
+- **一条要记的教训**：这一轮我改完模板后 `vue-tsc` 是绿的，`vite build` 却报 `[vite:vue] ProtoRail.vue (275:5): Invalid end tag` —— 重写模板时多留了一个 `</div>`。**类型检查过不了模板语法这一关**，之前几轮「typecheck + 单测 + build」里 build 才是真正兜住这层的那一步，不能省。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59，真 `DragEvent`）：整棵树顺序 `[页面标题, 数值指标, 查询表单, 数据表格]` → 拖第 0 行到第 2 行下 15% 处 → 指示线 `is-after`、`dragover` 被 preventDefault → 松手后 `[数值指标, 查询表单, 页面标题, 数据表格]`，画布顺序跟着一致；同一行上 15% → `is-before`、中 50% 落在表格上 → 仍是 `is-after` 且 `is-inside` 不出现（表格不是容器）；拖到栅格容器中间 → `is-inside` + `outline: rgb(35,109,233) dashed 1.5px`、无指示线，松手后子层列出「页面标题」、计数徽标「1」；锁定的数据表格行 `draggable=false`、手柄带 `is-off`、`dragstart` 的 `defaultPrevented === true`；树→画布与画布→树两个方向都能拖（`onRowDragStart` 同时置 `treeDragNodeId` 与 `draggingNodeId` + 预览帧，画布那条 `onCanvasDragOver` 因此也认）。**CSS `:hover` 仍无法用合成事件量**，悬浮带子与手柄显隐只验了 CSSOM 规则与「页面标签不再被藏」这一条结构改动。
+
+
+## 2026-11-05（PR 8B 第十刀：页面层级树改成整行一条带，折叠箭头与键盘选中补上）
+
+用户给了参考图：悬停那一行的拖拽手柄、组件图标、名称、锁定/显隐/删除三颗全在**同一条蓝色带子**里，根行还有一颗折叠箭头。对照下来我这版差三件事。
+
+- **高亮挂错了元素**：原来 `.pf-tree-line`（里面那颗 `<button>`）才是选中面，手柄和行尾操作栏是它的**兄弟**，落在带子外面 —— 选中时只有文字背后亮一块，手柄贴在带子左沿外面、三颗操作落在右沿外面。改成 `.pf-tree-row` 整行就是那块面（`min-height: 30px`、`border-radius: var(--r-xs)`、hover 上 `--hover-bg`、选中上 `--blue-soft` + 描蓝），手柄/图标/名称/微标/操作栏全在里面，与原型 `.group/tree` 同一个结构。实测一行子元素顺序 `pf-grip → icon → nm → marks → pf-row-acts`，行高 30px，操作栏 `row.contains(acts) === true`。
+- **补上折叠箭头**：原型是「有子节点 ⇒ 那颗 16×16 的箭头；没有 ⇒ 才让位给拖拽手柄」，一格只放一个左手件。我这版根行的箭头是写死的装饰（`treeExpanded` 有状态、没人读），容器行压根没有箭头。现在两者都由 `treeOpen(id)` / `toggleNode(id)` 驱动，箭头带 `aria-expanded`、旋转 90° 有过渡，收起时嵌套那一层整块不渲染。实测：空栅格容器 → 手柄、无计数、无嵌套层；往第一列放一颗日期选择 → 换成箭头、计数徽标「1」、嵌套层出现；点折叠 → 嵌套层 0、`aria-expanded=false`；再点 → 回到 1。
+- **键盘到得了行**：原来只有那颗手柄 `tabindex="0"`，选中只能靠鼠标点。现在每行 `role="treeitem"` + `tabindex="0"` + `aria-selected`，Enter / 空格即选中（实测聚焦行按 Enter → 行加 `is-active`、右栏头部翻成「数据表格」），树容器补 `role="tree"`。
+- **一处如实说明**：行尾那三颗仍然是鼠标/聚焦才显形（`display: none`），所以它们不在 Tab 序里，键盘用户选到行之后点不到它们 —— 这不是回归，改前也一样，而且同样的三个动作在**画布上那颗选中节点的工具条**里始终可见可点，键盘走那条能完成。要真把树里的三颗也做成可 Tab，得把它们从 `display` 换成定位叠加 + 淡入（否则会挤宽那一行），这刀没做，等需要时再说。
+- **测试与验收**：本轮是纯交互层重排，没有新增可断言的业务规则，`proto.test.ts` 仍 7 例；两包 typecheck、单测 14 + 33、`vite build` 全绿。真机（`:5173`，1600×1000 同域 iframe，页面 59）另有一处教训：第一次跑数出来「空栅格容器也显示折叠箭头 + 计数 1」看着像 bug，实际是前一条脚本中途报错留下了脏状态 —— 整页 reload 后重测才是上面那组数。**CSS `:hover` 用合成 `mouseover` 量不出来**（`elementFromPoint` 那套伪状态只有真实指针能触发），所以手柄显隐与操作栏换入这两条只验证了 CSSOM 里规则存在且选择器正确（`.pf-tree-row:hover .pf-row-acts, .pf-tree-row:focus-within .pf-row-acts { display: inline-flex }` 等），选中态/折叠/键盘选中这些是真量到的。
+
+
+## 2026-11-05（PR 8B 第九刀：上一条里我改坏了三处，逐条纠）
+
+用户回看后指出：收起按钮删错了、Tab 组的内边距不统一、关页面的确认框要用平台样式。
+
+- **1. 我上一刀把「收起面板」那颗按钮弄丢了，而且不是我删的 —— 是我把它挤没了**。`.pf-fluid` 我写的是 `display: flex; width: 100%`，而平台 `.segmented` 自带 `flex: none`：分段控件于是死占整行 234px，把同一行的收起按钮推到 x=261–287，而 `.pf-pane` 是 `overflow: hidden`、右边界 266 —— 按钮直接被裁掉了，看起来就像被我删了。改成 `flex: 1 1 0; min-width: 0`，实测按钮回到 x=227–253、距面板右边 13px（12px 内距 + 1px 描边），可见。真正该删的是**面板底部那颗「收起组件」**：整条页脚一起删掉（`Button`、`toggleAll`、`allCollapsed`、`.pf-pane-foot` 四条样式一并清），分组折叠只留分组头那颗箭头一格一格控；顺带把因此没人用的 `chevronsUp`/`chevronsDown` 两条图标注册项也删了 —— 留着就是往公共图标表里塞两个死键。
+- **2. Tab 组的内边距不统一，是因为我两个面板用了两套节奏**：左栏 `.pf-pane-head` 是 `padding: 12px 12px 0` + `gap: 8px`、无分隔线，右栏是 `.pf-ins-head { 12px 12px 8px }` + `.pf-ins-tabs { 0 12px }`、Tab 组头顶 0px 直接顶在头部下面。照原型对齐（左栏 `p-3 border-b` 内 `flex gap-1.5`；右栏 `p-3.5 border-b space-y-3` 把头部行与 Tab 组包在同一块里）：左栏 `padding: 12px; gap: 6px; border-bottom: 1px`，右栏头部 `14px 14px 0`、Tab 组 `12px 14px 14px` + 自己的下分隔线。实测两组分段控件都是 36px 高（3px 内距 + 28px 按钮 + 3px），左栏 178px 宽（234 − 12×2 − 26 − 6）、右栏 282px 宽（310 − 14×2），左右内距各自对称。
+- **3. 关标签页的确认框做不到与平台 UI 一致 —— 这是浏览器的规定，不是实现选择**。`beforeunload` 只允许网页**取消**这次离开，那条确认框一律由浏览器自己画，页面在这里塞不进任何自定义 DOM。所以保留 `useUnsavedGuard` 走原生拦截（实测脏了 `defaultPrevented === true`、点保存后变 `false`、再改一次又回到 `true`，不确认就关不掉，「反复点也不关」这条本来就满足）。我一度想补一条 `onBeforeRouteLeave` + 平台 `confirm()` 管站内换路由，写完去查了产品形态：设计器是 `pages.vue:117 openDesignerInNewTab()` 用 `window.open` 开出去的独立标签页，历史里只有这一条，站内没有任何入口会离开它 —— 那条钩子挂上去永远触发不了，属于死代码，删掉了，把这个限制写进 `unsavedGuard.ts` 的注释里，免得下一个人再补一遍。真要一条平台样式的确认，只能是在页面里放一颗显式「退出设计器」按钮，而那颗正是上一轮用户让我从顶栏删掉的。
+- **测试**：把「物料分组默认全展开，收起与展开只由底部那一条按钮控制」这条的标题与断言文案改掉 —— 按钮已经没了，文案继续提它就是说谎；断言本身（默认全展开）仍然有效。删掉 `chevronsUp/Down` 那段注册断言。两包 typecheck、单测 14 + 33、`vite build` 全绿。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59）：收起按钮 rect `x=227–253`、面板右界 266 → 内缩 13px、`checkVisibility() === true`；`.pf-pane-foot` 数量为 0，`.pf-pane` 最后一个子元素是 `.pf-pane-body`；左栏 head 实测 `padding: 12px`、`gap: 6px`、`border-bottom: 1px`，右栏 head `14px 14px 0` + tabs `12px 14px 14px` 带下分隔线，两组分段控件同高 36px；`beforeunload` 三轮翻转如上。控制台除 Chrome 那条 `Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture`（脚本驱动的 iframe 没有真人手势，是它证明监听在调 `preventDefault`）外无报错。**系统那条确认框本身在 iframe 里看不到**，需要真人在真标签页里点一次关闭才算验完最后一步。
+
+
+## 2026-11-05（PR 8B 第八刀：分段控件与两条抽屉改用平台件，顶栏去掉返回，脏了拦一次）
+
+用户又点了五处，四条是「这里自己画了一套平台已有的东西」，一条是交互取舍。
+
+- **1. 深色主题下分段控件的激活态突兀** —— 根因是我在 `proto.css` 里手画了一版 `.pf-segmented`，激活态填 `linear-gradient(145deg, rgba(255,255,255,.93), rgba(246,251,249,.62))`：浅色下是块玻璃，深色下就是一块白斑。平台本来就有 `Segmented.vue`（`.segmented.m-groove` 凹槽底座 + `.seg-thumb.m-pill` 玻璃滑块 + GSAP `slideThumb` 位移动画 + `role="radiogroup"` 与左右键切换），材质走 `--pill-bg`，深色下自动变成 `rgba(255,255,255,.11→.05)` 的暗玻璃。把设计器里**六处**控制型分段全部换成它：左栏「组件物料 ↔ 页面层级」、右栏三段 Tab、表格档位、圆角阶梯、表面材质、视口菜单的终端设备，加上画布表格头那颗行高密度与分段容器预览；`.pf-segmented` / `.pf-seg-btn` 两套样式（全局一份 + NodeRenderer scoped 一份）整块删掉，只补一条 `.pf-fluid { display:flex; width:100% }` 铺满栏宽（滑块那颗是 `<span>`，`> button` 选择器不会误伤）。分段容器的预览页签顺带有了本地状态，不再是一颗点了没反应的假控件。
+- **2. 顶栏去掉返回按钮**：设计器本来就是独占整个标签页，「返回应用页面列表」要么 `window.close()` 要么 `history.back()`，在新标签页语境里很生硬。`ProtoTopbar.vue` 删掉那颗按钮与 `back()`，`DesignerTopbar.vue` 删掉 `IconButton name="arrowLeft"` 与 `close` 这条 emit，`LiveDesigner.vue` 连带删掉 `goBack()` 与已经没人用的 `useRouter`。
+- **3. 关标签页前拦一次未保存**：新增 `packages/scaffold-ui/src/composables/unsavedGuard.ts` 的 `useUnsavedGuard(dirty)` —— 挂 `beforeunload`，脏了就 `preventDefault()` 且置空 `returnValue`（Chrome 两个都要才认），作用域销毁时自动摘监听。两条设计器各接自己的脏源：原型那条是 `unsavedCount > 0`，`?mode=live` 那条是 `session.dirty`。浏览器不允许自绘这条确认，所以不仿平台样式，只保证拦得住。
+- **4. 栏底那颗按钮还是不和谐**：它用的是我自造的 `.pf-mini`（24px、`--float-bg`、手写边框），而平台那颗是 `Button size="sm"`（30px、`btn-secondary` + `m-pill`）。改成平台 `Button` 并让它自己带 icon，`.pf-mini` 两份定义（ProtoRail 与 ProtoOverlays 各一份）一起删掉。
+- **5. 两条抽屉的位置与样式都不对**：`.pf-drawer` 是我自己写的一层，挂在 `.pf-scrim` 里、而那层是 `display:flex` 没有对齐声明 —— 所以它其实贴在**左边**，而且整层被 `.pf-chassis` 那圈 10px 机身边框和 38px 圆角切着。换成平台 `Drawer.vue`：`Teleport to="body"` + `.overlay.drawer-overlay`（`place-items: stretch end`，贴右满高）+ `.drawer` + `overlayEnter(el, done, 'drawer')` 那套升起 + `createFocusTrap` + Escape 自管。结构代码 `:width="560"`、事件配置 `:width="420"`，头部 `title`/`sub` 传字符串（那颗 activity 图标按平台样式不再放），脚部走 `#footer` 插槽；`.pf-drawer*` 四条全局样式与 `.pf-modal-title` 的 scoped 覆写一并删。命令面板与发布弹窗仍留在遮罩那层，只把两条抽屉搬出去。
+- **验收**（`:5173`，1600×1000 同域 iframe，页面 59）：深色下分段实测底座 `rgba(0,0,0,.22)`、滑块 `linear-gradient(145deg, rgba(255,255,255,.11), …)`、激活字 `rgb(238,242,241)`、非激活 `rgb(144,154,157)` —— 与参考图那块暗玻璃一致，运行时来回切主题四次，字色每次都跟着 `--ink` 走（`#eef2f1 ↔ #101418`）；浅色下底座 `rgba(225,231,229,.5)`。顶栏左侧实测只剩 `pf-brand` + `pf-crumbs`，`[aria-label="返回应用页面列表"]` 数量为 0。栏底按钮 class 实测 `btn btn-secondary btn-sm m-pill`、高 30px、带 icon，文案「收起组件」点击后四组卡片全部隐藏。合成 `beforeunload` 事件在脏状态下 `defaultPrevented === true`、点「立即保存草稿」后变 `false` 且浮条消失；Chrome 同时打出 `Blocked attempt to show a 'beforeunload' confirmation panel for a frame that never had a user gesture` —— 这条恰好证明监听真的在调 `preventDefault`，但**系统那条确认弹窗在脚本驱动的 iframe 里看不到**，需要真人在真标签页里点一次才算验完最后一步。两条抽屉实测都 `Teleport` 到 body（`.closest('.pf-chassis') === null`）、class `overlay drawer-overlay` + `drawer`、贴右满高：结构代码 560×984 落点 x=1032（视口 1600，右边留 8px 槽），事件配置 420×984 落点 x=1172；标题/副标题/两节触发时机/脚部「取消 · 保存事件配置」齐全，`.drawer-body` 是 `overflow-y: auto`，Escape 一次即关。圆角阶梯点第 4 档实测节点 `border-radius` 变 20px，画布上那颗行高密度仍是可点的平台分段（`pointer-events: auto`、激活「标准 48」）。两包 typecheck、单测 14 + 33、`vite build` 全绿；控制台除上面那条 Chrome 安全提示外无报错。
+- **没写单测的一处，如实说明**：`useUnsavedGuard` 只有 10 行且直接摸 `window`，本仓的单测跑在 node 里没有 DOM，硬凑一个假 window 只是把断言写在替身上。它的实际验证是浏览器里 `defaultPrevented` 的翻转与 Chrome 那条安全提示。
+
+
+## 2026-11-05（PR 8B 第七刀：深色铭牌与提示牌堆的文字其实一直是黑的）
+
+用户报「移动组件后底部那条浮条字体不清楚」。量出来不是「不够清楚」，是**对比度 1.04:1 —— 近黑的字压在近黑的底上，基本读不出来**。
+
+- **根因是三个从原型带过来、平台从来没定义过的 CSS 变量名**：`--plate-fg`、`--plate-muted`、`--line-hover`。`var()` 解析失败时整条声明作废，颜色落到继承值上 —— 继承到的是外壳的 `--ink: #101418`，于是所有坐在 `--plate-bg`（深色玻璃）上的东西都变成了黑底黑字。原型自己的 `index.css` 里这三条是有值的（`--plate-fg: #f2f5f4`、`--plate-muted: rgba(255,255,255,.56)`、`--line-hover: rgba(46,58,62,.18)`），我搬样式的时候把名字一起搬了，平台令牌表里却没有对应条目，也没人报错。
+- **受影响四处**：`.pf-toast`（移动/复制/删除后弹的那条提示牌堆，就是用户点名的这条）、`.pf-plate`（数值指标右上角那块「工位铭牌 ND-P3-FORM-02 | 采样周期 5000ms」深色铭牌）、`.pf-code`（事件抽屉里的声明预览 JSON）、`.dz-schema`（Schema 抽屉的深色代码面）。前两处实测原本 `rgb(16,20,24)` on `rgba(21,24,26,.9)`。
+- **改法**：`--plate-fg` → 平台的 `--plate-ink`、`--plate-muted` → `--plate-soft`，两条值本来就一模一样（`#f2f5f4` / `rgba(255,255,255,.56)`），不新造同义令牌；`--line-hover` 平台确实没有这一档（`.input-shell:hover` 是把 `rgba(var(--shade),.18)` 直接写在规则里的），所以在 `tokens.css` 的浅色与深色两段各补一条，7 处悬浮描边从「静默不生效」变成真会亮。`.input-shell` 那条内联值这次没动，避免顺手改掉既有页面的观感。
+- **顺带抓到一条同类的第二个坑**：`.pf-plate` 里那两个次要文字 span 我用的 class 名是 `.muted`，而 `NodeRenderer.vue` 的 scoped 样式里 `.muted { color: var(--ink-muted) }` 是给表格单元格准备的「浅底次要文字」。两条特异性相同（`.pf-plate .muted` 与 `.muted[data-v-x]`），scoped 样式后注入所以赢了 —— 铭牌上的次要字被压成 `rgb(89,99,104)`，在深底上只有约 2.1:1。原型的写法是在 span 上直接给 `--plate-muted`、根本没有 `.muted` 这个名字，所以把铭牌里那两处改名 `.dim`，冲突消失、表格那处 `.muted` 保持原样。
+- **测试**：`proto.test.ts` 6 → 7 例（先跑红，直接把 11 处引用列出来）。新这条不测颜色好不好看，测**「设计器 CSS 里每一个 `var(--x)` 引用的令牌是否真的存在」**：读平台 `styles/*.css` 收全部已定义令牌（断言数量 > 80，防止路径失效后用例静默空跑），再扫 `proto.css` 与设计器两个目录下的每个 `.vue`，文件内自己声明的局部变量（`--pf-rail-w` 这类）算已定义，带兜底值的 `var(--x, y)` 不在射程内。这类「写错变量名 → 整条声明作废」和 `Icon.vue` 查不到名字静默画 `file` 是同一种静默失败，类型检查与构建都不报错，只有这条能拦住。两包 typecheck、单测 14 + 33 全绿、`vite build` 全绿。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59）：拖「分割线」入画布后提示牌堆实测文字 `rgb(242,245,244)` on `rgba(21,24,26,.92)`，**对比度从 1.04:1 升到 13.34:1**；铭牌三段逐一复算 —— 次要字 `rgba(255,255,255,.56)` 合成后约 **5.5:1**（AA 正文线 4.5:1），主值 `#f2f5f4` **12.5:1**，青柠 `#9be35a` **8.8:1**；表格里那颗 `.mono.muted` 仍读 `rgb(89,99,104)`（它坐在浅底行上，本来就该是次要深灰，没被误伤）。**截图面仍拿不到可见浏览器面**，以上是从计算样式逐项读回、按 WCAG 相对亮度公式算的，不是像素比对。
+- **这条要认账**：之前几轮我在验收里写「提示牌堆弹出『已撤销上一步画布改动』」「铭牌读出『工位铭牌 ND-P3-FORM-02 | 采样周期 5000ms』」—— 那些读的是 `innerText`，字是黑的还是白的它一样返回，所以内容对、可读性完全没验。以后这类深色面要连计算色一起量。
+
+
+## 2026-11-05（PR 8B 第六刀：松手只认可放置区域，未保存浮条改用平台那条 .float-bar）
+
+- **非法落点不再改树**（`data.ts` 新增 `dropZones()`，`state.ts` 两个 drop 入口加守卫）。此前 `.pf-node` 整颗都挂着 `dragover/drop`，`dropInsideContainer` 又用 `mapNode` 无条件往目标身上 append `children` —— 在**数据表格**身上松手会真的塞出一个 `table.children`，而表格压根没有 children 这个概念，渲染器与生成器都不认这份形状。现在只有栅格（每列一个落点，返回列下标）与插槽容器（整腔一个，返回 `undefined`）算落点，其余 kind 返回空数组，`dropInsideContainer` 在非落点上直接 `resetDrag()` 返回：不进撤销栈、不弹提示、不碰 `nodes`。
+- **`dropAtTopIndex` 改成无参**，落点索引由 `activeDropIndex` 自己说话。原来调用方兜底成 `?? nodes.length`，等于把「dragover 压根没落到列表上」也画成一个末尾新组件；现在索引为 `null` 就是没有落点，松手什么也不做。
+- **可放置区域终于接上了真交互**：`NodeRenderer.vue` 的 `.pf-grid-col` / `.pf-slotbox` 上早就写好了 `is-active` 样式，却没有任何 dragover 与 drop handler，也没有 `drop-target` 入口 —— 那两高亮是死代码。现在按 `dropZones()` 挂上，容器与栅格列被划过时描蓝，`zone-over/leave/drop` 三个事件逐级从嵌套的 `NodeRenderer` 冒回画布。
+- **未保存浮条改用平台那件**（`ProtoDesigner.vue`）：设计器自己写了一份 `.pf-float`，把 `.float-bar` 的几何值抄了一遍却把颜色写死成 `rgba(21,24,26,.9)` / `--plate-fg` / `font-size: 12.5px`，与用户管理那条批量操作浮条（`ListPage.vue` 的 `.float-bar` + `float-bar-count` + `float-bar-sep` + `Button variant="text"`）是两套。删掉 `.pf-float` 整块，改挂平台 `.float-bar`，用 `Teleport to="body"` + `floatBarEnter/floatBarLeave` 那套升起动画，撤销/重做两颗也换成平台 `Button`（`variant="text" size="sm" icon=`）而不是自绘 28px 圆钮 —— 浮条高度由同一套控件尺寸决定，自绘那颗会把它顶高 1px。`?mode=live` 那条本来就在用 `.float-bar`，两条现在同源。
+- **测试**：`proto.test.ts` 4 → 6 例（先跑红：`data.ts does not provide an export named 'dropZones'`）。一条钉「只有栅格列与插槽腔体是落点，画布上现有那四颗一个都不是」，一条钉「在非法落点松手 ⇒ 节点树逐字节不变、撤销栈不增加、拖拽态清干净；没有落点索引时松手 ⇒ 也不插」。前端单测 14 + 32 全绿，两包 typecheck 与 `vite build` 全绿。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59，用真 `DragEvent` 驱动）：拖「数值指标」到数据表格身上 → 可放置区域高亮 0 个、松手后顶层节点 4→5 且表格内部没有嵌套（走的是顶层落点，不是塞进表格）；点物料卡加一颗栅格容器 → 拖「输入框」划过它的第 1 列 → `.pf-grid-col.is-active` 1 个、顶层落点槽 0 个（两处不打架）、松手后该列出现组件且顶层数量不动；从物料卡直接在顶栏松手 → 节点数不变、无残留幽灵；在画布上 dragover 后不 drop 直接 dragend → 节点数不变、幽灵与高亮槽都归零。浮条实测与用户管理页那条**逐属性相同**：底 `rgba(21,24,26,.9)`、字 `rgb(242,245,244)`、圆角 999px、内距 `8px 8px 8px 18px`、字号 13px、gap 8px、描边 `rgba(255,255,255,.1)`、阴影三段一致，**高度都是 44.75px**；按钮 class 为 `btn btn-text btn-sm`（放弃改动多一个 `is-danger`），与用户页那四颗同一套。提示牌堆消失 3.6s 后浮条按 `unsavedCount` 重新升起。**截图面仍拿不到可见浏览器面**，以上全是 DOM 实测值。
+
+
+## 2026-11-05（PR 8B 第五刀：物料搜索框、底部按钮、拖拽预览帧、自定义分辨率那格）
+
+用户又点了四处细节，逐条落。
+
+- **搜索框里那颗混进来的分组开关删掉**。原型（`designer/src/App.tsx:951`）在搜索框尾部塞了一颗按钮当「全部收起/展开分组」，没关键字时它是折叠开关、有关键字时才换成清空 × —— 一个位置两种语义，鼠标移过去才知道按下去干什么。这刀把它整颗摘掉：搜索框只剩前置放大镜 + 输入 + 有关键字才出现的清空 ×。收起/展开分组的职责挪到栏底那条按钮。
+- **栏底那条按钮改名并改行为**（`ProtoRail.vue`）：不再显示「画布节点 N 个」（两个 Tab 的页脚都不显示计数，页脚改成右对齐单按钮）；按钮从「新建扩展槽 / 全部展开」改成**「收起组件」↔「展开组件」**，动作是整组折叠/展开，图标跟着翻 —— 收起态画 `chevronsUp`、展开态画 `chevronsDown`（注册表新增这两条双层箭头；单箭头只表示一层，压不住「全部」这个语义）。分组默认全展开（`groupCollapsed` 初值是空对象），这条现在有用例钉住。
+- **拖拽预览帧从占位框改成组件本体**（`state.ts` 的 `dragPreview` + `ProtoCanvas.vue`）：拖物料卡或拖画布上已有组件时，落点处直接就地渲染那颗组件 —— 表格画真表格、数值指标画真读数，外面套一圈 1.5px 蓝色虚线 + `--blue-soft` 底 + `--e-accent` 徽标，`pointer-events: none`，`pfGhostPulse` 0.22s 入场。关键一条：**预览节点必须在 `startMaterialDrag` 那一刻建好、整段拖拽复用同一份**，因为 `createNodeFromMaterial` 生成随机后缀的 id 与 code —— 放进 computed 里每次 dragover 重建一颗，预览帧会一路抖到底。原来那颗「末尾占位槽」也去掉，末尾落点由 `drop-zone:tail` 那条虚线区自己高亮。
+- **自定义分辨率那格的「应用」按钮变形修好**：它原先和输入框挤在同一行 flex 里、没有 `flex: none` 也没有 `white-space: nowrap`，被输入框压到换行变形。按原型改成整格布局：上分隔线 + 左「自定义宽度」标签 + 92×30 输入框（右侧 `px` 上标）+ 47×30 应用按钮，两控件同高同基线。顺手补了原型有、我这版漏的三条行为：宽度**夹在 320–2560**（越界夹回来并写回输入框，不让一个手滑的数字撑爆画布）、回车即应用、点常用断点时把值同步进自定义输入框。
+- **测试**：`proto.test.ts` 3 → 4 例，新增一条同时钉「分组默认全展开」与「预览帧在拖拽起点建好、整段复用同一颗、松手即清」。前端单测 14 + 30 全绿，两包 typecheck 与 `vite build` 全绿。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59）：搜索框实测只剩 1 个 svg、无关键字时清空按钮不存在，输入「表格」→ 19 张卡筛到 1 张且清空按钮出现，点清空 → 回到 19 张、按钮消失；栏底实测文案「收起组件」、图标 path `M17 11l-5-5-5 5…`（chevronsUp）、页脚 `justify-content: flex-end`、无计数，点一下 → 「展开组件」+ `M7 6l5 5 5-5…`、四组 `.pf-tiles` 全部 `offsetParent === null`，再点回原状；用真 `DragEvent` 拖「数据表格」到第二个节点前 → 落点处出现 1 个 `.pf-ghost`，实测 938×517、内含真 `<table>` 4 行、outline `rgb(35,109,233) dashed 1.5px`、底 `rgba(35,109,233,.1)`、`pointer-events: none`、徽标「预览落位 · 数据表格（松手即放置）」带 `kindTable` 图标；拖到末尾 → 虚线区翻成 `pf-tail is-active` 且预览帧跟着挪到最后；`dragend` 后幽灵消失、画布仍是 4 个节点；视口菜单那格实测输入框 92×30、按钮 47×30、两者中线差 < 1px、按钮 `nowrap` 未被裁切，输 99999 点应用 → 胶囊与画布 `max-width` 都落到 2560 且菜单关闭，点「1280 px」→ 自定义输入框同步成 1280。**截图面仍拿不到可见浏览器面**，以上全是 DOM 实测值。
+
+
+## 2026-11-05（PR 8B 第四刀：分栏折叠态与选中工具条按设计稿校正，图标改成语义驱动）
+
+用户对着 `:5199` 比了一轮，报两处：① 左右两栏的折叠状态不对（并给了设计稿里收起后的样子）；② 选中组件后右上角那条工具条没 1:1，且**锁定/解锁的图标要按语义用**。量下来两处都是真 bug，不是错觉。
+
+- **折叠态错在三处，逐条改**：① 收起后我把那一栏的 grid 列压成 `0px`，可 `column-gap: 12px` 还在 —— 画布左边永远留一条 12px 死带，看着像没塌干净。改成收起时直接把 grid 换成两列/一列（`236px 1fr 312px` → `1fr 312px` → `1fr`），栏没了就是真没了。② 「展开物料」「展开配置」两颗胶囊我原先绝对定位在 `.pf-body` 上（`top: 24px`，落在栏间距里），而设计稿里它们是**贴在画布舞台内侧**的：左胶囊 `top:10 left:12`，右胶囊和视口胶囊排在同一行 `top:10 right:12 gap:8`。搬到 `.pf-canvas` 内部并复用平台 `m-pill` 材质，实测收起后三颗胶囊 展开物料 / 桌面端自适应 / 展开配置 依次排开，与设计稿同位同宽（30px 高）。③ 文案与图标也照设计稿改回「展开物料」（我写成「展开组件物料」）、「展开配置」，图标从随手拿的 `sidebar`/`sliders` 换成 `panelLeftOpen`/`panelRightOpen`。
+- **顺手修了折叠态才能暴露的一处结构问题**：视口胶囊原本挂在 `sticky` 的 `.pf-canvas-top` 里，而 `.pf-canvas` 自己就是滚动容器 —— 设计稿里胶囊是不跟着滚的。改成舞台 `overflow: hidden` + 内层 `.pf-canvas-scroll` 负责滚动，实测滚 200px 胶囊位移 0。页面级的 `paddingX/paddingY/blockGap` 也终于真的作用在滚动层与节点间距上（此前写死 14/12/10，右栏那三格改了没反应）。
+- **选中工具条按设计稿重做**：几何值从 26px/`0 4px 0 10px`/gap 1 改成 **28px、`padding: 0 6px`、gap 2、top −14、right 12**，六颗按钮 22×22 圆形；名称徽标前面那颗图标从写死的 `layers` 改成**按组件类型取**（`KIND_ICON[node.kind]`，数值指标画的是四根读数柱）。禁用规则照原型补齐：锁定后上移/下移/删除三颗一起禁用、删除的 title 翻成「组件已锁定」。隐藏与锁定两颗在生效时加 `bg-white/30` 高亮，看得出当前态。
+- **图标按语义用（这是用户点名的那条）**：解锁态我原先画的是 `sidebar`（一个侧栏方块）、隐藏态画的是 `ban`（一个禁止圈）—— 都跟「锁」「 visibility」没有关系。现在 `lockIcon(locked)` / `visibleIcon(visible)` 两个函数出图标：锁定画闭合锁、解锁画开锁（锁梁只扣一侧），显示画眼、隐藏画带斜遮线的眼。同一套语义同时用在画布工具条和左栏层级树的悬浮操作栏上。
+- **注册表补 26 条**（`packages/scaffold-ui/src/data/icons.ts`）：`unlock`、`eyeOff`、`panelLeft/RightClose/Open`、`grip`（2×3 拖拽点，替掉随手用的 `more`），以及 20 条 `kind*` 组件类型图标。`MENU_ICON_OPTIONS` 不动 —— 这些是设计器语汇，不该出现在菜单图标选择器里。
+- **左栏层级树补上设计稿里的行尾操作栏**：此前只有 `×` 删除，设计稿是「锁定 / 显隐 / 删除」三颗（22×22、圆角 6、锁定态描蓝底），且静默态那排状态微标（锁、斜线眼、子节点计数）在鼠标移入时让位给操作按钮。抽成 `ProtoTreeRowActions.vue`（根节点与子节点两处共用），锁定后拖拽手柄 `draggable=false` 并换成「已锁定，不可拖拽」。
+- **两条真 bug 是靠 DOM 量出来才发现的**：① `<TreeRowActions>` 我 import 进来却按 `<RowActions>` 写模板 —— Vue 把它当成未知元素原样渲染，`vue-tsc` 与 `vite build` 全绿，页面上那颗操作栏压根不存在（`document.querySelectorAll('.pf-row-acts').length === 0`）。② 子组件 scoped 样式里写 `.pf-tree-row:hover .pf-row-acts { display: inline-flex }` 永远不命中 —— `:hover` 那一层属于父组件的 scope id。显隐规则挪进全局 `proto.css`，实测 idle `none`、键盘聚焦后 `flex`。
+- **测试**：新增 `__tests__/proto.test.ts` 3 例（先跑出红：`data.ts does not provide an export named 'KIND_ICON'`）。钉的是「每种 `NodeKind` 都有专属图标且都在注册表里登记过」——`Icon.vue` 查不到名字时静默画 `file`，物料卡与工具条会整片退化成同一个灰方块，类型检查和构建都拦不住，只有这条断言能拦住；另两条钉 `lock≠unlock`、`eye≠eyeOff`、`panel*Close` 与 `panel*Open` 箭头方向相反。前端单测 14 + 29 全绿，两包 typecheck 与 `vite build` 全绿。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59）：三栏 grid 实测 `236px 968px 312px` → 收起左栏 `1216px 312px` → 再收起右栏 `1540px`（单列），左胶囊相对舞台 `13px/11px`、右簇 `1294px/11px`，胶囊高 30px；工具条实测 28px 高、`top −14 right 12`、`padding 0 6px`、gap 2、底 `rgb(35,109,233)`、六颗按钮均 22px、徽标图标 12px 且 path 是 `kindReadout`；点锁定 → aria 翻「解锁组件」、path 换成闭合锁、`is-on` 生效、上移/下移/删除三颗 `disabled=true`，再点回原态全部还原；点隐藏 → aria 翻「显示组件」、path 出现斜遮线、节点 opacity 落到 0.42；树里 4 行有操作栏（页面根没有，与设计稿一致），锁定后 `draggable=false`、微标出现锁、删除按钮禁用；物料 19 张卡的图标 19 种 path 全不同、0 张退化成 `file`。**截图面仍拿不到可见浏览器面**，以上全是 DOM 实测值。
+
+
+## 2026-11-05（PR 8B：设计器 1:1 视觉原型，`proto/` 一层，暂不接数据）
+
+第三次修正口径 —— 前两次我把「1:1」理解成「外壳照原型、内容按后端白名单」，用户要的是**整页照原型复刻，先不接数据**。这一刀按那个口径做，边界用 AskUserQuestion 明确确认过（选项：连模型一起 1:1 / UI 与交互 1:1 模型不动 / 先做纯视觉 1:1 暂不接数据 —— 选了第三个）。
+
+- **落点**：新增 `views/lowcode/designer/proto/` 一层。`DesignerView.vue` 退成一个开关：默认渲染原型，带 `?mode=live` 才渲染已接数据那一版（原 `DesignerView.vue` 的内容整体改名 `LiveDesigner.vue`，一行没删）。同一条路由、同一个登录守卫，等 design_json 升到 1.1、原型那份形状能产出生成物时这个开关就该消失。**两条都活着而不是把已接数据那一版删掉**，是因为发布链路（PR 7）与生成器只认 v1.0 那份形状，砍掉就没有任何一条路能真发出页面。
+- **搬进来的六件**：`data.ts`（19 项物料、20 种 kind、按 kind 分支的触发时机表、化成工站那套演示数据，逐字对应 `designerData.ts`）、`state.ts`（节点树 + 撤销栈 + 拖拽与落点 + 浮层栈 + 提示牌堆 + 事件抽屉草稿，对应 `App.tsx` 那 3557 行里的 handler 部分）、`NodeRenderer.vue`（20 种 kind 的富预览：数值指标的主角大读数 + 深色工位铭牌 + 刻度条 + 斜线慢操作区间 + kv 只读读数、数据表格的三档密度 + 吸左勾选列 + 吸右操作列 + 分类色胶囊 + 权限 chip + 状态标签 + 分页脚注、工序流向、栅格分栏、插槽容器、分段容器、基础控件）、`proto.css`（约 700 行：把原型 JSX 里内联的 Tailwind 工具类写成真实 CSS，颜色与尺寸一律走平台令牌）、`ProtoTopbar/Rail/Canvas/Inspector/Overlays/Designer`。
+- **修两处 bug（都是量出来的，不是看出来的）**：① `NodeRenderer` 里 `table` 与 `allChecked` 是 setup 时算一次的普通常量 —— 点「宽松 56」撤销栈多了一步、按钮高亮也换了，行高与单元格内距一动不动。改成 `computed`。② 单元格左右内距压根没绑密度档位（原型是 `padding: 0 ${cellPx}px`），补一个 `--pf-cell-px` 变量由档位驱动，实测 紧凑 14 / 标准 16 / 宽松 18。
+- **与原型不一致的地方，如实写清**：① 拖拽的 1:1 幽灵预览只在容器与栅格列的落点上给了虚线框 + 名称徽标，**没有**渲染被拖组件的完整 1:1 形态（原型是 `renderGhostPreviewBlock` 直接复用渲染器）；顶层按 `clientY` 算落点索引已经做了，插帧位置对，帧里是占位而不是组件本体。② `topology` 只搬了三张工序卡，没搬工序连线与脉冲点动画。③ 行高密度改档位后**行高本身看不出变化** —— 批次号在窄列里换行（实测两行 36px）把行高撑到 74px，压过 40/48/56 三档；这一点原型自己也是同样表现（它那张截图里 `BT-20260419–081A` 就是两行），所以不算偏离，但要说明。
+- **不接数据的边界**：「保存草稿」与「发布上线」只动本地脏计数并弹提示，不打接口；Schema 抽屉输出的是这份原型形状（`pageCode` / `version 2.4.0` / `styleSystem pearl-glass` / `nodes[]`），**不是** `design_json v1.0`，这份送进后端 `PageDesign.parse` 会当场 400（version 不认、PageContainer 不在）。右栏底部常驻一句说明，不让人误以为这版能发布。
+- **测试**：typecheck 两包 + 单测 14 + 26 全绿 + `vite build` 通过。`proto/` 这一层是纯视觉稿，没有可断言的业务规则，所以没为它写单测 —— 它的验收是真机点一遍（见下），而不是形状断言。
+- **真机验收**（`:5173`，1600×1000 同域 iframe，页面 59）：`.pf-chassis` 在、`.sidebar` 不存在；顶栏实测 64px；三栏 `236px / 968px / 312px`；物料 19 张卡实测 66×66、分组「布局容器 / 表单输入 / 数据展示 / 基础操作」；画布 4 个节点，选中节点工具条显示「数值指标」；铭牌读出「工位铭牌 ND-P3-FORM-02 | 采样周期 5000ms」、刻度 08:00/10:00/12:00/14:28（当前柱）/16:00、kv 两项、斜线区间与「现在」线都在；筛选三格实测宽度 220/200/180；表格 4 行、权限 chip 四串、状态标签四条、分类胶囊四条、脚注「共 4 个待审批次 · 已勾选 N 项」随勾选变；密度三档实测单元格内距 14/16/18；事件 Tab → 事件抽屉（触发时机两条带 code、声明预览 JSON、取消/保存）；Schema 抽屉标题与「UTF-8 · JSON Schema v2」；发布弹窗三格「发布版本号 / 目标运行环境 / 变更说明」预填 v2.4.1-release；⌘K 四条指令；深色切换实测 `data-theme=dark`、节点底 `rgb(27,31,33)`，切回浅色正常；撤销弹出「已撤销上一步画布改动」且重做转为可用；预览态 grid `0px 1516px 0px`、工具条消失、按钮文案翻成「退出运行预览」。**截图面仍拿不到可见浏览器面**，以上全部是 DOM 实测值，不是像素比对。
+
+
+## 2026-11-05（PR 8A 第二刀返工：三栏按设计稿重建，画布改成所见即所得）
+
+上一条只搬了外壳，三栏里还是旧的 `dz-*` 示意块 —— 用户指着设计稿说「组件物料区、画布、右侧属性面板这三部分没有按设计稿重构」，是对的。这一刀把三栏全部重建。
+
+- **左栏拆成 `MaterialPanel.vue` + `LayerTree.vue`**。物料卡按原型的几何值做：66px 见方、圆角 11、上层满宽 37px 微缩展台（19px 图标、内外同心圆角 7.5）、下层 11px 标签，hover 抬 1.5px 并把展台染成蓝底蓝图标、按下 scale .96 换 grabbing 光标。分组头 26px，左侧 6px 分类点（沙/天/玫瑰，只区分类别不表示状态），右侧计数徽标 17px 等宽 + 折叠箭头。顶部 `组件物料 ↔ 页面层级` 用平台的 `Segmented`（凹槽底座 + 玻璃滑块，与外壳导航同一件），搜索框 32px 带前置放大镜。层级树按原型画垂直丝线（`--thread`），拖拽手柄与删除只在悬浮或键盘聚焦时显形 —— **手柄本身是可聚焦的按钮**，不然键盘到不了。
+- **画布改成所见即所得（`DesignCanvas.vue`）**：不再是一堆示意块，每个区块用它自己在生成物里对应的那件物料渲染 —— 查询区是真的输入行（`TextInput`/`NumberInput`/`DateInput`/`DateRangePicker`/`Select`/`DictSelect` 按控件类型分派，间距与列数读 `gap`/`columns`），表格区是真的 `.table`（勾选列与操作列吸附、列宽照设计、三行骨架占位），行操作按 `priority` 平铺其余进「更多」，表单弹窗是两列的弹窗预览。节点卡语汇照原型：圆角 20、实色面 + 内高光 + `--e1`，hover 换 `--e2`，选中描蓝、加 4px `--blue-soft` 外环并抬起 2px；选中后右上角浮出 26px 蓝色胶囊工具条（名称 + 上移/下移/删除）。落点槽高 6px、命中时涨到 10px 并内描蓝。右上角收纳式视口胶囊（桌面/平板/手机 × 自适应/常用宽度）只改画布宽度，**不进 design_json** —— 它是看的人的设置，不是这份设计的内容。内容整体 `pointer-events: none`：点画布上任何东西都是选中这个区块，而不是在一份还没接后端的设计稿里填一个填不出结果的表单。
+- **右栏拆成 `InspectorPanel.vue`**：头部 32px 图标块 + 名称 + 等宽类型码 + 「页面设置」跳转 + 收起；三段 Tab 用 `Segmented`。组件属性只渲染 `PROPS` 白名单里、且当前容器允许的那几格（`queryType` 只在查询区、`required` 只在表单弹窗）；布局类（`columns`/`gap`/`pagination`/`pageSize`/`priority`）归到样式属性 Tab；按钮的权限点由动作推导后**只读展示**，不给手写输入框。小节标题复用平台 `SectionLabel`，青柠光环点用 scoped `::before` 补 —— 那是设计器的语汇，不该塞进公共组件。
+- **原型里有、这刀故意没搬的四处**，每处都是「画布上能摆但生成器产不出来」那一类：① 19 种 kind 里那 11 种（栅格容器、插槽容器、分段容器、分割线、数值指标、状态标签、页面标题、按钮组、分页器、弹窗容器、复选框/开关）不进物料库，`design.test.ts` 新加一条把 `PALETTE` 与白名单逐项钉死（多一格少一格都红）；② 表格的「行高密度 紧凑40/标准48/宽松56」切换器不搬 —— 密度是 `data-density` 外观设置，看的人选的，不是这份设计的内容，放进来就是两处事实；③ 圆角阶梯 / 内边距 / 底部外边距 / 表面材质四格不搬，`ComponentCatalog` 不认；④ 事件配置 Tab 保留（三段结构照原型）但只写清「第一期不存事件，按钮行为由动作推导」，不放那套触发时机 + 动作 + JSON 预览的表单。左栏底部的「新建扩展槽」同理没搬 —— 我们没有插槽容器这个类型。
+- **`defaultPropsFor` 从组件里挪进 `design.ts`** 并补两条用例：按钮默认必须带 `action`（动作是权限点的来源，空动作的按钮存进去，生成器只能猜这颗按钮要不要种菜单权限），控件默认带标签，区块不带任何东西。
+- **顺手删掉一处我自己刚写出来的坏味道**：区块工具条里放了一颗 `disabled` 且没有 handler 的「撤销」按钮 —— 照原型那个位置该是复制/隐藏/锁定，而那三个动作要等 `design.ts` 补 `duplicate`/`visible`/`locked`（刀 3）。摆一颗永远点不动的按钮比少三颗按钮更糟，先删掉。
+- **测试**：`design.test.ts` 12→14 例（物料库同源 + 落点默认属性），前端单测 14 + 26 全绿，typecheck 两包与 `vite build` 全绿。
+- **真机验收**（`:5173` + `:8080`，页面 59，1600×1000 同域 iframe）：三栏 grid 实测 `236px / 968px / 312px`；物料 13 张卡实测 66×66、三个分组「页面区块 / 表单控件 / 操作按钮」；画布 6 个节点（page + 五个区块）按真物料渲染，表头实测出「订单编号 / 订单金额 / 状态 / 交货日期 / 备注」加勾选与操作两列；点表格区 → 工具条浮出（上移/下移/删除三颗，无障碍名齐全）、节点抬起（top 从 491 起算带 translateY）、右栏头部翻成「表格区 / DataTable」、小节是「表格 + 列」；三段 Tab 逐一切过：样式属性给「布局」两格、事件配置给说明不放假表单、组件属性给 20 格含列编辑器；切「页面层级」实测出 18 行树（页面 → 5 区块 → 子控件带字段码），5 条丝线，手柄默认 `opacity: 0` 且可聚焦。**截图仍然拿不到可见浏览器面**，以上全是 DOM 实测值。
+
+
+## 2026-11-05（PR 8A 返工：设计器不套外壳，独占整个标签页）
+
+上一条 8A 我把方向判断错了 —— 判断成「复用平台外壳，设计器只补一条工作区工具条」，因为外壳的 `Topbar.vue` 已经有面包屑、⌘K 和外观设置，再画一条顶栏像是重复。口径不对：**点「设计」开出来的那条标签页就是设计器本身**，没有左侧导航轨、没有控制台 header，UI 与原型一模一样。这一条把 8A 的外壳部分重做到那个形状，并把原型里除「所见即所得渲染」之外的浮层一次搬完。
+
+- **路由换形状**：`/lowcode/designer/:页面 ID` 一条静态路由挂在 `AppShell` 之外（`router/index.ts` 的 `staticRoutes`，仍走同一个登录守卫、不是 public）。`pages.vue` 里那套「同路由带 `?design=页面 ID`、列表整屏换成设计器」的装配全删了 —— 深链从查询参数挪进路径，别人拿到 `/lowcode/designer/59` 不用先猜 `design` 是干什么的。取数（`pages.detail` + `models.fields`）跟着搬进 `DesignerView.vue`，打不开就留在原地说明原因，不悄悄跳回列表。
+- **原型那条 64px 顶栏整个搬过来**：返回 / 品牌标 / 面包屑（项目 › 页面设计器 › 页面名 + 发布状态胶囊）/ ⌘K 入口 / 撤销重做 / 结构代码 / 深浅色 / 预览运行态 / 保存草稿 / 发布上线。**没有新写一套 CSS**：`.app-frame`（10px 深色机身 + 38px 圆角 + 两团漫射光）、`.brand-mark`、`.crumbs`、`.cmd-trigger`、`.kbd`、`.code-chip`、`.float-bar` 全是 `layout.css` / `components.css` / `instruments.css` 里的全局类，原型那条顶栏本来就是照这套令牌画的，所以复用即一致；`.dz-frame` 只把 `.app-frame` 的两列导航轨改成「顶栏 + 工作区」两行。
+- **一份会话收在一处**（`designer/session.ts`）：store、tick、脏状态、浮层栈、拖拽/点选、预览、两栏收起、保存与发布全在这一份里，六个组件读同一个对象。之前用 props 往下传十几格，漏一格的表现就是「画布动了但顶栏撤销还是灰的」—— 上一刀我就真漏了 `canUndo`/`canRedo` 一格，靠给每个读数手动挂 `tick` 才兜住。
+- **搬 UI 时暴露的三处缺陷**（都是先复现再修）：① **脏状态是个计数器**，撤销回到基线之后浮条还挂着「有 1 项画布改动尚未保存」；改成与库里那一份逐字比对（`JSON.stringify(store.json()) !== baseline`），并且这个 computed 一开始还没挂上 `tick`，删掉一个区块浮条根本不出来。② **`title="发布「{{ page.pageName }}」`** —— mustache 在属性位不插值，弹窗标题原样显示成模板字符串；改 `:title` 绑定。③ **落点被当场拒绝时我把报错吞了**，还顺手 `act()` 一步空操作 —— 撤销栈里多出一条什么都没改的历史、脏计数白加一格；现在报错原样弹出来，只 `refresh()` 重算读数。
+- **自己引入的一处交付链回归（这刀唯一由我弄坏的）**：新路由写在 `scaffold-vue/src/router/index.ts` 里引用 `@/views/lowcode/designer/DesignerView.vue`，而 `router/index.ts` 是要进交付项目的、`views/lowcode/` 是黑名单剔除的 —— `ScaffoldSnapshotPlanner.validate` 的残留引用扫描当场拒绝：`裁剪清单遗漏：交付文件 scaffold-vue/src/router/index.ts 仍引用 @/views/lowcode`，`ScaffoldSnapshotPlannerTest` 12 例全挂。修法是给这一段套 `scaffold:platform-only:start/end` 标记块（`PlatformOnlyStripper` 写快照时整块删掉，标记必须独占整行），而不是把 `router/index.ts` 塞进黑名单 —— 交付项目要自己的路由表。**前端 typecheck、单测、`vite build` 全绿照样看不见这一条**：它只在交付快照初始化时跑。第一次跑全量后端时 `| tail` 把退出码吞成了 0，差点当成全绿过去，第二次改成重定向到文件再看 `$?` 才认出来。
+- **后端补三格**：`selectPageBrief` 加 `p.current_version` / `p.publish_status` 与 `LEFT JOIN lc_project` 取 `projectName`。库里 V9 起就有这两列，只是详情查询没读 —— 不补的代价是顶栏那句「已发布 v2」要么写死要么不写，发布弹窗要说清版本号怎么来也拿不到当前号。`PageApiTest` 加三条断言钉住。
+- **发布客户端这刀补上**：`POST /lowcode/pages/{id}/publish` 后端在 PR 7 就通了，前端一直没有客户端（`platformApi.pages` 只有 CRUD + detail + updateStatus）。入参只有 `force` 与 `changeDesc`，**版本号由后端按 `current_version` 算**，所以原型里那格「发布版本号」输入框砍掉；「目标运行环境」下拉也砍 —— 环境跟着项目走，切环境是换项目而不是在下拉里选一个，库里没有这个维度。引用体检命中时后端抛的是 `BusinessException`，消息以「就带 force 再来一次」结尾，弹窗按这句话才放出「我已确认，仍然发布」那颗按钮（这层字符串耦合写在注释里，后端换成结构化错误码要跟着改）。发布前如果画布是脏的，弹窗会拦住并给一颗「保存并发布」：发出去的是库里那份，不是画布上这份。
+- **预览运行态**：收起两栏、画布摘掉所有 × 与落点缝，只读渲染 —— 这一条按原型是「按发布后的样子看这一页」，第一期先做到「不可编辑」，还没做到「按生成物的版式渲染」（那是刀 3 的所见即所得）。
+- **测试**：`platform.test.ts` 新增那条先跑出 `api.pages.publish is not a function` 再实现转绿；前端 typecheck 两包 + 单测 14 + 24 例 + `vite build` 全绿；后端全量 **314 例全绿**（common 10 + framework 42 + generator 6 + lowcode 142 + admin 114，IT 库 3316），其中 `PageApiTest` 6 例带着新加的三条断言、`ScaffoldSnapshotPlannerTest` 12 例在补上标记块之后从全挂转全绿。
+- **真机验收**（`:5173` + `:8080`，页面 59，1600×1000 同域 iframe 量）：路由 `/lowcode/designer/59` 下 `.sidebar` 与 `.topbar` 都不存在，机身 `.app-frame` 在；顶栏实测 64px、未滚动时背景透明、只留一条下边线；三栏实测 `236px / 968px / 312px`，面板底色 `#fbfcfc`；结构代码抽屉打开是真 `design_json`（`version 1.0 / pageType list / modelRef sales_order`），深色铭牌底 `rgba(21,24,26,.9)`，脚部读数与「复制结构代码」都在；⌘K 面板 35 条分「指令 / 组件物料 / 画布节点」三组，输入「查询区」过滤到 2 条、Enter 执行、面板自动收起；预览态 grid 变 `0px / 1516px / 0px`、两栏与全部 × 消失、按钮文案翻成「退出运行预览」；删一个区块 → 浮条出现（「画布上有未保存改动 / 放弃改动 / 立即保存草稿」），撤销 → 区块回来、浮条消失、撤销按钮重新禁用。**没有真的发布也没有保存**：弹窗打开后取消，库里那份设计原样。
+- **没验到的一格**：本机 `:8080` 那个后端进程还是改动前的类，所以界面上顶栏胶囊显示「未归属项目 / 未发布」，而页面 59 实际已经发到 v2。那三格由 `PageApiTest` 在真接口上验过，**界面上的读数要等后端重启才能看到**；重启会动到 `:8080` 上那个进程（可能是另一个会话在用），没有擅自动它。
+- **窄屏仍未处理**：627px 视口下中栏被挤到 0px（236 + 312 已经吃满），归刀 6。
+
+
+## 2026-11-05（PR 8A：设计器外壳第一刀 —— 按 Figma 新稿重排三栏，顺手修掉三处既有缺陷）
+
+`designer/` 那份 Figma Make 原型（React 19 + Tailwind v4，6846 行）跑起来逐屏点过之后定下口径：**Vue 重写、原型只当视觉与交互规格书、第一期保守到后端 `ComponentCatalog` 白名单以内**（物料 19 种 kind 里生成器产不出的那些不进面板）。这一刀只做外壳，六刀串行，后面依次是左栏、画布、右栏、浮层与发布、窄屏。
+
+- **设计器不再自带一套顶栏**。原型那条顶栏有面包屑、⌘K、深浅色、撤销重做、保存与发布；平台外壳的 `Topbar.vue` + `CommandPalette.vue` 已经给了前三样。两条顶栏同时挂出来，人分不清哪一条说的是「这个页面」、哪一条说的是「整个控制台」，而且 `?design=页面 ID` 与列表同路由，外壳面包屑只到「页面管理」这一层 —— 所以页面名与模型编码留在设计器自己的工具条里，`DesignerToolbar.vue` 只放改这份设计要用的动作。
+- **`.designer` 的 `height: 100%` 从来没生效过**：它和 `.content` 之间夹着一层 `.route-frame`，而后者只有 `min-width: 0`、高度是 auto，百分比高度在 auto 高度的父元素上算不出来。表现是整份设计稿把外层 `.content` 撑成页面滚动（实测 1000 高视口下 `.designer` 767px 而 `.content` 476px），三栏不各自滚动、画布那个滚动条永远不出现。改成 `position: absolute; inset: 0` 贴住 `.content`（它是这条链上唯一 `position: relative` 的祖先）。**这条是「画布滚动后工具条凝结」写出来才发现自己成了死代码的根因** —— 先有能滚的画布，凝结才有触发的时候。
+- **打开设计器就有可撤销的一步**：`createDesigner(design)` 之后那行 `store.setModel(page.modelCode)` 是一次装配动作，却进了撤销栈。于是刚进来「撤销」就是可点的，点一下 `modelRef` 被抹回 seed 里的空串，而画布看起来什么都没变 —— 下一次保存送出去的是一份没有模型绑定的设计。新增 `bindModel(code)`（任何时候都不产生历史），`setModel` 保留成「人在设计器里换模型」那种该能撤销的动作。用例先跑出 `store.bindModel is not a function`，再实现转绿。
+- **`:saving` 是一个不存在的 prop**：`PermissionButton` 的等待态属性叫 `loading`，设计器一直传的是 `:saving`。Vue 不会为未知属性报错，只把它当普通 attribute 落到 DOM 上 —— 于是保存期间按钮既没有等待态也不禁用，双击就是两次 `PUT /lowcode/pages/59`，而第二次可能带着与第一次不同的设计。
+- **两栏宽度用设计器自己的令牌**：`--dz-rail-w: 236px` / `--dz-inspector-w: 312px` 定义在 scoped 块里，不写进 `packages/scaffold-ui/src/styles/tokens.css` —— 原型那份 CSS 里的 `--rail-w` 是它自己的左栏宽度，而平台的 `--rail-w` 是外壳导航轨的，改它等于连带改掉所有页面的侧栏。撤销 / 重做两枚图标补进 `data/icons.ts`（24 网格、1.6 描边，与既有 `arrowUp`、`sidebar` 同一套线性风格），原型那两枚是 16 网格，按比例搬过来。
+- **收起用 `v-if` 而不是宽度归零**：归零的面板还在 Tab 序列里，键盘要连按好几次才跳过一栏看不见的东西。收起后画布两上角各留一枚展开胶囊，胶囊上是文字不是图标 —— 只留一个图标的话，人得先猜刚才收掉的是哪一栏。
+- **测试**：`design.test.ts` 12→13 例；`npm run typecheck` 两包全绿、单测 14 + 23 例全绿、`vite build` 通过。
+- **真机验收**（宿主 `:5173` + 后端 `:8080`，`admin` 登录，页面 59「销售订单页」）：1600 宽下三栏实测 `236px / 1072px / 312px`；收起左栏 → grid 变 `0px 1fr 312px`、`.dz-left` 从 DOM 摘掉、画布左上出现「展开组件面板」胶囊，点回原状；画布滚 160px → 工具条凝结（描边换 `--line-strong`、挂 `--e2` 阴影）；深色下工具条与面板底色 `#1b1f21`、字色 `#eef2f1`、凝结描边白 10%、胶囊底 `rgba(30,34,37,.9)` 逐项归位；撤销 / 重做在刚打开时都是禁用态。**截图这次拿不到可见浏览器面（in-app browser 未打开），以上都是 DOM 实测计算值，不是像素比对**；拖拽落点与所见即所得归刀 3。
+- **还没做**：① 发布状态胶囊要后端把 `lc_page.current_version` / `publish_status` 放进 `PageRow`，与刀 5 的发布按钮一起接（`POST /lowcode/pages/{id}/publish` 的入参是 `force` + `changeDesc`，原型那格「目标运行环境」库里没有对应字段，砍；「发布版本号」由 `lc_page_version` 生成，不让手填）；② 结构代码 / 预览运行态 / 发布上线三枚按钮归刀 5；③ 原型全站只有 14 处响应式前缀、`index.css` 零 `@media`，627px 视口下中栏被挤到 55px，窄屏归刀 6。
+
+
 ## 2026-11-05（PR 7：页面发布链路 —— 设计到租户仓库的那一跳）
 
 方案 §10.3 的 PR 7 是「发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；发布前 C 档引用体检」。这一刀把 §5.1 那张图整个落成 `com.scaffold.lowcode.publish.PagePublishService`，四刀提交：远端 tag 语义、交付裁剪补漏 + 发布主链路、引用体检、文档与本条。

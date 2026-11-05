@@ -84,20 +84,43 @@ const PLACEMENT: Record<string, string[]> = {
 
 export const CONTROL_TYPES = Object.keys(PLACEMENT)
 
-/** 左侧组件库的分组：容器给「整块」，控件给「往块里塞」 */
-export const PALETTE: Array<{ group: string, items: Array<{ type: string, label: string }> }> = [
-  { group: '区块', items: BLOCKS.map(type => ({ type, label: BLOCK_LABELS[type] })) },
+/**
+ * 左侧组件库的分组。
+ *
+ * 只列 `PLACEMENT` 里有的类型 —— 物料库给出一格生成器产不出来的组件，就等于让人搭出一个
+ * 保存时才报 400 的页面，而那时人已经画完整页了。这条与后端 ComponentCatalog 同一份，
+ * 由 design.test.ts 逐项钉住。
+ */
+export const PALETTE: Array<{ group: string, tone: string, items: Array<{ type: string, label: string, icon: string, desc: string }> }> = [
   {
-    group: '控件',
+    group: '页面区块',
+    tone: 'sky',
     items: [
-      { type: 'TextInput', label: '文本输入' },
-      { type: 'Textarea', label: '多行文本' },
-      { type: 'NumberInput', label: '数字输入' },
-      { type: 'DateInput', label: '日期选择' },
-      { type: 'DateRangePicker', label: '日期区间' },
-      { type: 'Select', label: '下拉选择' },
-      { type: 'DictSelect', label: '字典下拉' },
-      { type: 'Button', label: '按钮' },
+      { type: 'SearchForm', label: '查询区', icon: 'filter', desc: '列表页顶部的筛选条件行' },
+      { type: 'Toolbar', label: '工具栏', icon: 'sliders', desc: '表格上方的整页动作按钮' },
+      { type: 'DataTable', label: '表格区', icon: 'table', desc: '列、分页与横向滚动的数据表' },
+      { type: 'RowActions', label: '行操作', icon: 'more', desc: '每行尾部平铺与收进更多的按钮' },
+      { type: 'FormContainer', label: '表单弹窗', icon: 'edit', desc: '新增与编辑共用的弹窗表单' },
+    ],
+  },
+  {
+    group: '表单控件',
+    tone: 'sand',
+    items: [
+      { type: 'TextInput', label: '文本输入', icon: 'edit', desc: '单行文本，查询区与表单通用' },
+      { type: 'Textarea', label: '多行文本', icon: 'file', desc: '长文本，只在表单里站得住' },
+      { type: 'NumberInput', label: '数字输入', icon: 'activity', desc: '数值，小数位由模型标度给' },
+      { type: 'DateInput', label: '日期选择', icon: 'clock', desc: '单个日期或日期时间' },
+      { type: 'DateRangePicker', label: '日期区间', icon: 'board', desc: '起止两端，只在查询区成立' },
+      { type: 'Select', label: '下拉选择', icon: 'chevronDown', desc: '选项由设计里的枚举给' },
+      { type: 'DictSelect', label: '字典下拉', icon: 'dict', desc: '选项来自字典，字典挂在模型字段上' },
+    ],
+  },
+  {
+    group: '操作按钮',
+    tone: 'rose',
+    items: [
+      { type: 'Button', label: '按钮', icon: 'command', desc: '动作选一个，权限点跟着动作走' },
     ],
   },
 ]
@@ -148,6 +171,37 @@ export function propsOf(type: string): string[] {
   return PROPS[type] ?? []
 }
 
+/**
+ * 新落下的组件先带什么属性。
+ *
+ * 按钮默认给 refresh 而不是留空：动作是权限点的来源，空动作的按钮存进去，
+ * 生成器就只能猜这颗按钮要不要种菜单权限。控件默认把标签带上，
+ * 面板里不至于出现一格没有名字的空白。
+ */
+export function defaultPropsFor(type: string): Record<string, unknown> {
+  if ((BLOCKS as readonly string[]).includes(type)) return {}
+  if (type === 'Button') return { label: '按钮', action: 'refresh' }
+  const item = PALETTE.flatMap(group => group.items).find(entry => entry.type === type)
+  return { label: item?.label ?? type }
+}
+
+/** 物料库与层级树、画布共用一套图标：同一个类型在三处得长一样，否则人对不上号 */
+const ICONS: Record<string, string> = Object.fromEntries(
+  PALETTE.flatMap(group => group.items.map(item => [item.type, item.icon])),
+)
+
+export function iconOf(type: string): string {
+  return ICONS[type] ?? 'file'
+}
+
+export function descOf(type: string): string {
+  for (const group of PALETTE) {
+    const hit = group.items.find(item => item.type === type)
+    if (hit) return hit.desc
+  }
+  return ''
+}
+
 export const ACTIONS = ['create', 'edit', 'delete', 'export', 'refresh']
 
 /** 动作 → 中文，与后端 ComponentCatalog.permissionSuffix 一一对应：权限点不在这里出现第二次 */
@@ -165,6 +219,8 @@ export interface Designer {
   readonly canUndo: boolean
   readonly canRedo: boolean
   modelRef(): string
+  /** 打开已有设计时把库里的 modelCode 绑上：这不是人做的一步，所以不进撤销栈 */
+  bindModel(code: string): void
   setModel(code: string): void
   select(key: string | null): void
   childrenOf(type: string): UINode[]
@@ -388,6 +444,9 @@ export function createDesigner(seed?: DesignJson): Designer {
       return future.length > 0
     },
     modelRef: () => model,
+    bindModel(code) {
+      model = String(code ?? '')
+    },
     setModel(code) {
       snapshot()
       model = String(code ?? '')

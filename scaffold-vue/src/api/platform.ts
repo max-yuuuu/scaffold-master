@@ -303,6 +303,26 @@ export interface PageRow {
 export interface PageDetail extends PageRow {
   design: Record<string, unknown>
   refFields: string[]
+  /** 已成功发布的版本号：库里 NOT NULL DEFAULT 0，0 就是没发过（tag 末尾那个数就是它） */
+  currentVersion: number
+  /** 最近一次发布结果：0 未发布 1 已发布 2 内容与远端一致 3 上次失败（lc_page.publish_status） */
+  publishStatus: number
+}
+
+/** 发布请求（PagePublishRequest）：版本号由后端按 current_version 算，不让前端填 */
+export interface PagePublishRequest {
+  /** 引用体检有命中时人显式放行；默认 false，命中会阻断并回一份清单 */
+  force: boolean
+  changeDesc: string
+}
+
+/** 发布结果里设计器要读的那几格（后端还带 files / warnings / branch，弹窗按需要再看） */
+export interface PagePublishResult {
+  pageId: number
+  version: number | null
+  status: number
+  tagName: string | null
+  message: string
 }
 
 /** 页面新增与编辑请求（lc_page）：design 送对象而不是字符串，后端 PageWriteRequest 收 JsonNode */
@@ -359,6 +379,8 @@ export function createPlatformApi(client: HttpClient) {
       /** 详情带整份 design：设计器打开页面吃的就是这一份，列表接口不给（一屏几十行各带一份设计） */
       detail: (id: number) => client.get<PageDetail>(`/lowcode/pages/${id}`),
       updateStatus: (id: number, status: number) => client.put<void>(`/lowcode/pages/${id}/status`, { status }),
+      /** 发布是独立权限点（lowcode:page:publish）：能编辑设计不等于能往租户仓库推代码 */
+      publish: (id: number, body: PagePublishRequest) => client.post<PagePublishResult>(`/lowcode/pages/${id}/publish`, body),
     },
     tenantConfigs: {
       list: (query?: QueryParams) => client.get<PageResult<TenantConfigRow>>('/platform/tenant-configs', query),

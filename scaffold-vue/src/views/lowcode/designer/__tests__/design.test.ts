@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createDesigner, initFromModel, propsOf, PROPS, BLOCKS, type ModelField } from '../design.ts'
+import { createDesigner, initFromModel, propsOf, defaultPropsFor, PROPS, PALETTE, CONTROL_TYPES, BLOCKS, type ModelField } from '../design.ts'
 
 /**
  * 设计器状态层（PR 6C）。
@@ -171,6 +171,25 @@ test('序列化出去的形状不带内部 key，且读回来再出去是幂等�
   assert.deepEqual(again, first, '第二次保存不能把形状改漂：库里存的应该是同一份')
 })
 
+test('绑定模型分两种：初始化那一下不进撤销栈，人选模型要进', () => {
+  const seed = initFromModel(fields)
+  seed.modelRef = 'sales_order'
+  const store = createDesigner(seed)
+
+  // 打开一份已有设计时要把库里的 modelCode 绑上，但那不是人做的一步：
+  // 走 setModel 的话刚进来「撤销」就是可点的，点一下模型绑定就被抹成空，而画布看起来什么都没变
+  store.bindModel('sales_order')
+  assert.equal(store.canUndo, false, '刚打开的设计不该有一步可撤销')
+  store.bindModel('other_model')
+  assert.equal(store.canUndo, false, 'bindModel 任何时候都不产生历史')
+
+  // 人在设计器里换模型是另一回事，得能撤回去
+  store.setModel('sales_order')
+  assert.equal(store.canUndo, true, '人选模型是人的动作，要能撤销')
+  store.undo()
+  assert.equal(store.json().modelRef, 'other_model', '撤销回到上一次的绑定，而不是抹掉')
+})
+
 test('引用清单在前端也算得出来，属性面板要能提示字段被哪几格用着', () => {
   const store = createDesigner(initFromModel(fields))
   assert.deepEqual(store.referencedFields(), ['orderNo', 'status', 'amount'])
@@ -180,4 +199,22 @@ test('引用清单在前端也算得出来，属性面板要能提示字段被�
   const amount = store.childrenOf('FormContainer').find((node: any) => node.props.field === 'amount')!
   store.remove(amount.key)
   assert.deepEqual(store.referencedFields(), ['orderNo', 'status'])
+})
+
+test('物料库与白名单同源：每个类型正好出现一次，且都带图标与说明', () => {
+  const items = PALETTE.flatMap(group => group.items)
+  const types = items.map(item => item.type)
+  assert.equal(new Set(types).size, types.length, '同一类型不该出现在两个分组里')
+  assert.deepEqual([...types].sort(), [...BLOCKS, ...CONTROL_TYPES].sort(),
+    '物料库必须正好是白名单里那些类型：多一格就是让人搭一个保存时才报 400 的页面')
+  items.forEach(item => {
+    assert.ok(item.icon && item.desc, `${item.type} 要带图标与说明，物料卡不能只有一行字`)
+  })
+})
+
+test('落点默认属性：按钮必须带动作，控件带标签，区块不带东西', () => {
+  // 动作是权限点的来源：空动作的按钮存进去，生成器只能猜这颗按钮要不要种菜单权限
+  assert.deepEqual(defaultPropsFor('Button'), { label: '按钮', action: 'refresh' })
+  assert.deepEqual(defaultPropsFor('SearchForm'), {})
+  assert.equal(defaultPropsFor('TextInput').label, '文本输入')
 })

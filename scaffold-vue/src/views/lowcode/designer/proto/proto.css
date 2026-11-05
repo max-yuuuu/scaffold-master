@@ -1,0 +1,839 @@
+/* ============================================================
+   1:1 视觉原型的样式层
+   逐条搬自 designer/src/index.css 的非 utility 规则，加上原型 JSX 里内联的
+   Tailwind 工具类（那些数值在这里写成真实 CSS，因为宿主不引 Tailwind）。
+   颜色与尺寸一律走平台 --令牌，深色主题靠 [data-theme="dark"] 覆盖。
+   ============================================================ */
+
+/* ── 机身：深色外框 + 两团漫射光（与外壳 .app-frame 同一材质） ── */
+.pf-stage {
+  position: relative;
+  min-height: 100dvh;
+  padding: 8px;
+  overflow: clip;
+  background: var(--stage);
+}
+
+.pf-chassis {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 16px);
+  min-height: 560px;
+  overflow: clip;
+  padding: 0 12px 12px;
+  gap: 12px;
+  border: 10px solid var(--frame);
+  border-radius: 38px;
+  background:
+    radial-gradient(55% 45% at 92% 0%, var(--ambient-a), transparent 70%),
+    radial-gradient(45% 40% at 20% 100%, var(--ambient-b), transparent 70%),
+    var(--canvas);
+  box-shadow: 0 24px 70px rgba(17, 23, 27, .24), 0 3px 12px rgba(17, 23, 27, .16);
+}
+
+/* ── 顶栏：平时透明只留一条下边线，画布滚出首屏后凝结成导航轨材质 ── */
+.pf-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: var(--topbar-h);
+  flex: none;
+  padding: 0 20px;
+  margin: 0 -12px;
+  z-index: 20;
+  transition: background .3s var(--ease-premium), box-shadow .3s var(--ease-premium), border-color .3s var(--ease-premium);
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+}
+
+.pf-topbar.is-condensed {
+  background: var(--rail-bg);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  box-shadow: var(--e1);
+}
+
+.pf-brand {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: var(--r-sm);
+  background: var(--dark-surface);
+  box-shadow: 0 1px 3px rgba(14, 18, 20, .16), 0 6px 16px rgba(14, 18, 20, .16), inset 0 1px 0 rgba(255, 255, 255, .12);
+}
+
+.pf-brand i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--lime);
+  box-shadow: 0 0 0 4px rgba(130, 221, 45, .2), 0 0 12px rgba(130, 221, 45, .6);
+}
+
+.pf-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.pf-crumbs .sep { color: var(--ink-faint); }
+.pf-crumbs .here { font-weight: 620; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+
+.pf-search {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 240px;
+  height: 34px;
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+  box-shadow: var(--edge);
+  color: var(--ink-faint);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pf-search:hover { border-color: var(--line-hover); color: var(--ink-muted); }
+.pf-search .kbd { display: inline-flex; align-items: center; height: 20px; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--hover-bg); color: var(--ink-muted); font-family: var(--font-mono); font-size: 11px; }
+
+.pf-tools { display: flex; align-items: center; gap: 8px; }
+.pf-tools .divider { width: 1px; height: 22px; margin: 0 4px; background: var(--line); }
+
+/* ── 按钮 ── */
+.pf-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--control-h);
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  transition: background .2s var(--ease-premium), border-color .2s var(--ease-premium), box-shadow .2s var(--ease-premium), color .2s var(--ease-premium), transform .12s var(--ease-premium);
+}
+
+.pf-btn:active:not(:disabled) { transform: scale(.97); }
+.pf-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.pf-btn.is-primary { background: var(--blue); box-shadow: var(--e-accent); color: #fff; }
+.pf-btn.is-primary:hover:not(:disabled) { background: var(--blue-hover); box-shadow: var(--e-accent-hover); }
+
+.pf-btn.is-secondary {
+  border-color: var(--line);
+  background: var(--pill-bg);
+  box-shadow: var(--edge), var(--e1);
+}
+.pf-btn.is-secondary:hover:not(:disabled) { border-color: var(--line-hover); box-shadow: var(--edge), var(--e2); }
+
+.pf-btn.is-ghost { background: none; color: var(--ink-muted); }
+.pf-btn.is-ghost:hover:not(:disabled) { background: var(--hover-bg); color: var(--ink); }
+
+.pf-btn.is-text { background: none; color: var(--blue); padding: 0 8px; }
+.pf-btn.is-text:hover:not(:disabled) { background: var(--blue-soft); }
+
+.pf-btn.is-sm { height: var(--control-h-sm); padding: 0 11px; font-size: 12.5px; gap: 5px; }
+
+.pf-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: background .18s var(--ease-premium), color .18s var(--ease-premium), border-color .18s var(--ease-premium);
+}
+
+.pf-icon-btn:hover:not(:disabled) { background: var(--hover-bg); color: var(--ink); }
+.pf-icon-btn:active:not(:disabled) { background: var(--press-bg); }
+.pf-icon-btn:disabled { color: var(--ink-faint); opacity: .55; cursor: not-allowed; }
+.pf-icon-btn.is-bordered { border-color: var(--line); background: var(--float-bg); box-shadow: var(--edge); }
+.pf-icon-btn.is-on { color: var(--blue); background: var(--blue-soft); }
+
+/* ── 输入与开关 ── */
+.pf-input {
+  display: block;
+  width: 100%;
+  height: var(--control-h);
+  padding: 0 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--input-bg);
+  box-shadow: var(--edge);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color .18s var(--ease-premium), box-shadow .18s var(--ease-premium);
+}
+
+.pf-input::placeholder { color: var(--ink-faint); }
+.pf-input:hover { border-color: var(--line-hover); }
+.pf-input:focus-visible { border-color: var(--blue); outline: 2px solid var(--focus); outline-offset: 1px; }
+.pf-input.is-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.pf-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pf-field > label { font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+
+.pf-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--groove-bg);
+  cursor: pointer;
+  transition: background .22s var(--ease-premium), border-color .22s var(--ease-premium);
+}
+
+.pf-switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(46, 58, 62, .24);
+  transition: transform .24s var(--ease-premium);
+}
+
+.pf-switch[aria-checked="true"] { background: var(--lime); border-color: transparent; }
+.pf-switch[aria-checked="true"] i { transform: translateX(18px); }
+
+.pf-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--input-bg);
+  color: #fff;
+  cursor: pointer;
+  transition: background .16s var(--ease-premium), border-color .16s var(--ease-premium);
+}
+
+.pf-checkbox:hover { border-color: var(--blue); }
+.pf-checkbox[aria-checked="true"] { border-color: var(--blue); background: var(--blue); }
+
+/* ── 标签与 chip ── */
+.pf-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pf-tag i { width: 6px; height: 6px; border-radius: 999px; background: currentColor; box-shadow: 0 0 0 3px rgba(255, 255, 255, .35); }
+.pf-tag.tone-ok { background: var(--lime-soft); color: var(--leaf-text); }
+.pf-tag.tone-info { background: var(--blue-soft); color: var(--blue); }
+.pf-tag.tone-danger { background: var(--red-soft); color: var(--red-text); }
+.pf-tag.tone-neutral { background: var(--hover-bg); color: var(--ink-muted); }
+
+.pf-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: rgba(46, 58, 62, .06);
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11.5px;
+}
+
+:root[data-theme="dark"] .pf-chip { background: rgba(255, 255, 255, .08); }
+
+/* ── 仪器化：小节标题、规格铭牌、只读读数、刻度条 ── */
+.pf-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+  color: var(--ink);
+}
+
+.pf-section::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--lime);
+  box-shadow: 0 0 0 5px var(--lime-soft);
+}
+
+.pf-plate {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--plate-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1);
+  color: var(--plate-ink);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+
+/* 铭牌上的次要字用 .dim 而不是 .muted：后者在 NodeRenderer 里是表格那套「浅底次要文字」，
+   同特异性下后注入的 scoped 样式会赢过来，把白玻璃上的 56% 白压成深灰 —— 铭牌字就糊了 */
+.pf-plate .dim { color: var(--plate-soft); letter-spacing: .08em; }
+.pf-plate .lime { color: #9be35a; }
+
+.pf-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--line);
+}
+
+.pf-kv > div { padding: 10px 12px; background: var(--surface-solid); }
+.pf-kv .k { font-size: 11px; font-weight: 600; color: var(--ink-soft); }
+.pf-kv .v { margin-top: 2px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 640; color: var(--ink); }
+.pf-kv .v sup { font-size: 10.5px; font-weight: 600; color: var(--ink-soft); }
+
+.pf-bar {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  background: var(--surface-solid);
+}
+
+.pf-bar .fill { height: 100%; background: rgba(130, 221, 45, .22); }
+.pf-bar .hatch { height: 100%; border-left: 1px solid var(--line-strong); border-right: 1px solid var(--line-strong); background: var(--hatch); }
+.pf-bar .now { height: 100%; width: 2px; background: var(--lime); box-shadow: 0 0 0 3px rgba(130, 221, 45, .24); }
+.pf-ticks { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; color: var(--ink-faint); }
+.pf-ticks .now { color: var(--ink-muted); font-weight: 620; }
+
+/* ── 三栏 ── */
+.pf-body {
+  display: grid;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  --pf-rail-w: 236px;
+  --pf-inspector-w: 312px;
+  grid-template-columns: var(--pf-rail-w) minmax(0, 1fr) var(--pf-inspector-w);
+}
+
+.pf-body.is-left-collapsed { grid-template-columns: minmax(0, 1fr) var(--pf-inspector-w); }
+.pf-body.is-right-collapsed { grid-template-columns: var(--pf-rail-w) minmax(0, 1fr); }
+.pf-body.is-left-collapsed.is-right-collapsed { grid-template-columns: minmax(0, 1fr); }
+
+.pf-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface-solid);
+}
+
+.pf-pane-head { display: flex; align-items: center; gap: 6px; padding: 12px; border-bottom: 1px solid var(--line); }
+/* 面板收起按钮：26px 见方、7px 圆角，比正文里的图标按钮小一档，贴在分段控件旁边 */
+.pf-pane-head .pf-icon-btn, .pf-ins-head .pf-icon-btn { width: 26px; height: 26px; border-radius: 7px; }
+.pf-pane-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+
+/* 分段控件一律用平台 Segmented（凹槽底座 m-groove + 玻璃滑块 m-pill，深浅色各自成套）。
+   设计器里这几处都要铺满栏宽，所以只补一条流式尺寸，激活态与材质一律不自己画 ——
+   自己画的那版是 `linear-gradient(145deg, rgba(255,255,255,.93), …)`，深色主题下就是一块白斑。
+   必须 `flex: 1 1 0; min-width: 0`：平台 `.segmented` 自带 `flex: none`，
+   只写 `width: 100%` 的话它会把同一行的收起按钮挤出 `.pf-pane`（那层 overflow: hidden），按钮直接看不见。 */
+.pf-fluid { flex: 1 1 0; min-width: 0; display: flex; }
+.pf-fluid > button { flex: 1; }
+
+/* 物料分组与卡片 */
+.pf-group + .pf-group { margin-top: 12px; }
+
+.pf-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pf-group-head .title { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.pf-group-head .dot { width: 6px; height: 6px; border-radius: 999px; flex: none; }
+.pf-group-head .meta { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-faint); }
+
+.pf-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 17px;
+  padding: 0 5.5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--canvas);
+  box-shadow: var(--edge);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.pf-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 4px; }
+
+.pf-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  height: 66px;
+  padding: 3.5px 3.5px 5px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-solid);
+  box-shadow: var(--edge), var(--e1);
+  color: var(--ink);
+  cursor: grab;
+  position: relative;
+  transition: transform .24s var(--ease-premium), box-shadow .24s var(--ease-premium), border-color .24s var(--ease-premium);
+}
+
+.pf-tile:hover { border-color: rgba(35, 109, 233, .28); box-shadow: var(--edge), var(--e2); transform: translateY(-1.5px); }
+.pf-tile:active { cursor: grabbing; transform: scale(.96); }
+.pf-tile.is-armed { border-color: var(--blue); box-shadow: var(--edge), var(--e2), 0 0 0 3px var(--blue-soft); }
+
+.pf-tile .box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 37px;
+  flex: none;
+  border: 1px solid rgba(46, 58, 62, .055);
+  border-radius: 7.5px;
+  background: var(--canvas);
+  box-shadow: inset 0 1px 2px rgba(46, 58, 62, .035);
+  color: var(--ink-muted);
+  transition: color .24s var(--ease-premium), background-color .24s var(--ease-premium), border-color .24s var(--ease-premium);
+}
+
+.pf-tile:hover .box { border-color: rgba(35, 109, 233, .16); background: var(--blue-soft); color: var(--blue); }
+.pf-tile .box svg { transition: transform .24s var(--ease-premium); }
+.pf-tile:hover .box svg { transform: scale(1.07); }
+.pf-tile .name { font-size: 11px; color: var(--ink-soft); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 层级树 */
+.pf-tree { display: flex; flex-direction: column; gap: 2px; }
+/* 层级树：整行就是一块可点选中的面，手柄、图标、名称、行尾操作全在这一条带子里。
+   原型 `.group/tree` 就是这个结构 —— 容器负责高亮，左右两组贴两端；
+   把高亮放在里面那颗按钮上，选中时只有文字背后亮一块，手柄和操作栏落在带子外面。 */
+.pf-tree-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--r-xs);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12.5px;
+  transition: background-color .16s var(--ease-premium), color .16s var(--ease-premium);
+}
+
+.pf-tree-row:hover { background: var(--hover-bg); }
+.pf-tree-row.is-active { background: var(--blue-soft); color: var(--blue); }
+.pf-tree-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.pf-tree-row.is-child { font-size: 12px; }
+.pf-tree-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-tree-row .marks { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--ink-faint); }
+.pf-tree-row:hover .marks, .pf-tree-row:focus-within .marks { visibility: hidden; }
+.pf-tree-row .mt { display: inline-flex; align-items: center; color: var(--ink-faint); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
+
+/* 有子节点的行走这颗折叠箭头，没有的才让位给拖拽手柄：一格只放一个左手件 */
+.pf-tree-exp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.pf-tree-exp:hover { background: var(--press-bg); color: var(--ink); }
+.pf-tree-exp svg { transition: transform .18s var(--ease-premium); }
+.pf-tree-exp.is-open svg { transform: rotate(90deg); }
+
+.pf-thread { margin-left: 14px; padding-left: 8px; border-left: 1px solid var(--thread); }
+.pf-thread.is-nested { margin-left: 20px; }
+
+/* 手柄只是「这一行能拖」的提示：整行才是拖拽源，所以它自己不吃指针 */
+.pf-grip { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 24px; flex: none; border-radius: 5px; color: var(--ink-faint); cursor: grab; opacity: 0; pointer-events: none; transition: opacity .16s var(--ease-premium); }
+.pf-tree-row:hover .pf-grip { opacity: 1; }
+.pf-tree-row[draggable='true'] { cursor: grab; }
+.pf-tree-row[draggable='true']:active { cursor: grabbing; }
+.pf-tree-row[draggable='false'] { cursor: pointer; }
+
+/* 锁定的组件拖不动，手柄也就不亮出来 —— 亮着一个拖不动的手柄比没有更误导 */
+.pf-grip.is-off, .pf-tree-row:hover .pf-grip.is-off { opacity: 0; }
+
+/* 行尾操作栏：静默态让位给状态微标，鼠标停到这一行才换成锁定/显隐/删除三颗 */
+.pf-row-acts { display: none; flex: none; align-items: center; gap: 2px; }
+.pf-tree-row:hover .pf-row-acts, .pf-tree-row:focus-within .pf-row-acts { display: inline-flex; }
+
+/* 落点指示画在这一行自己的边上（不是一条兄弟 div）——
+   兄弟节点会把后面那一行整体往下顶，指针一挪就跳，位置永远对不上 */
+.pf-drop-line { position: absolute; left: 4px; right: 4px; height: 2px; border-radius: 2px; background: var(--blue); pointer-events: none; z-index: 1; }
+.pf-drop-line.is-before { top: -1px; }
+.pf-drop-line.is-after { bottom: -1px; }
+.pf-tree-row.is-inside { outline: 1.5px dashed var(--blue); outline-offset: -1px; background: var(--blue-soft); }
+
+/* ── 画布 ── */
+.pf-canvas {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background-color: var(--canvas);
+  background-image:
+    radial-gradient(480px 320px at 14% 12%, rgba(130, 221, 45, .06), transparent 70%),
+    radial-gradient(520px 360px at 88% 88%, rgba(35, 109, 233, .058), transparent 72%);
+}
+
+.pf-canvas.tone-pure { background-image: none; }
+.pf-canvas.tone-warm { background-image: linear-gradient(180deg, #f7f4ee, var(--canvas)); }
+
+.pf-dots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(rgba(46, 58, 62, .14) 1px, transparent 1.2px);
+  background-size: 22px 22px;
+  mask-image: radial-gradient(ellipse 84% 80% at 50% 50%, #000 55%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 84% 80% at 50% 50%, #000 55%, transparent 100%);
+}
+
+[data-theme="dark"] .pf-dots {
+  background-image: radial-gradient(rgba(255, 255, 255, .14) 1px, transparent 1.2px);
+}
+
+/* 真正滚的是这一层：胶囊浮在舞台上不动，内容从底下走过去 */
+.pf-canvas-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 72px;
+}
+
+.pf-canvas-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  margin: 0 auto;
+  transition: max-width .3s var(--ease-premium);
+}
+
+/* 移动端/平板端预览：给画布套一层设备边框，模拟真机视口 */
+.pf-canvas-list.is-mobile {
+  padding: 14px;
+  border: 6px solid var(--frame);
+  border-radius: 28px;
+  background: var(--canvas);
+  box-shadow: var(--e3);
+}
+
+.pf-canvas-list.is-tablet {
+  padding: 20px;
+  border: 4px solid var(--frame);
+  border-radius: 24px;
+  background: var(--canvas);
+  box-shadow: var(--e2);
+}
+
+/* 悬浮胶囊：视口切换、展开物料、展开配置共用同一颗珍珠玻璃药丸 */
+.pf-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color .2s var(--ease-premium), color .2s var(--ease-premium);
+}
+
+.pf-capsule:hover { border-color: var(--line-hover); color: var(--blue); }
+
+.pf-canvas > .pf-capsule.is-left { position: absolute; top: 10px; left: 12px; z-index: 6; }
+
+/* 节点卡 */
+.pf-node {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-solid);
+  box-shadow: var(--edge), var(--e1);
+  cursor: pointer;
+  transition: transform .34s var(--ease-premium), box-shadow .34s var(--ease-premium), border-color .28s var(--ease-premium);
+}
+
+.pf-node:hover { border-color: var(--line-hover); box-shadow: var(--edge), var(--e2); }
+.pf-node.is-selected { border-color: var(--blue); box-shadow: var(--edge), var(--e2), 0 0 0 4px var(--blue-soft); transform: translateY(-2px); }
+.pf-node.is-hidden { opacity: .42; border-style: dashed; }
+.pf-node.is-locked { border-color: var(--line-strong); }
+.pf-node.is-dragging-source { opacity: .36; border-style: dashed; border-color: var(--blue); transform: scale(.99); }
+.pf-node.surface-glass { background: var(--surface); backdrop-filter: blur(14px); }
+.pf-node.surface-subtle { background: var(--canvas); }
+
+.pf-node-body { padding: 20px; }
+
+.pf-node-bar {
+  position: absolute;
+  top: -14px;
+  right: 12px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: var(--e-accent);
+  color: #fff;
+}
+
+/* 落点 */
+.pf-slot { height: 6px; margin: 2px 0; border-radius: 12px; background: transparent; transition: height .24s var(--ease-premium), background-color .24s var(--ease-premium), box-shadow .24s var(--ease-premium); }
+.pf-slot.is-active { height: 10px; background: var(--blue-soft); box-shadow: inset 0 0 0 1.5px var(--blue); }
+
+.pf-tail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 20px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 20px;
+  outline: 1px dashed transparent;
+  outline-offset: -3px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  cursor: copy;
+  transition: border-color .24s var(--ease-premium), background-color .24s var(--ease-premium), color .24s var(--ease-premium);
+}
+
+.pf-tail:hover { border-color: var(--blue); color: var(--ink); }
+.pf-tail .lead { display: inline-flex; align-items: center; gap: 10px; }
+.pf-tail .plus { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--r-xs); color: var(--blue); flex: none; }
+.pf-tail.is-active { border: 1.5px dashed var(--blue); background: var(--blue-soft); color: var(--blue); }
+
+/* 拖拽预览帧：落点处直接画出被拖组件的本体，外面套一圈虚线蓝框 */
+.pf-ghost {
+  position: relative;
+  border-radius: 20px;
+  outline: 1.5px dashed var(--blue);
+  outline-offset: 2px;
+  background: var(--blue-soft);
+  box-shadow: var(--edge-strong), var(--e2);
+  pointer-events: none;
+  animation: pfGhostPulse .22s var(--ease-premium);
+}
+
+.pf-ghost > .pf-node { opacity: .92; border-color: rgba(35, 109, 233, .38); box-shadow: none; }
+
+@keyframes pfGhostPulse {
+  from { opacity: .4; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.pf-ghost-badge {
+  position: absolute;
+  top: -11px;
+  left: 14px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--blue);
+  box-shadow: var(--e-accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* ── 表格（画布内） ── */
+.pf-table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); scrollbar-width: none; }
+.pf-table-wrap::-webkit-scrollbar { display: none; }
+.pf-table { width: 100%; border-collapse: collapse; text-align: left; }
+.pf-table th { height: 40px; padding: 0 var(--pf-cell-px, 16px); border-bottom: 1px solid var(--line); background: var(--surface-solid); color: var(--ink-soft); font-size: 12px; font-weight: 620; white-space: nowrap; position: sticky; top: 0; z-index: 2; }
+.pf-table td { padding: 0 var(--pf-cell-px, 16px); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+.pf-table tbody tr:last-child td { border-bottom: 0; }
+.pf-table tbody tr:hover td { background: var(--hover-bg); }
+.pf-table .sticky-left { position: sticky; left: 0; z-index: 1; width: 48px; text-align: center; background: var(--surface-solid); }
+.pf-table .sticky-right { position: sticky; right: 0; z-index: 1; text-align: right; background: var(--surface-solid); }
+.pf-table .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pf-table .sub { margin-top: 1px; font-size: 12px; color: var(--ink-soft); }
+.pf-table-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; color: var(--ink-soft); font-size: 12px; }
+.pf-pager { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.pf-pager .page { padding: 4px 10px; border-radius: var(--r-xs); background: var(--pill-bg); box-shadow: var(--edge); color: var(--ink); font-weight: 640; }
+
+/* ── 栅格与插槽容器 ── */
+.pf-grid { display: grid; gap: 12px; }
+.pf-grid-col { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px; border: 1px dashed var(--line); border-radius: var(--r-md); background: var(--canvas); }
+.pf-grid-col.is-active { border-color: var(--blue); background: var(--blue-soft); }
+.pf-slotbox { display: flex; align-items: center; justify-content: center; min-height: 76px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); outline-offset: -3px; color: var(--ink-faint); font-size: 12px; cursor: copy; }
+.pf-slotbox.is-active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+
+/* ── 浮层与浮条 ── */
+.pf-scrim { position: fixed; inset: 0; z-index: 200; display: flex; background: var(--overlay); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.pf-scrim.is-center { align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.pf-scrim.is-right { justify-content: flex-end; }
+
+.pf-modal { display: flex; flex-direction: column; width: 100%; max-width: 540px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--surface-solid); box-shadow: var(--e3), inset 0 1px 0 rgba(255, 255, 255, .9); }
+.pf-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 22px 10px; border-bottom: 1px solid var(--line); }
+.pf-modal-title { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.015em; color: var(--ink); }
+.pf-modal-body { padding: 14px 22px 20px; display: flex; flex-direction: column; gap: 16px; }
+.pf-modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--line); }
+.pf-modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 18px; }
+
+
+.pf-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-solid);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.pf-trigger:hover { border-color: var(--line-hover); }
+.pf-trigger.is-on { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+
+.pf-event-card { display: flex; flex-direction: column; gap: 6px; padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-solid); cursor: pointer; }
+.pf-event-card:hover { border-color: var(--line-hover); box-shadow: var(--e1); }
+.pf-event-card .row1 { display: flex; align-items: center; gap: 8px; }
+.pf-event-card .row1 b { font-size: 12.5px; font-weight: 620; }
+.pf-event-card .row2 { display: flex; align-items: center; gap: 6px; color: var(--ink-faint); font-size: 11.5px; }
+
+.pf-code {
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  border-radius: var(--r-md);
+  background: var(--plate-bg);
+  color: var(--plate-ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+}
+
+/* 底部浮条不在这里：设计器复用平台那条 .float-bar（instruments.css），不再自己描一遍 */
+
+/* 提示牌堆：最多 3 张，越旧越往上缩 5%、透明度减 .28 */
+.pf-toasts { position: fixed; left: 50%; bottom: 28px; z-index: 400; display: flex; flex-direction: column-reverse; align-items: center; gap: 6px; translate: -50% 0; pointer-events: none; }
+
+.pf-toast {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  max-width: 460px;
+  padding: 0 8px 0 14px;
+  border-radius: 999px;
+  background: rgba(21, 24, 26, .92);
+  backdrop-filter: blur(20px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 12px 30px rgba(16, 20, 24, .28);
+  color: var(--plate-ink);
+  font-size: 12.5px;
+}
+
+.pf-toast .dot { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+.pf-toast.tone-ok .dot { background: var(--lime); box-shadow: 0 0 0 3px rgba(130, 221, 45, .24); }
+.pf-toast.tone-info .dot { background: var(--blue); box-shadow: 0 0 0 3px rgba(35, 109, 233, .24); }
+.pf-toast.tone-danger .dot { background: var(--red); box-shadow: 0 0 0 3px rgba(255, 90, 80, .24); }
+.pf-toast .ring { position: relative; width: 22px; height: 22px; flex: none; }
+.pf-toast .ring svg { transform: rotate(-90deg); }
+.pf-toast .ring circle { fill: none; stroke-width: 2; }
+.pf-toast .ring .bg { stroke: rgba(255, 255, 255, .16); }
+.pf-toast .ring .fg { stroke: var(--lime); stroke-linecap: round; transition: stroke-dashoffset .1s linear; }
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

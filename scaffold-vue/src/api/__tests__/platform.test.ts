@@ -57,3 +57,27 @@ test('pages api maps list detail create update status and remove to backend endp
   assert.equal(calls[5].method, 'DELETE')
   assert.equal(calls[5].url, '/api/lowcode/pages/7')
 })
+
+test('发布只送 force 与 changeDesc 两个入参，版本号由后端按 current_version 算', async () => {
+  const calls: Array<{ url: string, method: string, body?: string }> = []
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body as string | undefined })
+    return new Response(JSON.stringify({
+      code: 200,
+      message: 'success',
+      data: { pageId: 59, version: 2, status: 1, tagName: 'vorder-serive-sales_order_page-2', message: '已发布' },
+      traceId: 't',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const api = createPlatformApi(createHttpClient({ baseUrl: '/api', tokenProvider: () => 'token', fetcher }))
+
+  const result = await api.pages.publish(59, { force: false, changeDesc: '加一行导出备注' })
+
+  assert.equal(calls[0].method, 'POST')
+  assert.equal(calls[0].url, '/api/lowcode/pages/59/publish')
+  assert.deepEqual(JSON.parse(calls[0].body ?? '{}'), { force: false, changeDesc: '加一行导出备注' })
+  // 回读的是后端那一笔的结果：弹窗要说「v2 已推上去」而不是「大概成功了吧」
+  assert.equal(result.version, 2)
+  assert.equal(result.status, 1)
+  assert.equal(result.tagName, 'vorder-serive-sales_order_page-2')
+})

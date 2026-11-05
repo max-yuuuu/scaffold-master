@@ -38,6 +38,8 @@
   --shade: 46, 58, 62;
   --line: rgba(var(--shade), .085);
   --line-strong: rgba(var(--shade), .11);
+  /* 悬浮时的那一档描边：比 strong 再强一级，输入框与设计器物料卡共用 */
+  --line-hover: rgba(var(--shade), .18);
   --glass-line: rgba(255, 255, 255, .88);
   --glass-line-soft: rgba(255, 255, 255, .7);
 
@@ -157,6 +159,7 @@
   --shade: 0, 0, 0;
   --line: rgba(255, 255, 255, .07);
   --line-strong: rgba(255, 255, 255, .1);
+  --line-hover: rgba(255, 255, 255, .22);
   --glass-line: rgba(255, 255, 255, .1);
   --glass-line-soft: rgba(255, 255, 255, .07);
 

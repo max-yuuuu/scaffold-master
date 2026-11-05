@@ -104,49 +104,20 @@ async function submitCreate() {
 }
 
 /* ── 画布：开在新的浏览器标签页里，列表这一层不整屏接管 ── */
-const editing = ref<PageDetail | null>(null)
-const editFields = ref<FieldRow[]>([])
 
 /**
- * 设计器在新标签页打开，而不是把当前这一屏换掉。
+ * 设计器是一条独立的全屏路由（`/lowcode/designer/:页面 ID`），开在新的浏览器标签页里，
+ * 而不是把当前这一屏换掉，也不再套一层导航轨与控制台顶栏。
  *
  * <p>画布是一份要反复改、改完放那里的长活儿：接管列表的话，人一边调设计一边看不到「还有哪些页面没发」，
- * 想看就得先退出设计器（未保存的改动还得指望它别丢）。开新标签页之后列表与设计稿并排放着，
- * 地址也带得走 —— 复制一条 `?design=页面 ID` 就能把这一页的设计交给另一个人或另一台机器。
+ * 想看就得先退出设计器（未保存的改动还得指望它别丢）。开新标签页之后列表与设计稿并排放着。
+ * 地址带的是页面 ID 而不是查询参数，复制一条 `/lowcode/designer/59` 就能把这一页的设计交给另一个人
+ * 或另一台机器，别人打开也不用先猜「design 参数是干什么的」。
  */
 function openDesignerInNewTab(id: number) {
-  const { href } = router.resolve({ path: route.path, query: { ...route.query, design: String(id) } })
+  const { href } = router.resolve({ name: 'designer', params: { id: String(id) } })
   window.open(href, '_blank', 'noopener')
 }
-
-async function loadDesigner(id: number) {
-  try {
-    const detail = await platformApi.pages.detail(id)
-    editFields.value = await platformApi.models.fields(detail.modelId)
-    editing.value = detail
-  } catch (error) {
-    toastError(error, '打开设计器失败')
-    closeDesigner()
-  }
-}
-
-/** 新标签页是带着 `?design=页面 ID` 进来的，直接进画布；那个 ID 读不出来就退回列表 */
-async function openDesignerFromQuery() {
-  const id = Number(route.query.design)
-  if (!Number.isInteger(id) || id <= 0) return
-  await loadDesigner(id)
-}
-
-function closeDesigner() {
-  editing.value = null
-  // 地址里那个 design 参数是「这次是新标签页进来的」的记号：退出时抹掉，刷新才不会又弹回画布
-  if (route.query.design) {
-    void router.replace({ path: route.path, query: { ...route.query, design: undefined } })
-  }
-  list.load()
-}
-
-onMounted(openDesignerFromQuery)
 
 async function toggle(row: PageRow) {
   const next = row.status === 1 ? 0 : 1
@@ -178,10 +149,7 @@ async function remove(row: PageRow) {
 </script>
 
 <template>
-  <DesignerWorkspace v-if="editing" :page="editing" :fields="editFields" @close="closeDesigner" />
-
   <ListPage
-    v-else
     title="页面设计"
     desc="页面是形、模型是料：设计器里摆的每一格都要在模型里有对应的字段。"
     table-title="页面列表"

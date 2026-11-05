@@ -15,6 +15,8 @@ export const ICON_PATHS: Record<string, string> = {
   file: 'M6 3h9l4 4v14H6V3zm8 0v5h5',
   image: 'M4 5h16v14H4V5zm0 9 4-4 4 4 3-3 5 5M15 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z',
   lock: 'M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5V11zm7 4v2',
+  // 解锁态：锁梁只在一侧扣上，与 lock 成对使用，工具条靠它区分当前是锁定还是可编辑
+  unlock: 'M7 11V8a5 5 0 0 1 9.7-1.6M5 11h14v10H5V11zm7 4v2',
   tool: 'M14.7 6.3a4 4 0 0 0-5.1 5.1L3.5 17.5l3 3 6.1-6.1a4 4 0 0 0 5.1-5.1l-2.4 2.4-2.6-.4-.4-2.6 2.4-2.4z',
   command: 'M8 16V8m8 8V8M8 8a2 2 0 1 1 2-2v12a2 2 0 1 1-2-2h8a2 2 0 1 1-2 2V6a2 2 0 1 1 2 2H8',
   code: 'm8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16',
@@ -49,6 +51,8 @@ export const ICON_PATHS: Record<string, string> = {
   upload: 'M12 20V9m0 0-4.5 4.5M12 9l4.5 4.5M5 4h14',
   search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zm9 2-4-4',
   eye: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  // 隐藏态：眼眶压扁、瞳孔收掉、加一道斜遮线，与 eye 成对表示「当前不渲染」
+  eyeOff: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM4 4l16 16',
   copy: 'M9 9h11v11H9V9zM5 15H4V4h11v1',
   check: 'm5 12.5 4.5 4.5L19 7.5',
   x: 'M6 6l12 12M18 6 6 18',
@@ -64,7 +68,17 @@ export const ICON_PATHS: Record<string, string> = {
   arrowUp: 'M12 19V5m0 0-6 6m6-6 6 6',
   arrowDown: 'M12 5v14m0 0 6-6m-6 6-6-6',
   arrowRight: 'M5 12h14m0 0-6-6m6 6-6 6',
+  arrowLeft: 'M19 12H5m0 0 6-6m-6 6 6 6',
   sidebar: 'M4 4h16v16H4V4zm5 0v16',
+  // 分栏收起/展开：箭头朝外是把那一栏收走，箭头朝内是把那一栏拉回来
+  panelLeftClose: 'M4 4h16v16H4V4zM9 4v16M17 9l-3 3 3 3',
+  panelLeftOpen: 'M4 4h16v16H4V4zM9 4v16M14 9l3 3-3 3',
+  panelRightClose: 'M4 4h16v16H4V4zM15 4v16M7 9l3 3-3 3',
+  panelRightOpen: 'M4 4h16v16H4V4zM15 4v16M10 9l-3 3 3 3',
+  grip: 'M9 6h.01M9 12h.01M9 18h.01M15 6h.01M15 12h.01M15 18h.01',
+  // 设计器历史动作：弧形回退与镜像重做，箭头在左为撤销、在右为重做
+  undo: 'M8.5 6.5 4 11l4.5 4.5M4 11h10a5.5 5.5 0 0 1 0 11h-3.5',
+  redo: 'M15.5 6.5 20 11l-4.5 4.5M20 11H10a5.5 5.5 0 0 0 0 11h3.5',
 
   // 状态与外观
   info: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-10v5m0-8h.01',
@@ -72,6 +86,29 @@ export const ICON_PATHS: Record<string, string> = {
   sun: 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0-14v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   moon: 'M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z',
   contrast: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-18v18',
+
+  // 组件类型：设计器物料卡、层级树、选中工具条与属性面板头部共用这一套，
+  // 每种类型必须画得不一样——否则一屏组件全退化成同一个灰色方块。
+  kindGrid: 'M4 5h6v14H4V5zm10 0h6v14h-6V5z',
+  kindCard: 'M4 5h16v14H4V5zm0 5h16',
+  kindTabs: 'M4 5h16v14H4V5zm0 6h16M10 5v6M18 5v6',
+  kindSlot: 'M4 6h16v12H4V6zM12 9v6M9 12h6',
+  kindDivider: 'M3 12h18M7 7h10M7 17h10',
+  kindHeader: 'M4 4h16v6H4V4zM4 14h10M4 19h6',
+  kindReadout: 'M4 20v-6M9 20V7M15 20v-9M20 20V5',
+  kindFilter: 'M4 6h16M7 12h10M10 18h4',
+  kindTable: 'M4 5h16v15H4V5zM4 10h16M10 10v10',
+  kindTopology: 'M3.5 6a2.5 2.5 0 1 0 5 0 2.5 2.5 0 1 0-5 0M15.5 6a2.5 2.5 0 1 0 5 0 2.5 2.5 0 1 0-5 0M9.5 18a2.5 2.5 0 1 0 5 0 2.5 2.5 0 1 0-5 0M7.5 7.5l3 8M16.5 7.5l-3 8',
+  kindInput: 'M4 7h16v10H4V7zm3 3v4',
+  kindNumber: 'M3 7h13v10H3V7zM16 8l2-2 2 2M16 16l2 2 2-2M6 10v4',
+  kindSelect: 'M4 7h16v10H4V7zM14 9l2 2 2-2',
+  kindDate: 'M4 6h16v14H4V6zM4 11h16M8 3v4M16 3v4',
+  kindCheckbox: 'M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6zM8 12l3 3 5-5',
+  kindSwitch: 'M4 12a3.5 3.5 0 0 1 3.5-3.5h9A3.5 3.5 0 0 1 20 12a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 12zM15 12a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+  kindButton: 'M4 8h16v8H4V8zm4 4h8',
+  kindTag: 'M7 6h10a4 4 0 0 1 0 8H7a4 4 0 0 1 0-8zm1 4h.01',
+  kindPagination: 'M4 7h4v10H4V7zm6 0h4v10h-4V7zm6 0h4v10h-4V7z',
+  kindModal: 'M4 5h16v14H4V5zM8 10h8M12 15h5',
 }
 
 /** 菜单图标可选项（菜单管理表单使用） */
