@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-05（设计器新稿的 Figma Make 应用进版本库）
+
+`designer/` 是设计器重构那份设计稿的可运行原型（Figma Make 出的工程，React 19 + Tailwind 4 + Vite 8，`package.json` 名字仍叫 `figma-make-app`），此前一直是本机未跟踪目录。这一刀只把它收进版本库，不改平台一行代码，也不接进构建链。
+
+- 收 29 个文件：`src/App.tsx`、`src/components/{CanvasNodeRenderer,Icons}.tsx`、`src/data/designerData.ts`、`src/index.css`、入口与配置、`pnpm-lock.yaml`，外加它自带的 `.figma/make/*` 脚本、`.gitignore`、`.gitattributes`、`AGENTS.md` / `CLAUDE.md`。**79M 的 `node_modules`、`dist/`、`.env*`、`.DS_Store` 都没进来**（它的 `.gitignore` 挡前三样，根 `.gitignore` 的 `**/.DS_Store` 挡最后一样），`git status` 复核过暂存清单。
+- 验的是它自己能不能构建：`vite build` 通过（19 个模块，产物 321 kB js / 42 kB css），`tsc --noEmit` 干净。
+- **它不进交付快照**：`ScaffoldTrimPolicy.INCLUDED_ROOTS` 是白名单（只走 `.gitignore`、`README.md`、`docs/`、`scaffold-system/`、`scaffold-vue/` 这些根），`designer/` 不在其中，交付项目拿不到这个目录 —— 这份原型属平台侧，不是给客户项目的源码。
+- 一个埋伏写在这里而不是等它咬人：`designer/.gitattributes` 声明了一整套 Git LFS 规则，而本机没装 `git-lfs`，所以那份 `favicon.png` 现在是以真实字节入库的（PNG 头已核对）。以后谁在这台机器装上 LFS，同一条规则会把二进制改成 pointer 提交，两边形态不一致 —— 真要上 LFS 得整仓一起决定，不是让某个子目录的属性文件替全仓做主。
+
+
 ## 2026-11-05（页面列表进设计器改成新开浏览器标签页）
 
 PR 6C 的设计器是「在列表页里整屏接管」，真机上用两天就看出别扭：画布是要反复改、改完放着的那活儿，接管列表之后人一边调设计一边看不到「还有哪些页面没发」，想看就得先退出画布。改成点「设计」直接开新的浏览器标签页。
