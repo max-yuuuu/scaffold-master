@@ -64,6 +64,7 @@ export const ICON_PATHS: Record<string, string> = {
   arrowUp: 'M12 19V5m0 0-6 6m6-6 6 6',
   arrowDown: 'M12 5v14m0 0 6-6m-6 6-6-6',
   arrowRight: 'M5 12h14m0 0-6-6m6 6-6 6',
+  arrowLeft: 'M19 12H5m0 0 6-6m-6 6 6 6',
   sidebar: 'M4 4h16v16H4V4zm5 0v16',
   // 设计器历史动作：弧形回退与镜像重做，箭头在左为撤销、在右为重做
   undo: 'M8.5 6.5 4 11l4.5 4.5M4 11h10a5.5 5.5 0 0 1 0 11h-3.5',

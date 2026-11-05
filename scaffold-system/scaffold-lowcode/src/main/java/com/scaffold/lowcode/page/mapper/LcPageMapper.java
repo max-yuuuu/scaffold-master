@@ -87,12 +87,16 @@ public interface LcPageMapper {
                    p.design_json AS design,
                    p.ref_fields AS refFields,
                    p.status,
+                   p.current_version AS currentVersion,
+                   p.publish_status AS publishStatus,
                    m.model_code AS modelCode,
                    m.model_name AS modelName,
+                   pr.project_name AS projectName,
                    DATE_FORMAT(p.create_time, '%Y-%m-%d %H:%i') AS createTime,
                    DATE_FORMAT(p.update_time, '%Y-%m-%d %H:%i') AS updateTime
             FROM lc_page p
             LEFT JOIN lc_model m ON m.id = p.model_id
+            LEFT JOIN lc_project pr ON pr.id = p.project_id
             WHERE p.id = #{id}
               AND p.deleted = 0
             """)

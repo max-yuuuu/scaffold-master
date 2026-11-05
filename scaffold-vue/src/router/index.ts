@@ -7,6 +7,15 @@ import AppShell from '@/components/layout/AppShell.vue'
 
 const staticRoutes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('@/views/Login.vue'), meta: { public: true, title: '登录' } },
+  // scaffold:platform-only:start 页面设计器：交付项目里没有 /api/lowcode，也没有 views/lowcode 这个目录，
+  // 这一段留在路由表里就是给交付项目留一条点进去必然报「页面不存在」的死路
+  /**
+   * 设计器挂在 AppShell 之外：画布是一份要占满整个视口的长活儿，
+   * 外面套一层导航轨与控制台顶栏，就等于把人干活的地方切掉两块。
+   * 它仍然走同一个登录守卫（不是 public），深链靠路径带页面 ID。
+   */
+  { path: '/lowcode/designer/:id', name: 'designer', component: () => import('@/views/lowcode/designer/DesignerView.vue'), meta: { title: '页面设计器' } },
+  // scaffold:platform-only:end
   {
     path: '/',
     name: 'root',
