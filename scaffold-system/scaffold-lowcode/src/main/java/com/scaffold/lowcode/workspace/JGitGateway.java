@@ -8,11 +8,21 @@ import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
+import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.merge.MergeStrategy;
+import org.eclipse.jgit.merge.Merger;
+import org.eclipse.jgit.merge.ResolveMerger;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
@@ -22,12 +32,15 @@ import org.eclipse.jgit.transport.URIish;
 import org.eclipse.jgit.transport.sshd.JGitKeyCache;
 import org.eclipse.jgit.transport.sshd.ProxyDataFactory;
 import org.eclipse.jgit.transport.sshd.SshdSessionFactory;
+import org.eclipse.jgit.util.io.DisabledOutputStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -48,6 +61,8 @@ public class JGitGateway implements GitGateway {
 
     private static final String REMOTE = "origin";
     private static final String HEADS_PREFIX = "refs/heads/";
+    /** 远端跟踪引用的前缀：fetch 带回的读数落在这里，本地分支一条都不动 */
+    private static final String REMOTE_HEADS_PREFIX = "refs/remotes/" + REMOTE + "/";
     private static final String TAGS_PREFIX = "refs/tags/";
     /** ls-remote 的解引用行后缀：{@code refs/tags/v1^{} } 那一行给的才是 tag 指的提交 */
     private static final String PEEL_SUFFIX = "^{}";
@@ -119,7 +134,10 @@ public class JGitGateway implements GitGateway {
         }
         try (Git git = Git.init()
                 .setDirectory(dir.toFile())
-                .setInitialBranch(HEADS_PREFIX + initialBranch)
+                // 只给分支名：setInitialBranch 自己补 refs/heads/，这里再补一次会建出
+                // refs/heads/refs/heads/{branch} —— 宽松解析（resolve）看不出问题，
+                // 而 findRef 是精确查的，checkoutBranch 那句「这条分支本地有了吗」就此答错
+                .setInitialBranch(initialBranch)
                 .call()) {
             git.remoteAdd().setName(REMOTE).setUri(new URIish(repoUrl)).call();
         } catch (GitAPIException | URISyntaxException e) {
@@ -263,6 +281,23 @@ public class JGitGateway implements GitGateway {
     }
 
     @Override
+    public void fetch(Path dir) {
+        try (Git git = open(dir)) {
+            git.fetch()
+                    .setRemote(REMOTE)
+                    // 与 git 自己给 origin 配的那条一致：带 + 是因为远端分支被强推过也要如实跟上，
+                    // 删掉的分支要一起清掉，否则审查读到的是一条远端已经不存在的旧引用
+                    .setRefSpecs(new RefSpec("+refs/heads/*:" + REMOTE_HEADS_PREFIX + "*"))
+                    .setRemoveDeletedRefs(true)
+                    .setTimeout(timeoutSeconds)
+                    .setTransportConfigCallback(transportConfig())
+                    .call();
+        } catch (GitAPIException | IOException e) {
+            throw new WorkspaceGitException(ProjectSyncStatus.UNREACHABLE, describe("同步远端引用失败", "", e));
+        }
+    }
+
+    @Override
     public boolean isDirty(Path dir) {
         try (Git git = open(dir)) {
             return !git.status().call().isClean();
@@ -300,6 +335,144 @@ public class JGitGateway implements GitGateway {
         }
     }
 
+    @Override
+    public String mergeBase(Path dir, String oneRev, String otherRev) {
+        try (Git git = open(dir); RevWalk walk = new RevWalk(git.getRepository())) {
+            Repository repo = git.getRepository();
+            ObjectId one = resolveRevision(repo, oneRev);
+            ObjectId other = resolveRevision(repo, otherRev);
+            // 分支或提交不在本地（例如刚 fetch 完还没落引用）时不报错：没有分叉点本身就是结论，
+            // 由调用方决定是拒绝还是先同步
+            if (one == null || other == null) {
+                return null;
+            }
+            // 十六进制提交号哪怕对象不在本地也能 resolve 出来，所以要真查一次对象在不在：
+            // 「这两个提交还没进本地对象库」是审查前没 fetch 的正常状态，不是错误，
+            // 让它炸成 Missing unknown 就把「请先同步」这件可解释的事变成一条 JGit 内部报错
+            try (ObjectReader probe = repo.newObjectReader()) {
+                if (!probe.has(one) || !probe.has(other)) {
+                    return null;
+                }
+            }
+            walk.markStart(walk.parseCommit(one));
+            walk.markStart(walk.parseCommit(other));
+            walk.setRevFilter(RevFilter.MERGE_BASE);
+            RevCommit base = walk.next();
+            return base == null ? null : base.getName();
+        } catch (IOException e) {
+            throw new BusinessException("计算分叉点失败：" + oneRev + " / " + otherRev + "（" + e.getMessage() + "）");
+        }
+    }
+
+    @Override
+    public List<ChangedFile> diffFiles(Path dir, String baseSha, String headSha) {
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId baseTree = repo.resolve(baseSha + "^{tree}");
+            ObjectId headTree = repo.resolve(headSha + "^{tree}");
+            if (baseTree == null || headTree == null) {
+                throw new BusinessException("分叉点或源分支的提交不在工作区里：" + baseSha + " / " + headSha);
+            }
+            List<ChangedFile> result = new ArrayList<>();
+            try (ObjectReader reader = repo.newObjectReader()) {
+                CanonicalTreeParser base = new CanonicalTreeParser();
+                base.reset(reader, baseTree);
+                CanonicalTreeParser head = new CanonicalTreeParser();
+                head.reset(reader, headTree);
+                try (DiffFormatter listing = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+                    listing.setRepository(repo);
+                    // 改名要认：发布分支挪动过目录时，清单上出现「删一个 + 加一个」两条会把一次
+                    // 移动读成一次内容丢失，人得白看一眼才知道是同一份代码换了位置
+                    listing.setDetectRenames(true);
+                    for (DiffEntry entry : listing.scan(base, head)) {
+                        result.add(toChangedFile(repo, entry));
+                    }
+                }
+            }
+            return List.copyOf(result);
+        } catch (IOException e) {
+            throw new BusinessException("读取变更清单失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public MergeCheck checkMerge(Path dir, String oursRev, String theirsRev) {
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId ours = resolveRevision(repo, oursRev);
+            ObjectId theirs = resolveRevision(repo, theirsRev);
+            if (ours == null || theirs == null) {
+                throw new BusinessException("要试算的两个提交不在工作区里：" + oursRev + " / " + theirsRev);
+            }
+            Merger merger = MergeStrategy.RECURSIVE.newMerger(repo, true);
+            if (merger instanceof ResolveMerger resolve) {
+                // 两份保险：构造时的 inCore 之外，再给它一个内存索引 —— 真实 .git/index 绝不能被
+                // 一次预检写脏，否则下一次发布就在这份带 MERGE 状态的工作区上提交出半成品
+                resolve.setDirCache(DirCache.newInCore());
+            }
+            boolean clean = merger.merge(ours, theirs);
+            if (clean) {
+                return new MergeCheck(true, List.of(), null);
+            }
+            if (!(merger instanceof ResolveMerger resolve)) {
+                return new MergeCheck(false, List.of(), "合并算法未给出可检查的结论");
+            }
+            List<String> conflicts = List.copyOf(resolve.getUnmergedPaths());
+            // 一行内容冲突之外的拒绝（工作区脏等）只会落在 failingPaths 里，清单为空时必须把原因带回去；
+            // 没有失败项时 JGit 给的是 null 而不是空 map
+            var failing = resolve.getFailingPaths();
+            String note = failing == null || failing.isEmpty() ? null : failing.entrySet().stream()
+                    .map(entryFailed -> entryFailed.getKey() + "（" + entryFailed.getValue().name() + "）")
+                    .reduce((first, second) -> first + "、" + second)
+                    .orElse(null);
+            return new MergeCheck(false, conflicts, note);
+        } catch (IOException e) {
+            throw new BusinessException("试算合并失败：" + oursRev + " ← " + theirsRev + "（" + e.getMessage() + "）");
+        }
+    }
+
+    private ChangedFile toChangedFile(Repository repo, DiffEntry entry) throws IOException {
+        DiffEntry.ChangeType type = entry.getChangeType();
+        // DELETE 时新路径是 /dev/null，清单要落在人能在主干上找到的那个名字上
+        String path = type == DiffEntry.ChangeType.DELETE ? entry.getOldPath() : entry.getNewPath();
+        String oldPath = type == DiffEntry.ChangeType.RENAME || type == DiffEntry.ChangeType.COPY
+                ? entry.getOldPath() : null;
+        int[] counts = numstat(repo, entry);
+        return new ChangedFile(path, oldPath, changeOf(type), counts[0], counts[1]);
+    }
+
+    private static Change changeOf(DiffEntry.ChangeType type) {
+        return switch (type) {
+            // JGit 7 把这一档叫 ADD（旧版叫 INSERT），清单上的档位名要与人看的「新增」对上
+            case ADD -> Change.ADD;
+            case DELETE -> Change.DELETE;
+            case RENAME, COPY -> Change.RENAME;
+            case MODIFY -> Change.MODIFY;
+        };
+    }
+
+    /** 行级增删数：把这一个文件的 unified diff 现算进内存数行数，diff 文本本身不留存也不返回 */
+    private int[] numstat(Repository repo, DiffEntry entry) throws IOException {
+        ByteArrayOutputStream diff = new ByteArrayOutputStream();
+        try (DiffFormatter formatter = new DiffFormatter(diff)) {
+            formatter.setRepository(repo);
+            formatter.format(entry);
+        }
+        int additions = 0;
+        int deletions = 0;
+        for (String line : diff.toString(StandardCharsets.UTF_8).split("\n")) {
+            if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@") || line.startsWith("diff")) {
+                continue;
+            }
+            if (line.startsWith("+")) {
+                additions++;
+            } else if (line.startsWith("-")) {
+                deletions++;
+            }
+        }
+        return new int[]{additions, deletions};
+    }
+
     @PreDestroy
     public void close() {
         SshdSessionFactory factory = sshSessionFactory;
@@ -313,6 +486,21 @@ public class JGitGateway implements GitGateway {
             throw new BusinessException("工作区目录不存在：" + dir);
         }
         return Git.open(dir.toFile());
+    }
+
+    /**
+     * 分支名与提交号都收：先按原样解，解不出再当本地分支名补上 {@code refs/heads/}。
+     *
+     * <p>Git 的宽松解析对 {@code main} 这种短名要看仓库里有哪些同名引用，而调用方给的常常就是
+     * {@code lc_project.main_branch} 里存的那个裸分支名；补一次精确落位，免得「分支明明在，
+     * 读数说是 null」这种要靠读 JGit 源码才能解释的差异散到各个调用点。
+     */
+    private ObjectId resolveRevision(Repository repo, String rev) throws IOException {
+        if (rev == null || rev.isBlank()) {
+            return null;
+        }
+        ObjectId direct = repo.resolve(rev);
+        return direct != null ? direct : repo.resolve(HEADS_PREFIX + rev);
     }
 
     private TransportConfigCallback transportConfig() {

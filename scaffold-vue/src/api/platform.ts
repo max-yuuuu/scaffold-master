@@ -339,6 +339,59 @@ export interface PageWriteRequest {
   design: Record<string, unknown>
 }
 
+/**
+ * 合并请求的一行（lc_merge_request）。
+ *
+ * 文案（statusText / checkStatusText）由后端给：状态词的口径只在 `MergeRequestState.text()` 一处，
+ * 前端拿数字自己拼词，两处就会开始各说各话。
+ */
+export interface MergeRequestRow {
+  id: number
+  projectId: number
+  title: string
+  description: string | null
+  sourceBranch: string
+  targetBranch: string
+  sourceSha: string
+  targetSha: string
+  mergeBaseSha: string | null
+  /** 0 待审 1 陈旧 2 已合并 3 已关闭 */
+  status: number
+  statusText: string
+  /** 0 未预检 1 可自动合并 2 有冲突 */
+  checkStatus: number
+  checkStatusText: string
+  checkMessage: string | null
+  checkTime: string | null
+  /** 这两个数是按文件表现算的，库里不存计数 */
+  fileCount: number
+  conflictCount: number
+  createBy: string | null
+  createTime: string
+  updateTime: string
+}
+
+/** 变更清单里的一行（lc_merge_request_file）：diff 全文不入库，要看到的具体改动由后端按需算 */
+export interface MergeRequestFileRow {
+  id: number
+  requestId: number
+  path: string
+  oldPath: string | null
+  changeType: 'ADD' | 'MODIFY' | 'DELETE' | 'RENAME'
+  isConflict: number
+  additions: number
+  deletions: number
+}
+
+export interface MergeRequestDetail extends MergeRequestRow {
+  files: MergeRequestFileRow[]
+}
+
+/** 重算入参：只要项目 ID，清单与结论全部从仓库现算，前端不带任何期望值 */
+export interface MergeRequestRefreshRequest {
+  projectId: number
+}
+
 export function createPlatformApi(client: HttpClient) {
   return {
     tenants: {
@@ -381,6 +434,14 @@ export function createPlatformApi(client: HttpClient) {
       updateStatus: (id: number, status: number) => client.put<void>(`/lowcode/pages/${id}/status`, { status }),
       /** 发布是独立权限点（lowcode:page:publish）：能编辑设计不等于能往租户仓库推代码 */
       publish: (id: number, body: PagePublishRequest) => client.post<PagePublishResult>(`/lowcode/pages/${id}/publish`, body),
+    },
+    mergeRequests: {
+      /** 列表是一次读库：不重读远端，一屏几十条各打一次 ls-remote 会把「看一眼列表」变成网络风暴 */
+      list: (query?: QueryParams) => client.get<PageResult<MergeRequestRow>>('/lowcode/merge-requests', query),
+      /** 详情带变更清单（冲突的排在最前），并在打开时重读一次远端判陈旧 */
+      detail: (id: number) => client.get<MergeRequestDetail>(`/lowcode/merge-requests/${id}`),
+      /** 重算是独立权限点（lowcode:merge-request:sync）：它会真连远端仓库，不该挂在「看列表」那个码上 */
+      refresh: (body: MergeRequestRefreshRequest) => client.post<MergeRequestDetail>('/lowcode/merge-requests/refresh', body),
     },
     tenantConfigs: {
       list: (query?: QueryParams) => client.get<PageResult<TenantConfigRow>>('/platform/tenant-configs', query),

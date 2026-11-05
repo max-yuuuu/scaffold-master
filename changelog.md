@@ -1,5 +1,41 @@
 # Changelog
 
+## 2026-11-06（PR 8 第二刀段：合并请求的算账、接口与审查页 —— 只读那一半收口）
+
+上一段只有表与 Git 原语。这一段把它们接成人能看的东西：三个入口、一份清单、一次预检、一条陈旧判定。**没有批准也没有合并按钮** —— 确认合并要在「人确实看过清单」这件事成立之后再加，两刀混着做反而各自都难验（陈旧那条验收只取决于三个提交号对不对，与合不合根本无关）。
+
+- **`refresh` 的链路**：fetch → 读两侧远端提交 → `mergeBase` → `diffFiles` → `checkMerge` → 落两张表。四道现场守卫拦的都是「编得过、结论是假的」那一类：工作区脏就不预检（三路合并按工作区当前状态判 dirty，脏着算出来的冲突清单不可信）；远端缺发布分支 / 缺主干 / 两条历史无共同祖先各说一句人接下来能做的事，其中**平台不替你建主干**是刻意的 —— 那等于替你决定仓库的起点。
+- **清单按 `merge-base..源` 算**。按 `主干..源` 算会把主干上别人新提交的内容反向显示成「发布分支要删掉它」。用例里主干有人的改动时，清单只许出现发布分支那个新文件 —— 这条是端到端跑出来的，不是推出来的。
+- **状态与预检分两列，文案只在一处**：`statusText` / `checkStatusText` 由后端 `MergeRequestState.text()` 给，接口直接带。先写红用例（`expected: "待审" but was: "null"`）再实现；让前端拿数字拼词，改一个状态词就要同时动前后端。列表返回 `PageResult`（统一分页模型），不是裸数组 —— 裸数组喂不进 `ListPage`，也破坏了底座那条分页口径。
+- **同一分支对至多一条活着的请求**：重算就地覆盖，文件清单**整批替换**。逐行 upsert 会留下「上次有这次没有」的孤儿行，而那种行在页面上读起来像「这次要删掉这个文件」。请求行与清单同事务（`MergeRequestLedger` 单独成 bean，理由与 `PublishLedger` 一样：自调用不穿代理，`@Transactional` 等于没写）。
+- **详情打开时重读一次远端判陈旧，列表不读**：一屏几十条各打一次 `ls-remote` 会把「看一眼列表」变成网络风暴，那条结论也就没人愿意等。陈旧只改状态与说明，那三个提交号保持原样 —— 它们记的是「这条请求算的是哪一对提交」，改了这句话就不成立。
+- **审查页**复用 `ListPage` + `useListPage` + `DataTable` + `Drawer` + `PermissionButton`，没有自拼布局。筛选只留「归属项目」一条：标题是平台按分支与文件数生成的，对它做关键字过滤没有读者，**与其摆一个后端不认的输入框，不如不放**。
+- **两处「新增文件要同刀补登记」都漏了，都是现场报错才抓住的**：`ScaffoldAdminApplication` 的 `@MapperScan` 要逐个列 `*.mapper` 包（注释里就写着不能写包根），漏了 → 上下文起不来 `No qualifying bean of type LcMergeRequestMapper`；新用例引用 `/api/lowcode` 要进 `ScaffoldTrimPolicy` 排除表，漏了 → 交付快照初始化当场被残留引用扫描拒绝。这两条注释里都写着，仍然各漏一次 —— 说明它们该出现在提交清单而不是注释里。
+- **`vue-tsc` 又救了一次 `vite build` 没救的**：页面里 `pushToast(msg)` 少一个参数、`toastError(err)` 少了兜底文案、语气名我按别家组件库写成了 `'warn'` / `'success'`（底座只有 `ok` / `info` / `danger`）。四条都在 typecheck 报出来，构建那一步是全绿的。
+- **两个错误前提被用例纠正**：`BusinessException` 映射的是 **400** 不是 500；而「先 seed main 再初始化」**不是**「无共同祖先」—— 那时平台是从已有历史 clone 出去的，gen 是 main 的后代，第一次刷新本来就该报出整个快照的 180 个文件（这是对的）。要造无祖先就得显式起一条独立历史，用例现在这么写。
+
+**e2e 实际跑了什么**：`MergeRequestApiTest` 6 例（真 JGit + 本机裸仓库 + 真接口 + 真 IT 库）：无共同祖先、远端缺主干、清单只含源侧改动（含列表那两个数与文案）、两边改同一行报冲突且只列文件、主干前进后详情转陈旧、重算两次覆盖同一条。前端 `vite build` + `vue-tsc` + 43 例（含新的 URL 契约用例：`refresh` 必须是 POST 且只带 `projectId`）；物料包 16 例。IT 库需要应用 V10（`docker exec ... scaffold_system < V10__lowcode_merge_request.sql`，脚本幂等），已应用并核对到两张表与两条权限码。
+
+
+- **文案与真机补记（同一 PR 内跟着改）**：动作按钮原叫「重算所选项目」，用户反馈「选中项目后没看到有请求」—— 那一步是**筛选**，不是发起，而发起长在了一个听起来像「已有东西才能刷新」的名字上。改成「生成合并请求」，并把「这一页没有单独的新建：算一次就是发起，再点一次是就地刷新同一条」写进页面 `desc`。顺手把这条链在**真实租户仓库**上跑了一遍（此前只有本机裸仓库的端到端）：项目 `order-serive` 一次生成 8.7 秒、`platform-generated → main` 清单 167 个文件、预检「可自动合并 / 冲突 0」、`merge_base_sha == target_sha`（主干还停在分叉点上，是首次合流的正常形状）。JGit 走 SSH 直连没被本机代理劫持 —— PR 4 那条 `directSshProxy()` 在这里兑现了。
+
+
+## 2026-11-06（PR 8 第一段：合并请求的两张表与四条只读 Git 原语，顺带修掉一条藏了很久的双层 ref 名）
+
+
+用户选的口径是「只读那一半：建表 + diff + 预检」，确认合并与推送留到下一刀。三段提交：`V10 建表` / `网关三条原语 + initEmpty 修复` / `fetch`。
+
+- **V10 两张表的取舍写在建表注释里**（照 V9 的规矩）：`lc_merge_request` 记 `source_sha` / `target_sha` / `merge_base_sha` 三个提交号，`status`（待审 / 陈旧 / 已合并 / 已关闭）与 `check_status`（未预检 / 可自动合 / 有冲突）**分两列** —— 目标分支前进不改变内容是否冲突，有冲突也不表示请求过期，合成一列要么互相覆盖要么出现没人能显示的枚举值。`target_sha` 存下来而不是只存一个陈旧布尔值，因为列表要能说「主干已经前进到 abc123，这条请求比它旧」。三样故意不存：文件数与冲突数由文件表现算（同 V9 挡掉 `files_added/modified/deleted` 的理由）、unified diff 不入库（两个提交号已把范围钉死，详情页按需现算）、审批人与意见不建（这刀没有「批准」这个动作）。
+- **租户登记与裁剪清单同刀补**：先只建表跑出 `ScaffoldTenantLineHandlerTest` 的红（`lc_merge_request 在 V10 里带 tenant_id，必须登记进白名单`）再补 `TENANT_TABLES`；`ScaffoldSnapshotPlannerTest` 整类 12 条挂过 `裁剪清单遗漏：交付文件 V10 仍引用 lc_project` —— 这就是 AGENTS.md 那条老规矩的形状，前端与单测对此完全无感，只有交付快照的残留扫描能看见。
+- **四条只读原语**（`GitGateway` + `JGitGateway`）：`mergeBase` 走 `RevFilter.MERGE_BASE`；`diffFiles` 走 `DiffFormatter` + 改名识别，档位对齐 `change_type`（JGit 7 那一档叫 `ADD`，旧版叫 `INSERT`，写错直接编译不过），行级增删数按单文件 unified diff 现算；`checkMerge` 用 `RECURSIVE` 的 in-core merger 再配一份 `DirCache.newInCore()`，两份保险确保真实 `.git/index` 不被一次预检写脏；`fetch` 带回 `refs/remotes/origin/*` 并清掉远端已删的引用，**不动本地分支与工作站**（用例钉 `localBranchSha` 不变 + `isDirty` 为 false）。
+- **修掉一条真缺陷**：`initEmpty` 把分支名套了两层（`setInitialBranch` 自己补 `refs/heads/`，调用处又传了 `HEADS_PREFIX + branch`），实际建出 `refs/heads/refs/heads/{branch}`。之所以一直没暴露：`resolve` 会宽松补前缀，本地读数、提交、推送、远端全都对（PR 4/7 真机推上去的分支名是干净的），而 `findRef` 是精确查的 —— `checkoutBranch` 那句「这条分支本地有了吗」答错，会去新建一条已经存在的分支。断言按精确名钉住并做反向验证：改回旧写法立刻红（1 failure + 2 errors）。已初始化工作区里那条双层 ref 不做迁移（工作区是平台本机 clone，不含独有内容，重新初始化即恢复），这条与理由一起写进 `PROJECT_MAP.md` 第九节。
+- **两条只有踩过才知道的细节**：十六进制提交号哪怕对象不在本地对象库也能被 `resolve` 出来，不查 `ObjectReader.has` 就会炸成 JGit 的 `Missing unknown <sha>`，而「提交还没 fetch 回来」是正常状态不是错误；`ResolveMerger.getFailingPaths()` 在没有失败项时返回 **null 而不是空 map**，直接 `.entrySet()` 就 NPE。
+- **图标**：菜单图标 `branch` 在注册表里原本不存在（`Icon.vue` 查不到会静默画 `file`），补进 `ICON_PATHS` 与 `MENU_ICON_OPTIONS`，并新增 `packages/scaffold-ui/src/__tests__/icons.test.ts` 钉「选择器列出的每个名字都能解析」+「路径不以绘图命令开头的算空」；反向验证过：抽掉 `branch` 路径当场红，报错原话是「静默兜底成 file：branch」。包单测 14 → 16 例。
+- **桩的口径**：`StubGitGateway` 三条只读原语显式抛 `UnsupportedOperationException` 而不是返回空清单（用例走错门要当场喊，给它一份「看起来像没有变更」的空清单最坏），`fetch` 记进 `fetches` 供断言；`LocalBareGitGateway` 直接转给真 JGit。
+- **e2e 实际跑了什么**：`JGitGatewayTest` 11 → 15 例（本机裸仓库真跑，新四条先跑红再实现）；`scaffold-lowcode` 全模块 147 例全绿；依赖这两个桩的集成用例 `ProjectWorkspaceApiTest` 15 + `PagePublishApiTest` 9 + `DeliveryGenerationApiTest` 5 全绿（IT 库 `DB_PORT=3316 REDIS_PORT=6380`，`JWT_SECRET` 现生成）；V10 在临时库 `scaffold_v10_rehearsal` 真跑 V1–V10 一遍 + V10 再跑一遍，两次 rc=0，核对到 2 条菜单行、2 条角色授权、2 张新表、默认值与 `UNIQUE(request_id,path)`，跑完 `DROP DATABASE`，没动正式 IT 库。
+- **还没做的**（如实留着）：`MergeRequestService`、接口与前端审查页、把「diff + 预检 + 陈旧」串起来的端到端用例，以及确认合并与推送那一半。**这一段没有对外接口，交付面只有 V10 被裁掉这一点变化，无需重跑物化演练。**
+
+
 ## 2026-11-05（PR 8C 补刀：复制出来的那一格根本存不出去）
 
 e2e 阶段查出来的缺陷，不是用户报的。对着后端读 `duplicate()` 的产物时发现的：副本 `props` 整份照抄，`field` 也一起抄了。
