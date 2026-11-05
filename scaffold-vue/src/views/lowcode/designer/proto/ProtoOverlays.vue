@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { Button, Drawer } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { usePrototype } from './context.ts'
 import { copyText } from '@yuanda-lowcode-ai/scaffold-ui/utils/clipboard'
 import { pushToast } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
@@ -102,23 +102,7 @@ function onScrimKey(event: KeyboardEvent) {
       </div>
     </div>
 
-    <!-- 2. 结构代码满高抽屉 -->
-    <div v-else-if="proto.topOverlay.value === 'schema'" class="pf-drawer" style="width:560px" @click.stop>
-      <div class="pf-drawer-head">
-        <div>
-          <h2 class="pf-modal-title">页面低代码声明式结构（Schema）</h2>
-          <p class="pf-sub">实时映射三栏工作台内所有节点的属性、令牌与 RBAC 权限标识</p>
-        </div>
-        <button type="button" class="pf-mini" @click="proto.closeOverlay()">关闭</button>
-      </div>
-      <div class="pf-drawer-body"><pre class="pf-code">{{ schemaJson }}</pre></div>
-      <div class="pf-drawer-foot" style="justify-content:space-between">
-        <span class="pf-chip">UTF-8 · JSON Schema v2</span>
-        <button type="button" class="pf-btn is-primary is-sm" @click="copySchema"><Icon name="copy" :size="13" />复制结构代码</button>
-      </div>
-    </div>
-
-    <!-- 3. 发布核准弹窗 -->
+    <!-- 2. 发布核准弹窗 -->
     <div v-else-if="proto.topOverlay.value === 'publish'" class="pf-modal" style="max-width:620px" @click.stop>
       <div class="pf-modal-head" style="border-bottom:0;padding-bottom:6px">
         <div>
@@ -138,58 +122,68 @@ function onScrimKey(event: KeyboardEvent) {
         <button type="button" class="pf-btn is-primary" @click="proto.pushToast(`已按 ${publishVersion} 签发（静态稿不发接口）`); proto.closeOverlay()">确认签发上线</button>
       </div>
     </div>
-
-    <!-- 4. 事件配置满高抽屉 -->
-    <div v-else-if="proto.topOverlay.value === 'eventDrawer' && draft" class="pf-drawer" @click.stop>
-      <div class="pf-drawer-head">
-        <div>
-          <h2 class="pf-modal-title"><Icon name="activity" :size="15" /> {{ proto.eventDrawer.value?.mode === 'create' ? '新增' : '编辑' }}组件交互事件</h2>
-          <p class="pf-sub">所属对象：<b>{{ proto.eventDrawer.value?.scope === 'page' ? proto.pageConfig.name : proto.selectedNode.value?.name }}（{{ proto.eventDrawer.value?.scope === 'page' ? proto.pageConfig.code : proto.selectedNode.value?.code }}）</b></p>
-        </div>
-        <button type="button" class="pf-mini" @click="proto.closeOverlay()">ESC 关闭</button>
-      </div>
-
-      <div class="pf-drawer-body">
-        <section class="pf-sec">
-          <p class="pf-section">选择触发时机</p>
-          <button
-            v-for="option in triggerOptions"
-            :key="option.code"
-            type="button"
-            :class="['pf-trigger', drawerTrigger === option.code && 'is-on']"
-            @click="drawerTrigger = option.code"
-          >
-            <span>{{ option.name }}</span><span class="pf-chip">{{ option.code }}</span>
-          </button>
-        </section>
-
-        <section class="pf-sec">
-          <p class="pf-section">选择响应动作</p>
-          <select v-model="drawerAction" class="pf-input">
-            <option v-for="option in EVENT_ACTION_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
-          <label class="pf-field"><span>动作目标 / 接口地址 / 提示内容</span><input v-model="drawerTarget" class="pf-input" type="text"></label>
-        </section>
-
-        <section class="pf-sec">
-          <div class="pf-switch-line">
-            <div><strong>启用该事件绑定</strong><p class="pf-sub">停用后保留配置但不在运行态触发</p></div>
-            <button type="button" class="pf-switch" role="switch" :aria-checked="drawerEnabled" @click="drawerEnabled = !drawerEnabled"><i /></button>
-          </div>
-        </section>
-
-        <section class="pf-sec">
-          <div class="pf-label-line"><span class="pf-section" style="font-size:13px">事件处理器声明预览</span><button type="button" class="pf-link" @click="proto.pushToast(`已仿真触发「${drawerTrigger}」`, 'info')">测试触发效果</button></div>
-          <pre class="pf-code">{{ previewJson }}</pre>
-        </section>
-      </div>
-
-      <div class="pf-drawer-foot">
-        <button type="button" class="pf-btn is-text" @click="proto.closeOverlay()">取消</button>
-        <button type="button" class="pf-btn is-primary" @click="saveDrawer">保存事件配置</button>
-      </div>
-    </div>
   </div>
+
+  <!-- 3–4. 两条抽屉走平台 Drawer：自己 Teleport 到 body、贴右边满高，不套在这层遮罩里 -->
+  <Drawer
+    :open="proto.topOverlay.value === 'schema'"
+    title="页面低代码声明式结构（Schema）"
+    sub="实时映射三栏工作台内所有节点的属性、令牌与 RBAC 权限标识"
+    :width="560"
+    @close="proto.closeOverlay()"
+  >
+    <pre class="pf-code">{{ schemaJson }}</pre>
+    <template #footer>
+      <span class="pf-chip is-lead">UTF-8 · JSON Schema v2</span>
+      <Button variant="primary" size="sm" icon="copy" @click="copySchema">复制结构代码</Button>
+    </template>
+  </Drawer>
+
+  <Drawer
+    :open="proto.topOverlay.value === 'eventDrawer' && !!draft"
+    :title="`${proto.eventDrawer.value?.mode === 'create' ? '新增' : '编辑'}组件交互事件`"
+    :sub="`所属对象：${proto.eventDrawer.value?.scope === 'page' ? proto.pageConfig.name : proto.selectedNode.value?.name}（${proto.eventDrawer.value?.scope === 'page' ? proto.pageConfig.code : proto.selectedNode.value?.code}）`"
+    :width="420"
+    @close="proto.closeOverlay()"
+  >
+    <section class="pf-sec">
+      <p class="pf-section">选择触发时机</p>
+      <button
+        v-for="option in triggerOptions"
+        :key="option.code"
+        type="button"
+        :class="['pf-trigger', drawerTrigger === option.code && 'is-on']"
+        @click="drawerTrigger = option.code"
+      >
+        <span>{{ option.name }}</span><span class="pf-chip">{{ option.code }}</span>
+      </button>
+    </section>
+
+    <section class="pf-sec">
+      <p class="pf-section">选择响应动作</p>
+      <select v-model="drawerAction" class="pf-input">
+        <option v-for="option in EVENT_ACTION_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+      </select>
+      <label class="pf-field"><span>动作目标 / 接口地址 / 提示内容</span><input v-model="drawerTarget" class="pf-input" type="text"></label>
+    </section>
+
+    <section class="pf-sec">
+      <div class="pf-switch-line">
+        <div><strong>启用该事件绑定</strong><p class="pf-sub">停用后保留配置但不在运行态触发</p></div>
+        <button type="button" class="pf-switch" role="switch" :aria-checked="drawerEnabled" @click="drawerEnabled = !drawerEnabled"><i /></button>
+      </div>
+    </section>
+
+    <section class="pf-sec">
+      <div class="pf-label-line"><span class="pf-section" style="font-size:13px">事件处理器声明预览</span><button type="button" class="pf-link" @click="proto.pushToast(`已仿真触发「${drawerTrigger}」`, 'info')">测试触发效果</button></div>
+      <pre class="pf-code">{{ previewJson }}</pre>
+    </section>
+
+    <template #footer>
+      <Button variant="text" @click="proto.closeOverlay()">取消</Button>
+      <Button variant="primary" @click="saveDrawer">保存事件配置</Button>
+    </template>
+  </Drawer>
 </template>
 
 <style scoped>
@@ -198,9 +192,8 @@ function onScrimKey(event: KeyboardEvent) {
 .pf-cmd-row:hover { background: var(--hover-bg); }
 .pf-cmd-empty { padding: 18px 0; color: var(--ink-faint); font-size: 12.5px; text-align: center; }
 .pf-sec { display: flex; flex-direction: column; gap: 10px; }
-.pf-mini { height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-xs); background: var(--float-bg); color: var(--ink-muted); cursor: pointer; font-size: 11.5px; }
-.pf-mini:hover { border-color: var(--line-strong); color: var(--ink); }
+/* 抽屉脚上那颗编码徽标顶到最左，按钮仍按平台 .drawer-foot 的靠右排 */
+.pf-chip.is-lead { margin-right: auto; }
 .pf-link { border: 0; background: none; color: var(--blue); cursor: pointer; font-size: 12px; }
 .pf-switch-line div strong { font-size: 13px; font-weight: 620; color: var(--ink); }
-.pf-modal-title { display: flex; align-items: center; gap: 7px; }
 </style>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
-import { TONE_VAR, type CanvasNode, type TableDensity, type TableRecord } from './data.ts'
+import Segmented from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Segmented.vue'
+import { TONE_VAR, gridColumnIndices, type CanvasNode, type TableDensity, type TableRecord } from './data.ts'
 
 /**
- * 画布节点的所见即所得渲染：1:1 对应 CanvasNodeRenderer.tsx 的 21 种 kind。
+ * 画布节点的所见即所得渲染：1:1 对应 CanvasNodeRenderer.tsx 的 20 种 kind。
  *
  * 值一律是演示数据 —— 这是静态稿，画布上填不进真东西；编辑态里输入框保持 readonly，
  * 只有「预览运行态」才放开，与原型同一口径。
@@ -16,6 +17,8 @@ const props = defineProps<{
   dragging?: boolean
   depth?: number
   records: TableRecord[]
+  /** 当前高亮中的可放置区域；只有栅格列与插槽腔体会被标出来 */
+  dropTarget?: { id: string, colIndex?: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -23,7 +26,14 @@ const emit = defineEmits<{
   (e: 'density', id: string, density: TableDensity): void
   (e: 'toggle-row', id: string): void
   (e: 'toggle-all'): void
+  (e: 'zone-over', id: string, colIndex: number | undefined, event: DragEvent): void
+  (e: 'zone-leave', id: string, colIndex: number | undefined, event: DragEvent): void
+  (e: 'zone-drop', id: string, colIndex: number | undefined, event: DragEvent): void
 }>()
+
+/** 只有 dropZones() 认得的区域才挂拖放：在表格、标题这些身上松手不该有任何反应 */
+const zoneActive = (id: string, colIndex?: number) =>
+  props.dropTarget?.id === id && props.dropTarget.colIndex === colIndex
 
 const tone = (kind: TableRecord['status']) => kind
 
@@ -52,12 +62,16 @@ const TOPOLOGY = [
 ]
 
 const TAB_LABELS = ['批次明细', '电压曲线', '拦截记录']
+const TAB_OPTIONS = TAB_LABELS.map(label => ({ label, value: label }))
 
-const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
-  { key: 'compact', label: '紧凑 40' },
-  { key: 'standard', label: '标准 48' },
-  { key: 'relaxed', label: '宽松 56' },
+const DENSITY_OPTIONS: { value: TableDensity, label: string }[] = [
+  { value: 'compact', label: '紧凑 40' },
+  { value: 'standard', label: '标准 48' },
+  { value: 'relaxed', label: '宽松 56' },
 ]
+
+/** 分段容器是画布上的一份预览，页签切换只活在这一格里，不写回节点树 */
+const activeTab = ref(TAB_LABELS[0])
 </script>
 
 <template>
@@ -85,9 +99,9 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
           <span class="pf-sub">{{ node.props.subtitle }}</span>
         </div>
         <div v-if="node.props.showSpecPlate !== false" class="pf-plate">
-          <span class="muted">工位铭牌</span>
+          <span class="dim">工位铭牌</span>
           <span>ND-P3-FORM-02</span>
-          <span class="muted">|</span>
+          <span class="dim">|</span>
           <span class="lime">采样周期 {{ node.refreshInterval }}</span>
         </div>
       </div>
@@ -155,15 +169,12 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
         </div>
         <div class="pf-density">
           <span>行高密度</span>
-          <div class="pf-segmented" @click.stop>
-            <button
-              v-for="option in DENSITY_OPTIONS"
-              :key="option.key"
-              type="button"
-              :class="['pf-seg-btn', table.density === option.key && 'is-on']"
-              @click="emit('density', node.id, option.key)"
-            >{{ option.label }}</button>
-          </div>
+          <Segmented
+            :model-value="table.density"
+            label="表格行高密度"
+            :options="DENSITY_OPTIONS"
+            @update:model-value="emit('density', node.id, $event as TableDensity)"
+          />
         </div>
       </div>
 
@@ -265,10 +276,8 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
 
     <!-- 7. 分段容器 -->
     <div v-else-if="node.kind === 'tabs'" class="pf-tabs">
-      <div class="pf-segmented is-fluid">
-        <button v-for="(label, idx) in TAB_LABELS" :key="label" type="button" :class="['pf-seg-btn', idx === 0 && 'is-on']" @click.stop>{{ label }}</button>
-      </div>
-      <div class="pf-tabs-body"><span class="pf-sub">当前页签内容区：{{ TAB_LABELS[0] }}</span></div>
+      <Segmented v-model="activeTab" class="pf-fluid" label="分段容器页签" :options="TAB_OPTIONS" />
+      <div class="pf-tabs-body"><span class="pf-sub">当前页签内容区：{{ activeTab }}</span></div>
     </div>
 
     <!-- 8. 栅格容器：两列各自可接收拖放 -->
@@ -278,7 +287,14 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
         <span class="pf-sub">两列均分 · 间距 16px</span>
       </div>
       <div class="pf-grid">
-        <div v-for="colIndex in [0, 1]" :key="colIndex" class="pf-grid-col">
+        <div
+          v-for="colIndex in gridColumnIndices(node)"
+          :key="colIndex"
+          :class="['pf-grid-col', zoneActive(node.id, colIndex) && 'is-active']"
+          @dragover="emit('zone-over', node.id, colIndex, $event)"
+          @dragleave="emit('zone-leave', node.id, colIndex, $event)"
+          @drop="emit('zone-drop', node.id, colIndex, $event)"
+        >
           <template v-if="(node.columns?.[colIndex] || []).length">
             <NodeRenderer
               v-for="child in node.columns?.[colIndex] || []"
@@ -286,7 +302,11 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
               :node="child"
               :records="records"
               :preview="preview"
+              :drop-target="dropTarget"
               @select="emit('select', $event)"
+              @zone-over="(id, col, event) => emit('zone-over', id, col, event)"
+              @zone-leave="(id, col, event) => emit('zone-leave', id, col, event)"
+              @zone-drop="(id, col, event) => emit('zone-drop', id, col, event)"
             />
           </template>
           <span v-else class="pf-slot-hint">第 {{ colIndex + 1 }} 列 · 拖组件到这里</span>
@@ -295,7 +315,13 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
     </div>
 
     <!-- 9. 插槽容器 -->
-    <div v-else-if="node.kind === 'emptySlot'" class="pf-slotbox">
+    <div
+      v-else-if="node.kind === 'emptySlot'"
+      :class="['pf-slotbox', zoneActive(node.id) && 'is-active']"
+      @dragover="emit('zone-over', node.id, undefined, $event)"
+      @dragleave="emit('zone-leave', node.id, undefined, $event)"
+      @drop="emit('zone-drop', node.id, undefined, $event)"
+    >
       <div v-if="(node.children || []).length" class="pf-slot-filled">
         <div class="pf-slot-head">
           <span class="pf-section">{{ node.props.title || '插槽容器' }}</span>
@@ -307,7 +333,11 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
           :node="child"
           :records="records"
           :preview="preview"
+          :drop-target="dropTarget"
           @select="emit('select', $event)"
+          @zone-over="(id, col, event) => emit('zone-over', id, col, event)"
+          @zone-leave="(id, col, event) => emit('zone-leave', id, col, event)"
+          @zone-drop="(id, col, event) => emit('zone-drop', id, col, event)"
         />
       </div>
       <div v-else class="pf-slot-empty">
@@ -447,10 +477,6 @@ const DENSITY_OPTIONS: { key: TableDensity, label: string }[] = [
 .pf-table-block { display: flex; flex-direction: column; }
 .pf-table-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 14px; }
 .pf-density { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-soft); }
-.pf-density .pf-segmented { padding: 3px; }
-.pf-seg-btn { height: 28px; padding: 0 10px; border: 0; border-radius: var(--r-xs); background: none; color: var(--ink-muted); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600; }
-.pf-seg-btn:hover { color: var(--ink); }
-.pf-seg-btn.is-on { background: var(--pill-bg); box-shadow: var(--edge), var(--e1); color: var(--blue); }
 
 .pf-table .big { font-size: 18px; font-weight: 680; }
 .pf-cat { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }

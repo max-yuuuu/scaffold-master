@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { Button } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { appearance } from '@yuanda-lowcode-ai/scaffold-ui/composables/appearance'
 import { floatBarEnter, floatBarLeave } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
+import { useUnsavedGuard } from '@yuanda-lowcode-ai/scaffold-ui/composables/unsavedGuard'
 import { platformApi, type FieldRow, type PageDetail } from '@/api'
 import { createSession, provideSession, type DesignerSession } from './session.ts'
 import DesignerTopbar from './DesignerTopbar.vue'
@@ -16,11 +17,10 @@ import PublishDialog from './PublishDialog.vue'
 /**
  * 已接数据那一版的设计器（`?mode=live`）：真 design_json、真保存、真发布。
  *
- * 三栏的版式与原型有差距（原型是 21 种 kind 的富预览，这一版只有白名单那 15 项），
+ * 三栏的版式与原型有差距（原型是 20 种 kind 的富预览，这一版只有白名单那 15 项），
  * 但它连着后端 —— 在原型那份形状能产出生成物之前，这条是唯一的真链路。
  */
 const route = useRoute()
-const router = useRouter()
 
 const session = shallowRef<DesignerSession | null>(null)
 const page = ref<PageDetail | null>(null)
@@ -28,6 +28,9 @@ const fields = ref<FieldRow[]>([])
 const failed = ref('')
 
 provideSession(session)
+
+// 顶栏没有返回按钮：离开这一页就是关标签页，design_json 脏了必须拦一道
+useUnsavedGuard(() => session.value?.dirty.value === true)
 
 async function load() {
   const id = Number(route.params.id)
@@ -52,10 +55,6 @@ function reload() {
   // 「放弃改动」与发布后回读都走这条路：重新按库里那份装配会话，撤销栈与脏计数一起归零
   session.value = null
   void load()
-}
-
-function goBack() {
-  router.push('/lowcode/page')
 }
 
 /** 深浅色写进平台那一份 appearance：设计器和控制台共用同一个偏好，切一次不会两边不一致 */
@@ -98,7 +97,6 @@ function discardChanges() {
           :scrolled="session.scrolled.value"
           :preview-mode="session.previewMode.value"
           :saving="session.saving.value"
-          @close="goBack"
           @command="session.openOverlay('command')"
           @undo="session.act(() => session!.store.undo())"
           @redo="session.act(() => session!.store.redo())"

@@ -1,7 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 import {
   AVAILABLE_TRIGGERS_BY_KIND, INITIAL_CANVAS_NODES, INITIAL_PAGE_CONFIG, INITIAL_TABLE_RECORDS,
-  createNodeFromMaterial, getDefaultEventsForKind,
+  createNodeFromMaterial, dropZones, getDefaultEventsForKind,
   type CanvasNode, type EventBinding, type MaterialItem, type PageConfig, type TableRecord,
 } from './data.ts'
 
@@ -90,7 +90,7 @@ function moveRelative(list: CanvasNode[], id: string, direction: 'up' | 'down'):
  *
  * 这一份只管画布上看得见的那些事：节点树、撤销栈、拖拽落点、浮层栈、提示牌堆。
  * 它**不产出 design_json**，也不与 `../design.ts` 那套真模型共用任何状态 ——
- * 两套形状（21 种 kind + 节点级事件 vs PageContainer + 5 区块）要到 design_json 升 1.1 那一刀才合流。
+ * 两套形状（20 种 kind + 节点级事件 vs PageContainer + 5 区块）要到 design_json 升 1.1 那一刀才合流。
  */
 export function createPrototypeState() {
   const nodes = ref<CanvasNode[]>(INITIAL_CANVAS_NODES)
@@ -122,6 +122,12 @@ export function createPrototypeState() {
 
   const draggingMaterial = ref<MaterialItem | null>(null)
   const draggingNodeId = ref<string | null>(null)
+  /**
+   * 拖拽期间在目标位置就地预览的那颗组件本体。
+   * 必须在拖拽开始那一刻建好、整段拖拽复用同一份：`createNodeFromMaterial` 会生成随机
+   * 后缀的 id 与 code，放进 computed 里每次 dragover 都重建一颗，预览帧会一直抖。
+   */
+  const dragPreview = ref<CanvasNode | null>(null)
   const activeDropIndex = ref<number | null>(null)
   const activeContainerTarget = ref<{ id: string, colIndex?: number } | null>(null)
   const canvasDragOver = ref(false)
@@ -188,7 +194,16 @@ export function createPrototypeState() {
     pushToast(`已将「${material.name}」挂载至画布`)
   }
 
-  function dropAtTopIndex(index: number) {
+  /**
+   * 顶层落点由 `activeDropIndex` 自己说话：dragover 没在列表上算出索引，就是没有落点，
+   * 松手什么也不做。以前由调用方兜底成「插到末尾」，等于把「没落到位置上」画成了一个新组件。
+   */
+  function dropAtTopIndex() {
+    const index = activeDropIndex.value
+    if (index === null) {
+      resetDrag()
+      return
+    }
     if (draggingMaterial.value) {
       insertMaterial(draggingMaterial.value, index)
     } else if (draggingNodeId.value) {
@@ -206,7 +221,9 @@ export function createPrototypeState() {
   }
 
   function dropInsideContainer(containerId: string, colIndex?: number) {
-    if (draggingNodeId.value === containerId) {
+    const target = findNode(nodes.value, containerId)
+    // 没有可放置区域的节点不是落点：整件事当没发生过，不进撤销栈、不弹提示
+    if (!target || !dropZones(target).length || draggingNodeId.value === containerId) {
       resetDrag()
       return
     }
@@ -239,12 +256,28 @@ export function createPrototypeState() {
     resetDrag()
   }
 
+  /** 拖物料卡：以这份物料建一颗预览节点，落点处直接画出组件本体 */
+  function startMaterialDrag(item: MaterialItem) {
+    draggingMaterial.value = item
+    draggingNodeId.value = null
+    dragPreview.value = createNodeFromMaterial(item)
+  }
+
+  /** 拖画布上已有的组件：预览就是它自己（同一份对象，只读渲染） */
+  function startNodeDrag(id: string) {
+    const target = findNode(nodes.value, id)
+    draggingNodeId.value = target ? id : null
+    draggingMaterial.value = null
+    dragPreview.value = target
+  }
+
   function resetDrag() {
     canvasDragOver.value = false
     activeDropIndex.value = null
     activeContainerTarget.value = null
     draggingMaterial.value = null
     draggingNodeId.value = null
+    dragPreview.value = null
     treeDragNodeId.value = null
     treeDropIndicator.value = null
   }
@@ -317,6 +350,11 @@ export function createPrototypeState() {
     if (!draggedId || draggedId === targetId) return
     const dragged = findNode(nodes.value, draggedId)
     if (!dragged || dragged.locked) return
+    // 「放进去」只对真的有可放置区域的组件成立，与画布那条 dropInsideContainer 同一个口径
+    if (position === 'inside') {
+      const container = findNode(nodes.value, targetId)
+      if (!container || !dropZones(container).length) return
+    }
     // 防止把父容器拖进自己的子节点内部
     if (findNode([dragged], targetId)) return
     const { next, removed } = removeNode(nodes.value, draggedId)
@@ -424,7 +462,8 @@ export function createPrototypeState() {
     leftTab, inspectorTab, materialQuery, groupCollapsed, treeExpanded,
     deviceMode, viewportWidth, customWidth, viewportMenuOpen, previewMode, leftCollapsed, rightCollapsed, canvasScrolled,
     overlays, topOverlay, openOverlay, closeOverlay, eventDrawer, commandQuery,
-    draggingMaterial, draggingNodeId, activeDropIndex, activeContainerTarget, canvasDragOver, treeDragNodeId, treeDropIndicator,
+    draggingMaterial, draggingNodeId, dragPreview, activeDropIndex, activeContainerTarget, canvasDragOver, treeDragNodeId, treeDropIndicator,
+    startMaterialDrag, startNodeDrag,
     toasts, pushToast, selectedNode, canUndo, canRedo,
     commit, undo, redo, updateSelected, insertMaterial, dropAtTopIndex, dropInsideContainer, resetDrag,
     toggleLock, toggleVisible, moveNode, duplicateNode, deleteNode, treeDrop,

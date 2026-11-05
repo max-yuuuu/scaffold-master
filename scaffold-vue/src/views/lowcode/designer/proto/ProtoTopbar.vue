@@ -5,8 +5,10 @@ import { usePrototype } from './context.ts'
 import { appearance } from '@yuanda-lowcode-ai/scaffold-ui/composables/appearance'
 import { APP } from '@/data'
 
-/* 顶栏：返回 / 品牌标 / 面包屑 + 发布态胶囊 / ⌘K / 撤销重做 / 结构代码 / 深浅色 / 预览 / 保存 / 发布。
-   这一版是静态稿，保存与发布只改本地脏计数，不打接口 —— 真接口在「旧版（已接数据）」那条路上。 */
+/* 顶栏：品牌标 / 面包屑 + 发布态胶囊 / ⌘K / 撤销重做 / 结构代码 / 深浅色 / 预览 / 保存 / 发布。
+   这一版是静态稿，保存与发布只改本地脏计数，不打接口 —— 真接口在「旧版（已接数据）」那条路上。
+   没有返回按钮：设计器独占整个标签页，关闭就交给浏览器自己的标签页关闭动作，
+   未保存时由 beforeunload 拦一道（见 ProtoDesigner）。 */
 const proto = usePrototype()
 
 const isMac = typeof navigator === 'undefined' || /^Mac|iPod|iPhone|iPad/.test(navigator.platform)
@@ -15,20 +17,11 @@ const dark = computed(() => appearance.theme === 'dark' || (appearance.theme ===
 function toggleTheme() {
   appearance.theme = dark.value ? 'light' : 'dark'
 }
-
-function back() {
-  window.close()
-  // 直接输地址进来的标签页关不掉（浏览器只允许脚本开的窗口自关），那就退回列表
-  setTimeout(() => { history.length > 1 ? history.back() : (window.location.href = '/lowcode/page') }, 0)
-}
 </script>
 
 <template>
   <header :class="['pf-topbar', proto.canvasScrolled.value && 'is-condensed']">
     <div class="pf-tools">
-      <button type="button" class="pf-icon-btn is-bordered" aria-label="返回应用页面列表" title="返回应用页面列表" @click="back">
-        <Icon name="arrowLeft" :size="15" />
-      </button>
       <span class="pf-brand" :title="`${APP.name} · ${APP.subtitle}`"><i /></span>
       <nav class="pf-crumbs" aria-label="页面位置面包屑">
         <span>宁德三期制造执行</span>

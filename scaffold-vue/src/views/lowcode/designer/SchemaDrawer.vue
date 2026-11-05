@@ -39,7 +39,7 @@ async function copy() {
   overflow: auto;
   border-radius: var(--r-md);
   background: var(--plate-bg);
-  color: var(--plate-fg);
+  color: var(--plate-ink);
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.7;

@@ -21,7 +21,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'close'): void
   (e: 'command'): void
   (e: 'undo'): void
   (e: 'redo'): void
@@ -53,7 +52,6 @@ const state = computed(() => {
 <template>
   <header :class="['dz-topbar', scrolled ? 'm-rail is-scrolled' : 'is-plain']">
     <div class="dz-tb-left">
-      <IconButton name="arrowLeft" label="返回页面列表" bordered @click="emit('close')" />
       <span class="brand-mark" :title="`${APP.name} · ${APP.subtitle}`" aria-hidden="true"><span class="brand-dot" /></span>
       <div class="crumbs" aria-label="页面位置">
         <span>{{ projectName || '未归属项目' }}</span>

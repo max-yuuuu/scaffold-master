@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import Segmented from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Segmented.vue'
 import { usePrototype } from './context.ts'
-import { AVAILABLE_TRIGGERS_BY_KIND, EVENT_ACTION_OPTIONS, type CanvasNode } from './data.ts'
+import { AVAILABLE_TRIGGERS_BY_KIND, EVENT_ACTION_OPTIONS, KIND_ICON, type CanvasNode, type TableDensity } from './data.ts'
 
 /* 右栏：组件级与页面级共用同三段 Tab，切换选中对象时面板头与格子一起换。
    每一格都直接写回节点树（commit → 撤销栈 + 脏计数），所以这里没有第二套状态。 */
@@ -13,9 +14,10 @@ const isPage = computed(() => !node.value)
 
 const headTitle = computed(() => (node.value ? node.value.name : proto.pageConfig.name))
 const headCode = computed(() => (node.value ? node.value.code : proto.pageConfig.code))
+const headIcon = computed(() => (node.value ? KIND_ICON[node.value.kind] : 'layers'))
 
-const RADIUS_STEPS = [8, 12, 16, 20, 24] as const
-const SURFACES = [{ v: 'solid', l: '实色阅读面' }, { v: 'glass', l: '珍珠玻璃面' }, { v: 'subtle', l: '轻量浅底面' }] as const
+const RADIUS_OPTIONS = [8, 12, 16, 20, 24].map(step => ({ label: `${step}`, value: step }))
+const SURFACE_OPTIONS = [{ label: '实色阅读面', value: 'solid' }, { label: '珍珠玻璃面', value: 'glass' }, { label: '轻量浅底面', value: 'subtle' }]
 
 const triggers = computed(() => (node.value ? AVAILABLE_TRIGGERS_BY_KIND[node.value.kind] : AVAILABLE_TRIGGERS_BY_KIND.page) || [])
 const actionLabel = (value: string) => EVENT_ACTION_OPTIONS.find(option => option.value === value)?.label ?? value
@@ -76,23 +78,28 @@ function jumpToPage() {
 <template>
   <aside class="pf-pane" aria-label="组件与页面配置面板">
     <div class="pf-ins-head">
-      <span class="pf-ins-mark"><Icon :name="isPage ? 'layers' : 'sliders'" :size="16" /></span>
+      <span class="pf-ins-mark"><Icon :name="headIcon" :size="15" /></span>
       <div class="pf-ins-title">
-        <strong>{{ headTitle }}</strong>
+        <span class="pf-ins-name">
+          <strong>{{ headTitle }}</strong>
+          <span v-if="node && node.locked" class="lock" title="组件已锁定"><Icon name="lock" :size="12" /></span>
+        </span>
         <span class="pf-ins-code">{{ headCode }}</span>
       </div>
-      <button v-if="!isPage" type="button" class="pf-mini" @click="jumpToPage"><Icon name="sliders" :size="12" />页面设置</button>
+      <span v-if="isPage" class="pf-tag tone-info"><i />页面级</span>
+      <button v-else type="button" class="pf-mini" title="切换到页面级配置" @click="jumpToPage"><Icon name="layers" :size="12" />页面设置</button>
       <button type="button" class="pf-icon-btn" aria-label="收起右侧配置面板" title="收起右侧面板" @click="proto.rightCollapsed.value = true">
-        <Icon name="sidebar" :size="14" />
+        <Icon name="panelRightClose" :size="14" />
       </button>
     </div>
 
     <div class="pf-ins-tabs">
-      <div class="pf-segmented is-fluid">
-        <button type="button" :class="['pf-seg-btn', proto.inspectorTab.value === 'props' && 'is-on']" @click="proto.inspectorTab.value = 'props'">{{ isPage ? '页面属性' : '组件属性' }}</button>
-        <button type="button" :class="['pf-seg-btn', proto.inspectorTab.value === 'style' && 'is-on']" @click="proto.inspectorTab.value = 'style'">样式属性</button>
-        <button type="button" :class="['pf-seg-btn', proto.inspectorTab.value === 'events' && 'is-on']" @click="proto.inspectorTab.value = 'events'">事件配置</button>
-      </div>
+      <Segmented
+        v-model="proto.inspectorTab.value"
+        class="pf-fluid"
+        label="配置分类"
+        :options="[{ label: isPage ? '页面属性' : '组件属性', value: 'props' }, { label: '样式属性', value: 'style' }, { label: '事件配置', value: 'events' }]"
+      />
     </div>
 
     <div class="pf-pane-body pf-ins-body">
@@ -151,15 +158,13 @@ function jumpToPage() {
 
           <section v-if="node.kind === 'table'" class="pf-sec">
             <p class="pf-section">表格默认档位</p>
-            <div class="pf-segmented is-fluid">
-              <button
-                v-for="option in [{ v: 'compact', l: '紧凑 40' }, { v: 'standard', l: '标准 48' }, { v: 'relaxed', l: '宽松 56' }] as const"
-                :key="option.v"
-                type="button"
-                :class="['pf-seg-btn', (node.props.density || 'standard') === option.v && 'is-on']"
-                @click="setProp('density', option.v)"
-              >{{ option.l }}</button>
-            </div>
+            <Segmented
+              :model-value="(node.props.density || 'standard') as TableDensity"
+              class="pf-fluid"
+              label="表格行高密度"
+              :options="[{ label: '紧凑 40', value: 'compact' }, { label: '标准 48', value: 'standard' }, { label: '宽松 56', value: 'relaxed' }]"
+              @update:model-value="setProp('density', $event)"
+            />
           </section>
 
           <section class="pf-sec">
@@ -175,15 +180,13 @@ function jumpToPage() {
           <section class="pf-sec">
             <p class="pf-section">容器圆角与间距</p>
             <div class="pf-label-line"><span>容器圆角阶梯</span><span class="mono">{{ node.radiusPx }}<em>px</em></span></div>
-            <div class="pf-segmented is-fluid">
-              <button
-                v-for="step in RADIUS_STEPS"
-                :key="step"
-                type="button"
-                :class="['pf-seg-btn', node.radiusPx === step && 'is-on']"
-                @click="setField('radiusPx', step)"
-              >{{ step }}</button>
-            </div>
+            <Segmented
+              :model-value="node.radiusPx"
+              class="pf-fluid"
+              label="容器圆角阶梯"
+              :options="RADIUS_OPTIONS"
+              @update:model-value="setField('radiusPx', $event)"
+            />
             <div class="pf-two">
               <label class="pf-field"><span>容器内边距</span><input class="pf-input mono" type="number" :value="node.paddingPx" @input="setField('paddingPx', Number(($event.target as HTMLInputElement).value))"></label>
               <label class="pf-field"><span>底部外边距</span><input class="pf-input mono" type="number" :value="node.marginBottomPx ?? 0" @input="setField('marginBottomPx', Number(($event.target as HTMLInputElement).value))"></label>
@@ -192,15 +195,13 @@ function jumpToPage() {
 
           <section class="pf-sec">
             <p class="pf-section">卡片表面材质</p>
-            <div class="pf-segmented is-fluid">
-              <button
-                v-for="option in SURFACES"
-                :key="option.v"
-                type="button"
-                :class="['pf-seg-btn', (node.surfaceStyle || 'solid') === option.v && 'is-on']"
-                @click="setField('surfaceStyle', option.v)"
-              >{{ option.l }}</button>
-            </div>
+            <Segmented
+              :model-value="(node.surfaceStyle || 'solid') as string"
+              class="pf-fluid"
+              label="卡片表面材质"
+              :options="SURFACE_OPTIONS"
+              @update:model-value="setField('surfaceStyle', $event)"
+            />
           </section>
         </template>
 
@@ -298,26 +299,27 @@ function jumpToPage() {
 </template>
 
 <style scoped>
-.pf-ins-head { display: flex; align-items: center; gap: 9px; padding: 12px 12px 8px; }
+.pf-ins-head { display: flex; align-items: center; gap: 8px; padding: 14px 14px 0; }
 
 .pf-ins-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--canvas);
-  color: var(--ink-muted);
+  border-radius: var(--r-xs);
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 
 .pf-ins-title { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
-.pf-ins-title strong { font-size: 13.5px; font-weight: 660; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-ins-code { color: var(--ink-faint); font-family: var(--font-mono); font-size: 11px; }
+.pf-ins-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pf-ins-name strong { font-size: 13.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-ins-name .lock { display: inline-flex; flex: none; color: var(--blue); }
+.pf-ins-code { color: var(--ink-soft); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.pf-ins-tabs { padding: 0 12px; }
+.pf-ins-tabs { padding: 12px 14px 14px; border-bottom: 1px solid var(--line); }
 .pf-ins-body { display: flex; flex-direction: column; gap: 20px; }
 .pf-sec { display: flex; flex-direction: column; gap: 12px; }
 .pf-sec + .pf-sec { padding-top: 16px; border-top: 1px solid var(--line); }

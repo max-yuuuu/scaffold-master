@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
+import { Button } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import { floatBarEnter, floatBarLeave } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
+import { useUnsavedGuard } from '@yuanda-lowcode-ai/scaffold-ui/composables/unsavedGuard'
 import { providePrototype } from './context.ts'
 import './proto.css'
 import ProtoTopbar from './ProtoTopbar.vue'
@@ -17,6 +19,9 @@ import ProtoOverlays from './ProtoOverlays.vue'
  * 等 design_json 升到 1.1、这份形状能产出生成物时再合回来。
  */
 const proto = providePrototype()
+
+// 设计器独占整个标签页，没有返回按钮，离开就是关标签页 —— 脏了必须拦一道
+useUnsavedGuard(() => proto.unsavedCount.value > 0)
 
 const collapsedLeft = () => proto.leftCollapsed.value || proto.previewMode.value
 const collapsedRight = () => proto.rightCollapsed.value || proto.previewMode.value
@@ -65,27 +70,22 @@ onBeforeUnmount(() => {
         <ProtoRail v-if="!collapsedLeft()" />
         <ProtoCanvas />
         <ProtoInspector v-if="!collapsedRight()" />
-
-        <button v-if="proto.leftCollapsed.value && !proto.previewMode.value" class="pf-expand is-left" type="button" @click="proto.leftCollapsed.value = false">
-          <Icon name="sidebar" :size="15" />展开组件物料
-        </button>
-        <button v-if="proto.rightCollapsed.value && !proto.previewMode.value" class="pf-expand is-right" type="button" @click="proto.rightCollapsed.value = false">
-          <Icon name="sliders" :size="15" />展开配置
-        </button>
       </div>
 
-      <!-- 未保存改动浮条：静态稿里它改的是本地计数，刷新即失 -->
-      <Transition name="pf-fade">
-        <div v-if="proto.unsavedCount.value > 0 && !proto.toasts.value.length" class="pf-float" role="region" aria-label="未保存改动">
-          <span class="pf-float-dot" aria-hidden="true" />
-          <span>有 {{ proto.unsavedCount.value }} 项画布改动尚未保存</span>
-          <span class="sep" />
-          <button type="button" class="pf-icon-btn" :disabled="!proto.canUndo.value" aria-label="撤销改动" title="撤销改动" @click="proto.undo()"><Icon name="undo" :size="14" /></button>
-          <button type="button" class="pf-icon-btn" :disabled="!proto.canRedo.value" aria-label="重做改动" title="重做改动" @click="proto.redo()"><Icon name="redo" :size="14" /></button>
-          <button type="button" class="pf-btn is-text is-danger" @click="proto.discardChanges()">放弃改动</button>
-          <button type="button" class="pf-btn is-text" @click="proto.saveDraft()">立即保存草稿</button>
-        </div>
-      </Transition>
+      <!-- 未保存改动浮条：与列表页那条批量操作浮条同一条（.float-bar 材质、同一套 plate 色与升起动画） -->
+      <Teleport to="body">
+        <Transition :css="false" @enter="floatBarEnter" @leave="floatBarLeave">
+          <div v-if="proto.unsavedCount.value > 0 && !proto.toasts.value.length" class="float-bar" role="region" aria-label="未保存改动">
+            <span class="unsaved-dot" aria-hidden="true" />
+            <span class="float-bar-count">有 <b class="tnum">{{ proto.unsavedCount.value }}</b> 项画布改动尚未保存</span>
+            <span class="float-bar-sep" aria-hidden="true" />
+            <Button variant="text" size="sm" icon="undo" :disabled="!proto.canUndo.value" aria-label="撤销改动" title="撤销改动" @click="proto.undo()" />
+            <Button variant="text" size="sm" icon="redo" :disabled="!proto.canRedo.value" aria-label="重做改动" title="重做改动" @click="proto.redo()" />
+            <Button variant="text" size="sm" danger @click="proto.discardChanges()">放弃改动</Button>
+            <Button variant="text" size="sm" @click="proto.saveDraft()">立即保存草稿</Button>
+          </div>
+        </Transition>
+      </Teleport>
 
       <!-- 提示牌堆 -->
       <div class="pf-toasts" role="status" aria-live="polite">
@@ -107,9 +107,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.pf-float-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--lime); box-shadow: 0 0 0 3px rgba(130, 221, 45, .24); flex: none; }
-.pf-float .pf-icon-btn { width: 28px; height: 28px; color: rgba(255, 255, 255, .78); }
-.pf-float .pf-icon-btn:hover { background: rgba(255, 255, 255, .1); color: #fff; }
-.pf-fade-enter-active, .pf-fade-leave-active { transition: opacity .24s var(--ease-premium), transform .24s var(--ease-premium); }
-.pf-fade-enter-from, .pf-fade-leave-to { opacity: 0; transform: translate(-50%, 12px); }
+/* 脏状态那颗青柠点：平台那条批量浮条没有这层语义，是设计器自己加的。
+   撤销/重做两颗直接用平台 Button（variant=text size=sm icon=…），浮条高度才由同一套控件尺寸决定 */
+.unsaved-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--lime); box-shadow: 0 0 0 3px rgba(130, 221, 45, .24); flex: none; }
 </style>

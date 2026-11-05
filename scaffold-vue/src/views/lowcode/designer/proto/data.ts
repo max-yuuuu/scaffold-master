@@ -6,10 +6,13 @@
  * 所以 proto 目录不接保存与发布。下一刀（design_json 升 1.1）要合回来的就是这份形状。
  */
 
-export type NodeKind =
-  | 'header' | 'readout' | 'filter' | 'table' | 'topology' | 'emptySlot'
-  | 'grid' | 'card' | 'tabs' | 'divider' | 'input' | 'number' | 'select'
-  | 'date' | 'checkbox' | 'switch' | 'button' | 'pagination' | 'modal' | 'tag'
+export const NODE_KINDS = [
+  'header', 'readout', 'filter', 'table', 'topology', 'emptySlot',
+  'grid', 'card', 'tabs', 'divider', 'input', 'number', 'select',
+  'date', 'checkbox', 'switch', 'button', 'pagination', 'modal', 'tag',
+] as const
+
+export type NodeKind = typeof NODE_KINDS[number]
 
 export type CategoryTone = 'sand' | 'sky' | 'lilac' | 'rose' | 'mint'
 export type TableDensity = 'compact' | 'standard' | 'relaxed'
@@ -131,6 +134,63 @@ export const GROUP_TONE: Record<MaterialGroup, CategoryTone> = {
   表单输入: 'sand',
   数据展示: 'lilac',
   基础操作: 'rose',
+}
+
+/**
+ * 组件类型图标：物料卡、层级树、选中工具条、属性面板头部共用。
+ * 一个类型对不上就画不出设计稿那颗图形，`Icon` 查不到名字时静默兜底成 file。
+ */
+export const KIND_ICON: Record<NodeKind, string> = {
+  header: 'kindHeader',
+  readout: 'kindReadout',
+  filter: 'kindFilter',
+  table: 'kindTable',
+  topology: 'kindTopology',
+  emptySlot: 'kindSlot',
+  grid: 'kindGrid',
+  card: 'kindCard',
+  tabs: 'kindTabs',
+  divider: 'kindDivider',
+  input: 'kindInput',
+  number: 'kindNumber',
+  select: 'kindSelect',
+  date: 'kindDate',
+  checkbox: 'kindCheckbox',
+  switch: 'kindSwitch',
+  button: 'kindButton',
+  pagination: 'kindPagination',
+  modal: 'kindModal',
+  tag: 'kindTag',
+}
+
+/** 锁定与显隐是状态开关：图标必须画出「当前是什么」，不是「点下去会变成什么」 */
+export function lockIcon(locked: boolean): string {
+  return locked ? 'lock' : 'unlock'
+}
+
+export function visibleIcon(visible: boolean): string {
+  return visible ? 'eye' : 'eyeOff'
+}
+
+/**
+ * 栅格到底有几列可放：以节点自己的 `columns` 为准。
+ * 渲染与落点必须读同一个来源，否则列数一旦不是 2，画出来的列和高亮的列就不是同一批。
+ */
+export function gridColumnIndices(node: CanvasNode): number[] {
+  return node.columns?.map((_, index) => index) ?? [0, 1]
+}
+
+/**
+ * 这颗组件身上到底有哪些可放置区域。
+ *
+ * 只有栅格（每列一个，返回列下标）与插槽容器（整腔一个，返回 undefined）真的能接收子组件；
+ * 其余 kind 连 children 都不渲染，在它们身上松手如果也算落点，就会往树里塞一份
+ * 渲染器与生成器都不认的嵌套。
+ */
+export function dropZones(node: CanvasNode): (number | undefined)[] {
+  if (node.kind === 'grid') return gridColumnIndices(node)
+  if (node.kind === 'emptySlot') return [undefined]
+  return []
 }
 
 export const EVENT_ACTION_OPTIONS: { value: EventActionType, label: string, defaultTarget: string }[] = [
