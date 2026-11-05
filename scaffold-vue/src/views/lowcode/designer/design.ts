@@ -165,6 +165,8 @@ export interface Designer {
   readonly canUndo: boolean
   readonly canRedo: boolean
   modelRef(): string
+  /** 打开已有设计时把库里的 modelCode 绑上：这不是人做的一步，所以不进撤销栈 */
+  bindModel(code: string): void
   setModel(code: string): void
   select(key: string | null): void
   childrenOf(type: string): UINode[]
@@ -388,6 +390,9 @@ export function createDesigner(seed?: DesignJson): Designer {
       return future.length > 0
     },
     modelRef: () => model,
+    bindModel(code) {
+      model = String(code ?? '')
+    },
     setModel(code) {
       snapshot()
       model = String(code ?? '')

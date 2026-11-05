@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Field, NumberInput, Select, Switch, TextInput, Textarea } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
-import { PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
+import { Field, IconButton, NumberInput, Select, Switch, TextInput, Textarea } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
+import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { platformApi, type FieldRow, type PageDetail } from '@/api'
+import DesignerToolbar from './DesignerToolbar.vue'
 import {
   ACTION_LABELS,
   BLOCK_LABELS,
@@ -28,7 +29,8 @@ const props = defineProps<{ page: PageDetail, fields: FieldRow[] }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 
 const store = createDesigner(props.page.design as unknown as DesignJson)
-store.setModel(props.page.modelCode)
+// 用 bindModel 而不是 setModel：这一行是打开设计器时的一次装配，不是人做的一步改动
+store.bindModel(props.page.modelCode)
 
 // store 里的树是普通可变对象，Vue 看不见它的 splice；每个动作后 bump 一下重算
 const tick = ref(0)
@@ -159,6 +161,24 @@ function removeColumn(index: number) {
   act(() => store.removeColumn(index))
 }
 
+/* ── 外壳：两栏收起与画布滚动 ── */
+/**
+ * 收起用 v-if 而不是宽度归零：归零的面板还在 Tab 序列里，键盘要连按好几次才跳过一栏看不见的东西。
+ * 收起后画布左上/右上出现展开胶囊，是为了让人从「我要看这块内容」直接回来，而不是去猜哪个按钮收的。
+ */
+const leftCollapsed = ref(false)
+const rightCollapsed = ref(false)
+// 画布滚出首屏后工具条凝结，与外壳顶栏同一手法
+const condensed = ref(false)
+
+// 撤销栈也是 store 里的普通数组，不挂 tick 就点完一步按钮还灰着
+const canUndo = computed(() => (tick.value, store.canUndo))
+const canRedo = computed(() => (tick.value, store.canRedo))
+
+function onCanvasScroll(event: Event) {
+  condensed.value = (event.target as HTMLElement).scrollTop > 8
+}
+
 /* ── 保存 ── */
 const saving = ref(false)
 
@@ -194,19 +214,29 @@ function blockSummary(block: UINode) {
 
 <template>
   <div class="designer">
-    <header class="dz-head">
-      <button class="dz-back" type="button" @click="emit('close')">← 返回页面列表</button>
-      <div class="dz-title">
-        <strong>{{ page.pageName }}</strong>
-        <span class="dz-sub">{{ page.modelCode }} · {{ page.pageCode }}</span>
-      </div>
-      <div class="dz-head-actions">
-        <PermissionButton perm="lowcode:page:edit" variant="primary" :saving="saving" @click="save">保存设计</PermissionButton>
-      </div>
-    </header>
+    <DesignerToolbar
+      :page-name="page.pageName"
+      :model-code="page.modelCode"
+      :page-code="page.pageCode"
+      :can-undo="canUndo"
+      :can-redo="canRedo"
+      :saving="saving"
+      :condensed="condensed"
+      @close="emit('close')"
+      @undo="act(() => store.undo())"
+      @redo="act(() => store.redo())"
+      @save="save"
+    />
 
-    <div class="dz-body">
-      <aside class="dz-pane dz-left">
+    <div
+      class="dz-body"
+      :class="{ 'is-left-collapsed': leftCollapsed, 'is-right-collapsed': rightCollapsed }"
+    >
+      <aside v-if="!leftCollapsed" class="dz-pane dz-left">
+        <div class="dz-pane-head">
+          <p class="dz-group-head">组件库</p>
+          <IconButton name="sidebar" label="收起左侧组件面板" small @click="leftCollapsed = true" />
+        </div>
         <div v-for="group in PALETTE" :key="group.group" class="dz-group">
           <p class="dz-group-head">{{ group.group }}</p>
           <button
@@ -222,7 +252,7 @@ function blockSummary(block: UINode) {
         <p class="dz-hint">拖到中间的方块上，或先点组件再点落点。</p>
       </aside>
 
-      <main class="dz-pane dz-canvas" @dragover.prevent="hot = 'PageContainer:end'" @drop="onDrop('PageContainer')" @click="onArmedClick('PageContainer')">
+      <main class="dz-pane dz-canvas" @scroll="onCanvasScroll" @dragover.prevent="hot = 'PageContainer:end'" @drop="onDrop('PageContainer')" @click="onArmedClick('PageContainer')">
         <button
           class="dz-pagehead"
           :class="{ 'is-active': isPage }"
@@ -273,7 +303,7 @@ function blockSummary(block: UINode) {
               <div v-for="(column, index) in block.columns" :key="column.key" class="dz-col">
                 <b>{{ column.title || column.field }}</b>
                 <em>{{ column.field }}<template v-if="column.render"> · {{ column.render }}</template></em>
-                <button class="dz-x" type="button" @click.stop="removeColumn(index)">×</button>
+                <button class="dz-x" type="button" title="移掉这一列" aria-label="移掉这一列" @click.stop="removeColumn(index)">×</button>
               </div>
             </template>
           </div>
@@ -284,8 +314,11 @@ function blockSummary(block: UINode) {
         <p v-if="!blocks.length" class="dz-canvas-empty">从左边把区块拖进来开始：查询区 / 工具栏 / 表格区 / 行操作 / 表单弹窗。</p>
       </main>
 
-      <aside class="dz-pane dz-props">
-        <p class="dz-group-head">{{ selected ? `${BLOCK_LABELS[selected.type] ?? selected.type}` : '页面' }}</p>
+      <aside v-if="!rightCollapsed" class="dz-pane dz-props">
+        <div class="dz-pane-head">
+          <p class="dz-group-head">{{ selected ? `${BLOCK_LABELS[selected.type] ?? selected.type}` : '页面' }}</p>
+          <IconButton name="sidebar" label="收起右侧配置面板" small @click="rightCollapsed = true" />
+        </div>
 
         <template v-if="selected && selected.type === 'DataTable'">
           <Field label="每页条数">
@@ -373,64 +406,56 @@ function blockSummary(block: UINode) {
 
         <p v-if="armed" class="dz-armed">已拿起「{{ armed }}」，点画布上的容器放下去。放错地方会当场说明为什么。</p>
 
-        <div class="dz-foot">
-          <button class="dz-mini" type="button" :disabled="!store.canUndo" @click="act(() => store.undo())">撤销</button>
-          <button class="dz-mini" type="button" :disabled="!store.canRedo" @click="act(() => store.redo())">重做</button>
-        </div>
         <p class="dz-hint">这一页用到 {{ referenced.length }} 个字段：{{ referenced.join('、') || '（还没有）' }}</p>
       </aside>
+
+      <!-- 收起后画布两上角留一个展开胶囊：只留一个图标的话，人得先猜刚才收的是哪一栏 -->
+      <button v-if="leftCollapsed" class="dz-expand is-left" type="button" @click="leftCollapsed = false">
+        <Icon name="sidebar" :size="15" />展开组件面板
+      </button>
+      <button v-if="rightCollapsed" class="dz-expand is-right" type="button" @click="rightCollapsed = false">
+        <Icon name="sliders" :size="15" />展开配置面板
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
 .designer {
+  /* 设计器自己的两栏宽度：--rail-w 是外壳导航轨的，改它会连带改所有页面的侧栏 */
+  --dz-rail-w: 236px;
+  --dz-inspector-w: 312px;
+
+  /* 贴住 .content 而不是 height: 100%：中间的 .route-frame 只有 min-width，高度是 auto，
+     百分比高度在它身上算不出来，于是整份设计稿把外层撑成页面滚动 ——
+     三栏不再各自滚动，画布的滚动事件也永远不触发，工具条凝结就成了死代码 */
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
   gap: 12px;
-}
-
-.dz-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
-  background: var(--surface-solid);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-}
-
-.dz-back {
-  background: none;
-  border: 0;
-  color: var(--ink-muted);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.dz-back:hover {
-  color: var(--ink);
-}
-
-.dz-title {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-right: auto;
-}
-
-.dz-sub {
-  color: var(--ink-faint);
-  font-size: 12px;
 }
 
 .dz-body {
+  position: relative;
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr) 300px;
+  grid-template-columns: var(--dz-rail-w) minmax(0, 1fr) var(--dz-inspector-w);
   gap: 12px;
   flex: 1;
   min-height: 0;
+}
+
+/* 收起的那一栏整列归零，画布吃满；面板本身用 v-if 摘掉，不留键盘焦点位 */
+.dz-body.is-left-collapsed {
+  grid-template-columns: 0px minmax(0, 1fr) var(--dz-inspector-w);
+}
+
+.dz-body.is-right-collapsed {
+  grid-template-columns: var(--dz-rail-w) minmax(0, 1fr) 0px;
+}
+
+.dz-body.is-left-collapsed.is-right-collapsed {
+  grid-template-columns: 0px minmax(0, 1fr) 0px;
 }
 
 .dz-pane {
@@ -439,6 +464,43 @@ function blockSummary(block: UINode) {
   background: var(--surface-solid);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
+}
+
+.dz-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dz-expand {
+  position: absolute;
+  top: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--float-bg);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.dz-expand:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.dz-expand.is-left {
+  left: 12px;
+}
+
+.dz-expand.is-right {
+  right: 12px;
 }
 
 .dz-group-head {
@@ -602,27 +664,6 @@ function blockSummary(block: UINode) {
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
-}
-
-.dz-foot {
-  display: flex;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.dz-mini {
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--float-bg);
-  color: var(--ink);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.dz-mini:disabled {
-  color: var(--ink-faint);
-  cursor: not-allowed;
 }
 
 .dz-armed {
