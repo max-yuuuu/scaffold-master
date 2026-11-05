@@ -1,7 +1,7 @@
 import { computed, inject, provide, ref, type ComputedRef, type InjectionKey, type Ref } from 'vue'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { platformApi, type FieldRow, type PageDetail } from '@/api'
-import { createDesigner, type DesignJson, type Designer, type ModelField, type UINode } from './design.ts'
+import { createDesigner, defaultPropsFor, type DesignJson, type Designer, type ModelField, type UINode } from './design.ts'
 
 /**
  * 一次设计会话：一份 store、一条撤销栈、一个脏计数，加上浮层与预览这些跨栏共用的状态。
@@ -49,11 +49,18 @@ export interface DesignerSession {
   armed: Ref<string | null>
   arm: (type: string) => void
   dropArmed: () => void
+  /** 正在拖的东西：物料卡发起 kind 'new'，画布上的方块发起 kind 'move'，落点由画布读这一个字段 */
+  drag: Ref<Drag | null>
+  /** 拖放与点选共用同一段落点逻辑，两条输入不可能漂开 */
+  place: (item: Drag, target: string, index?: number) => void
   /** 选中不改树，所以它不在 act() 里；但视图照样要重算，不然点了方块右侧还是页面属性 */
   pick: (key: string | null) => void
 }
 
 export type Overlay = 'command' | 'schema' | 'publish'
+
+/** 拖拽载荷：新组件从物料库来，已有节点从画布或层级树来 */
+export type Drag = { kind: 'new', type: string } | { kind: 'move', type: string, key: string }
 
 export interface PublishResult {
   status: number
@@ -72,6 +79,10 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
   const tick = ref(0)
   const act = (run: () => void) => {
     run()
+    tick.value += 1
+  }
+  /** 只重算读数，不产生历史也不置脏：给「手势被当场拒了、高亮要抹掉」这种没改动树的情况 */
+  const refresh = () => {
     tick.value += 1
   }
 
@@ -134,9 +145,7 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     store,
     tick,
     act,
-    refresh() {
-      tick.value += 1
-    },
+    refresh,
     root: reading(() => store.root),
     blocks: reading(() => store.root.children),
     selected: reading(() => (store.selected ? store.find(store.selected) ?? null : null)),
@@ -171,6 +180,7 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     },
 
     armed: ref(null),
+    drag: ref<Drag | null>(null),
     arm(type) {
       session.armed.value = type
       pushToast(`已拿起「${type}」，点画布上的容器放下去`)
@@ -181,6 +191,21 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     pick(key) {
       store.select(key)
       tick.value += 1
+    },
+    place(item, target, index) {
+      try {
+        if (item.kind === 'new') {
+          act(() => store.insert(target, { type: item.type, props: defaultPropsFor(item.type) }, index))
+        } else {
+          act(() => store.move(item.key, target, index))
+        }
+      } catch (error) {
+        // 落点非法当场说清为什么；树没动，所以只重算读数，不往撤销栈和脏计数里塞一步空操作
+        pushToast((error as Error).message, 'danger')
+        refresh()
+      } finally {
+        session.drag.value = null
+      }
     },
   }
 
