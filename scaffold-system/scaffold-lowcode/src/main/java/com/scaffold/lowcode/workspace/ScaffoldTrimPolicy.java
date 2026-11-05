@@ -53,6 +53,7 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/sql/V6__lowcode_model.sql",
             "scaffold-system/sql/V7__lowcode_workspace.sql",
             "scaffold-system/sql/V8__lowcode_page.sql",
+            "scaffold-system/sql/V9__lowcode_publish.sql",
             // 双租户越权验收脚本，只在平台侧有意义
             "scaffold-system/sql/verify/",
             // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试。
@@ -66,12 +67,17 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/PageApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectWorkspaceApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/DeliveryGenerationApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/PagePublishApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/StubGitGateway.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/LocalBareGitGateway.java",
             // 平台前端页面与接口客户端
             "scaffold-vue/src/views/lowcode/",
             // 在线代码生成页面：交付项目里没有 scaffold-generator，留着就是一个点开报错的菜单
             "scaffold-vue/src/views/tool/",
             "scaffold-vue/src/api/platform.ts",
+            // 上面那份客户端的用例：断言写的是 /api/lowcode 与 /api/platform 的真实 URL，
+            // 客户端被裁掉了而测试留着，交付项目就是一跑就红。PR 12 只补了源文件这一半，漏了这一半
+            "scaffold-vue/src/api/__tests__/platform.test.ts",
             // 只有被剔除的代码生成页在用这个流水线组件（抽包后它留在宿主，不进包）；其余业务组件与系统页面一起保留
             "scaffold-vue/src/components/platform/GeneratorPipeline.vue",
             // 物料包源码不进交付项目：组件与主题走 @yuanda-lowcode-ai/scaffold-ui 依赖（§〇 抽包口径），交付只改写依赖版本
@@ -113,6 +119,7 @@ public final class ScaffoldTrimPolicy {
             "lc_model",
             "lc_field",
             "lc_page",
+            "lc_page_version",
             "lc_tenant_config",
             "lc_publish_log",
             "lc_merge_request",
