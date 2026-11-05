@@ -104,7 +104,7 @@ function selectPage() {
 </script>
 
 <template>
-  <aside class="pf-pane" aria-label="组件物料与页面层级面板">
+  <aside class="pf-pane is-rail" aria-label="组件物料与页面层级面板">
     <div class="pf-pane-head">
       <Segmented
         v-model="proto.leftTab.value"

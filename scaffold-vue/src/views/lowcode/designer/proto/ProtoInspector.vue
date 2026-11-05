@@ -76,7 +76,7 @@ function jumpToPage() {
 </script>
 
 <template>
-  <aside class="pf-pane" aria-label="组件与页面配置面板">
+  <aside class="pf-pane is-inspector" aria-label="组件与页面配置面板">
     <div class="pf-ins-head">
       <span class="pf-ins-mark"><Icon :name="headIcon" :size="15" /></span>
       <div class="pf-ins-title">

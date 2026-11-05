@@ -116,6 +116,38 @@ export function createPrototypeState() {
   const rightCollapsed = ref(false)
   const canvasScrolled = ref(false)
 
+  /**
+   * 窄屏（平台那一条 820px 断点）下三栏挤不进：左右两栏改成盖在画布上的抽屉，
+   * 一次只开一扇。进窄屏先全部收起 —— 默认摊开两栏的话，画布会被挤成一条缝，
+   * 而画布才是这一页真正在做的东西。
+   */
+  const narrow = ref(false)
+
+  function setNarrow(value: boolean) {
+    if (narrow.value === value) return
+    narrow.value = value
+    if (value) {
+      leftCollapsed.value = true
+      rightCollapsed.value = true
+    }
+  }
+
+  function openPane(side: 'left' | 'right') {
+    if (narrow.value) {
+      leftCollapsed.value = side !== 'left'
+      rightCollapsed.value = side !== 'right'
+      return
+    }
+    if (side === 'left') leftCollapsed.value = false
+    else rightCollapsed.value = false
+  }
+
+  function closePanes() {
+    if (!narrow.value) return
+    leftCollapsed.value = true
+    rightCollapsed.value = true
+  }
+
   const overlays = ref<Overlay[]>([])
   const eventDrawer = ref<EventDrawerState | null>(null)
   const commandQuery = ref('')
@@ -461,6 +493,7 @@ export function createPrototypeState() {
     nodes, history, historyIndex, unsavedCount, selectedNodeId, pageConfig, tableRecords, checkedRows,
     leftTab, inspectorTab, materialQuery, groupCollapsed, treeExpanded,
     deviceMode, viewportWidth, customWidth, viewportMenuOpen, previewMode, leftCollapsed, rightCollapsed, canvasScrolled,
+    narrow, setNarrow, openPane, closePanes,
     overlays, topOverlay, openOverlay, closeOverlay, eventDrawer, commandQuery,
     draggingMaterial, draggingNodeId, dragPreview, activeDropIndex, activeContainerTarget, canvasDragOver, treeDragNodeId, treeDropIndicator,
     startMaterialDrag, startNodeDrag,

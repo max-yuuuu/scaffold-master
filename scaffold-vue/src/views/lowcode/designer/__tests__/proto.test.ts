@@ -10,7 +10,8 @@ import { createPrototypeState } from '../proto/state.ts'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const STYLES_DIR = join(HERE, '../../../../../../packages/scaffold-ui/src/styles')
 const DESIGNER_DIR = join(HERE, '..')
-
+const NARROW_TS = join(STYLES_DIR, '../composables/narrow.ts')
+const SHELL_FILE = join(DESIGNER_DIR, '../../../components/layout/AppShell.vue')
 /**
  * 1:1 原型层的图标与令牌契约。
  *
@@ -153,4 +154,27 @@ test('设计器 CSS 里用到的每一个令牌都真的存在，不许有写错
   }
   // 带兜底值的 var(--x, y) 不在这条的射程内：它本来就允许令牌缺席
   assert.deepEqual([...new Set(problems)].sort(), [], '这些 var() 引用的令牌不存在，整条声明会作废、颜色落到继承值上')
+})
+
+test('窄屏断点全平台只有一个数，手抄的每一处都得跟 narrow.ts 对上', () => {
+  // 交付项目按已发布的 npm 版本装物料包，还没发版的导出它 import 不到，
+  // 所以外壳与 CSS 只能把同一个数抄一遍。抄的这几处不会报错，只会在窄屏下错开一格。
+  const declared = readFileSync(NARROW_TS, 'utf8').match(/NARROW_QUERY = '\(max-width: (\d+)px\)'/)
+  assert.ok(declared, 'narrow.ts 里 NARROW_QUERY 的形状变了，这条用例的射程已经失效')
+  const px = declared[1]
+
+  const sites: [string, string][] = [
+    ['外壳导航 AppShell.vue', SHELL_FILE],
+    ['平台样式 layout.css', join(STYLES_DIR, 'layout.css')],
+    ['原型层 proto.css', join(DESIGNER_DIR, 'proto', 'proto.css')],
+    ['原型顶栏 DesignerTopbar.vue', join(DESIGNER_DIR, 'DesignerTopbar.vue')],
+  ]
+  for (const [label, file] of sites) {
+    const text = readFileSync(file, 'utf8')
+    assert.ok(/max-width:\s*\d+px/.test(text), `${label} 里连一条 max-width 都没有，这条用例的射程已经失效`)
+    assert.ok(
+      new RegExp(`max-width:\\s*${px}px`).test(text),
+      `${label} 的窄屏断点不是 ${px}px：JS 与 CSS 会错开一格，抽屉展开着而版式还是三栏`,
+    )
+  }
 })
