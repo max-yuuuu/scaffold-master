@@ -1,23 +1,24 @@
 # Changelog
 
-## 2026-11-05（设计器新稿的 Figma Make 应用进版本库）
+## 2026-11-05（PR 7：页面发布链路 —— 设计到租户仓库的那一跳）
 
-`designer/` 是设计器重构那份设计稿的可运行原型（Figma Make 出的工程，React 19 + Tailwind 4 + Vite 8，`package.json` 名字仍叫 `figma-make-app`），此前一直是本机未跟踪目录。这一刀只把它收进版本库，不改平台一行代码，也不接进构建链。
+方案 §10.3 的 PR 7 是「发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；发布前 C 档引用体检」。这一刀把 §5.1 那张图整个落成 `com.scaffold.lowcode.publish.PagePublishService`，四刀提交：远端 tag 语义、交付裁剪补漏 + 发布主链路、引用体检、文档与本条。
 
-- 收 29 个文件：`src/App.tsx`、`src/components/{CanvasNodeRenderer,Icons}.tsx`、`src/data/designerData.ts`、`src/index.css`、入口与配置、`pnpm-lock.yaml`，外加它自带的 `.figma/make/*` 脚本、`.gitignore`、`.gitattributes`、`AGENTS.md` / `CLAUDE.md`。**79M 的 `node_modules`、`dist/`、`.env*`、`.DS_Store` 都没进来**（它的 `.gitignore` 挡前三样，根 `.gitignore` 的 `**/.DS_Store` 挡最后一样），`git status` 复核过暂存清单。
-- 验的是它自己能不能构建：`vite build` 通过（19 个模块，产物 321 kB js / 42 kB css），`tsc --noEmit` 干净。
-- **它不进交付快照**：`ScaffoldTrimPolicy.INCLUDED_ROOTS` 是白名单（只走 `.gitignore`、`README.md`、`docs/`、`scaffold-system/`、`scaffold-vue/` 这些根），`designer/` 不在其中，交付项目拿不到这个目录 —— 这份原型属平台侧，不是给客户项目的源码。
-- 一个埋伏写在这里而不是等它咬人：`designer/.gitattributes` 声明了一整套 Git LFS 规则，而本机没装 `git-lfs`，所以那份 `favicon.png` 现在是以真实字节入库的（PNG 头已核对）。以后谁在这台机器装上 LFS，同一条规则会把二进制改成 pointer 提交，两边形态不一致 —— 真要上 LFS 得整仓一起决定，不是让某个子目录的属性文件替全仓做主。
-
-
-## 2026-11-05（页面列表进设计器改成新开浏览器标签页）
-
-PR 6C 的设计器是「在列表页里整屏接管」，真机上用两天就看出别扭：画布是要反复改、改完放着的那活儿，接管列表之后人一边调设计一边看不到「还有哪些页面没发」，想看就得先退出画布。改成点「设计」直接开新的浏览器标签页。
-
-- **落点是同一个页面路由带查询参数**（`/lowcode/page?design={页面 ID}`），没有新开静态路由：平台的菜单与路由都由 `sys_menu.component` 动态生成（`composables/auth.ts` 按 `../views/{component}.vue` 解析），为设计器单开一条路由就要在 `sys_menu` 里种一行「不给菜单显示、只为了让 URL 能访问」的假菜单。现在这条 URL 是可复制的 —— 把 `?design=59` 发给别人，对方打开的就是这一页的画布。
-- 组件挂载时读 `design` 参数决定进不进画布；点「返回页面列表」会把参数 `replace` 掉再刷新列表，所以在那个标签页里刷新不会又弹回画布。开新标签页带 `noopener`：画布与列表是两个独立上下文，画布里的脚本碰不到列表页。
-- **新建页面成功后不再自动进画布**，改为提示「在列表点『设计』会在新标签页打开画布」。原来那句 `await openDesigner(created.id)` 挪不成 `window.open`：它跟在 `await` 之后，会被浏览器的弹窗拦截挡掉，表现是点了「确定」什么也没发生 —— 那比多点一次难解释得多。
-- 验证：`vue-tsc` 干净、前端 22 例全过，真浏览器（`localhost:5173`）里登录后点「设计」→ 新标签页 URL 为 `/lowcode/page?design=59` 且画布渲染出五个区块五列、`window.opener` 为空；点返回后 URL 回到 `/lowcode/page`，控制台只有 vite 的连接日志。
+- **哈希对比这件事交给 Git 本身**：产物落盘后 `commitAll` 在没有改动时返回 `null`，那就是 no-op —— 不另算一套哈希。两处各算一次迟早会漂，表现要么是多出一个空提交，要么是「平台说变了而 Git 说没变」的一次假发布。重复点同一份设计：不产生提交、不涨版本、不打第二个 tag，`lc_page.publish_status=2` 说明「内容与仓库一致」。
+- **先落到仓库、再记库里的账**：版本号、tag、`lc_page_version`、`lc_publish_log`、`lc_page.current_version`、`lc_project.last_publish_time` 全在推送成功并回读远端确认之后才写。反过来就会出现「库里说发过 v3、仓库里查无此提交」，而 PR 9 的回滚正是照着这句话去取内容的。tag 推不上去（远端开了 tag 保护一类）同样整版不认 —— tag 是合并与回滚的锚点，没有锚点的版本比发布失败更难查。
+- **推送失败不留半成品，但也不丢弃真实存在的东西**：远端拿不到半个提交（refspec 不带 `+`，非快进被如实拒），库里落一条 `publish_status=3` 的失败日志、页面状态写成「上次失败」并说明「提交 X 留在本地工作区、重试会把它推上去」；`lc_page_version` 一行都不写。重试时内容没变（`commitAll` 返回 null），但本地领先远端 —— 这一条必须走补推而不是当成无变更放过，否则一次网络抖动就把这个页面永久卡在「库里说没发过、分支上有个没人认领的提交」。用例 `推送失败时不留下成功版本_重试把同一个提交推上去` 钉的就是这个来回。
+- **四道现场守卫**：项目 `sync_status` 不是就绪就拒绝（发布不替人初始化，也不会造一个空目录让人以为初始化过了）；工作区目录得是真仓库；**工作区必须干净** —— 提交是整目录暂存，人在工作区里改了没提交的东西会被这次发布一起推进发布分支，那是把不属于他的改动挂到他的动作上；本地与远端的发布分支不一致时按 `last_commit_sha` 分辨是谁前进的：远端仍停在平台上次推上去那个提交 → 上次没推成功，这次补推；否则是别人往发布分支推过 → 拒绝并要人先重建工作区（不强推、不自动合并、不"修好"）。
+- **两张表的分工**：`lc_page_version` 只在成功发布时有行（一版一条，带那一刻的设计原文与「路径 → 内容哈希」，PR 9 的取数来源）；`lc_publish_log` 每次动作一条，成功 / 无变更 / 失败都留。草稿里的 `files_added` / `files_modified` / `files_deleted` 与 `remote_url` 不建：计数由 `files_generated` 里每条的落盘动作现算，地址在 `lc_project` 上 —— 沿用 V5/V8 的口径，没有读写方的列不进库。V9 在 IT 库里连跑两遍验过幂等，菜单按钮 5034 `lowcode:page:publish`（能编辑页面不等于能往租户仓库推代码，与 V7 把 `lowcode:project:sync` 单列出来同一个理由）。
+- **发布前 C 档引用体检（§5.2 第 2 条）**：从工作区读该模型的 `{Cls}Extension.java`，正则级反查 `getX()` / `setX(` / `.x`，命中「本次生成的 `domain/` 里不存在」的名字就默认阻断发布，列出 `文件:行 + 字段名 + 那一行原文`；人显式 `force` 才放行，而那些命中仍原样留在发布结果里 —— 发出去了，但他得知道自己刚才放过了什么。判据用**生成物**而不是 `lc_field`：主键与审计列是模板补到类上的、字段表里没有，照字段清单判就会把 `row.getCreateTime()` 报成错引用。`package` / `import` 的包名段在文本上长得和「对象.字段」一模一样，任何一份 java 都有这两行 —— **不排掉就是每一次发布都被自己这份清单拦下来，这一条是 IT 第一次跑就撞出来的（九个用例全被这段噪音挡住）**。§5.2 第 1 条「删字段入口就拦」本期没做：那要在工作区可能根本不存在的前提下去读扩展代码，静默跳过等于这条规则时灵时不灵。
+- **顺带修掉的三处既有缺陷**：① `ls-remote` 对附注 tag 返回两行，第一行是 tag 对象自己的号，原来只读它 ——「tag 与 `commit_sha` 对得上」这条验收永远对不上，PR 9 按 tag 取内容也会拿着一个不是提交的号去找；现在 `RemoteRef.commitSha()` 给解引用后的提交。② **重铺固定代码会把人写的 C 档从发布分支删掉**：`pruneOutsideSnapshot` 原来按「快照之外即清理」删，而 A 档快照里没有业务产物 —— 人往发布分支推过一行扩展点代码之后，一次「重建工作区 + 重新初始化」就把它删了，而 C 档正是平台唯一产不出来的东西（§5.2「C 档平台永不碰」）。现在放过 `GeneratedPaths` 认得出的 B/C 档形状，这条与 §5.2 那句「PR 7 组工作区时要把这条做对」是同一件事。③ `resetWorkspace` 把「本地 ≠ 远端」一律当成有未推送提交，于是别人往发布分支推过一次之后，重建被挡住、发布也被挡住，项目死锁；现在同样按 `last_commit_sha` 分辨。④ 交付裁剪补回 `scaffold-vue/src/api/__tests__/platform.test.ts`：PR 12 给这个用例加了 `/api/lowcode/pages` 断言却没把它进排除表，**dev 的交付快照从那次合并起就会被残留扫描当场拒绝**（本地全量绿是因为这条只在初始化时跑，而那阵子没有用例走到）。
+- 工作区定位规则（`{tenantId}/{projectCode}`）抽成 `WorkspacePaths`：初始化与发布两处不再各拼一遍，两处漂开的表现是「固定代码铺在 A 目录、发布写进 B 目录」这种两边都自洽而真机上什么都没有的错。
+- **测试**：`PagePublishApiTest` 9 例 + `ExtensionReferenceCheckTest` 10 例 + `JGitGatewayTest` 多一条 tag 解引用。发布链路**不用 `StubGitGateway` 而用真 JGit 打在本机裸仓库上**（`LocalBareGitGateway`，按仓库地址映射到临时裸仓库）：§10.3 那四条验收全是 Git 语义，桩只能证明平台自己怎么记账、证不了仓库里真有什么。首次发布的产物落盘后真起 `javac` 编一遍 ——「设计驱动的产物」与「编得过的产物」钉在同一条链上（这也把 PR 6 那条「design_json 能喂给模板生成可运行页面」的后半截兑掉了）。后端 **312 例全绿**（common 10 + framework 42 + lowcode 140 + generator 6 + admin 114），IT 库 3316。
+- **真机演练（对着真实 GitHub 仓库跑了一遍）**：库里本来就有 6C 期间在设计器里搭出来那条页面（`order-serive` / `sales_order_page`，模型 `sales_order`，5 个引用字段），用本分支的后端把它发了三次：
+  - 第一次 `POST /api/lowcode/pages/59/publish` → 远端 `platform-generated` 从 `38d89f3` 前进到 `02b9e49`，tag `vorder-serive-sales_order_page-1` 推上去（附注 tag 对象 `3b7c176`，解引用行指向 `02b9e49` —— 正是 PR 7 补的那个语义），`main` 全程停在 `36c8021` 没被碰；库里 `lc_page_version` v1 + `lc_publish_log` 成功一条 + `lc_page.current_version=1` + `lc_project.last_commit_sha` 与远端逐字相同。那次提交实际只动了 5 个文件（Controller / Mapper / Service / 菜单 SQL / 列表页），另外 6 份与仓库里已有内容逐字节一致 —— 「设计驱动的 diff」本来就该是这个量。
+  - 同样的设计再点一次 → `status=2`、`version` 仍是 1、`tagName` 为空、远端既没有第二个提交也没有 `tag-2`：no-op 幂等在真仓库上成立。
+  - 修完下面两处缺陷后发第三次 → v2（`f53b2a3` + `tag-2`），产物里菜单权限点变成 `list/add/edit/remove` 四个、页面大标题变成「销售订单页」。
+- **真机产物暴露的两处 PR 6B 合流缺陷**（都先写成红用例再修，`DesignGenerationTest` 现 7 例）：① `menuButtonsOf` 把行操作并进工具栏那份清单时写成了交集（`filter(actions::contains)`），而编辑 / 删除通常只出现在行上 —— 于是菜单只种了 `:add`，生成页面两颗按钮照渲染、Controller 上 `@RequiresPermission(:edit / :remove)` 也在，项目里的角色拿不到这两个权限点，**按钮看得见、点下去 403**；② `PageDesign.title()` 在画布没填标题时兜到 `modelRef`，客户页面的大标题显示成 `sales_order` 这样的英文编码（画布自己在 `9f20981` 已经改成兜页面名，生成物没跟着同一口径）。这两处各段单测都只看半边：`DesignGenerationTest` 原来只断言「设计里没有删除就不该有 `:remove`」，那句拿错的实现同样是绿的；页面标题则从没被断过。
+- **还没做/没验的**：① 设计器 UI 正在重构，「在页面上点发布按钮」这一段没验（接口层与真仓库那一跳都是真东西）；② `lc_page_version.publish_type` 只写 `CREATE` / `UPDATE`，页面下线的 `DELETE` 与 PR 9 的 `ROLLBACK` 都还没有产出方。、
 
 
 ## 2026-11-05（PR 6 前两刀：页面设计入库，生成期把「形」与「料」合流）

@@ -31,8 +31,10 @@ import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * JGit 实现的仓库网关。
@@ -47,6 +49,8 @@ public class JGitGateway implements GitGateway {
     private static final String REMOTE = "origin";
     private static final String HEADS_PREFIX = "refs/heads/";
     private static final String TAGS_PREFIX = "refs/tags/";
+    /** ls-remote 的解引用行后缀：{@code refs/tags/v1^{} } 那一行给的才是 tag 指的提交 */
+    private static final String PEEL_SUFFIX = "^{}";
 
     private final int timeoutSeconds;
     private final PersonIdent committer;
@@ -73,10 +77,31 @@ public class JGitGateway implements GitGateway {
                     .setTimeout(timeoutSeconds)
                     .setTransportConfigCallback(transportConfig())
                     .call();
-            List<RemoteRef> result = new ArrayList<>();
+            // 附注 tag 在 ls-remote 里是两行：一行给 tag 对象自己的号，一行（名字带 ^{}）给它指的提交。
+            // 这里把两行并成一条，调用方拿到的 commitSha 才是能取到内容的那个号，而多出来的那行不会
+            // 被当成「远端还有一个引用」
+            Map<String, String> peeled = new LinkedHashMap<>();
+            List<String> names = new ArrayList<>();
+            List<String> shas = new ArrayList<>();
             for (Ref ref : refs) {
+                String name = ref.getName();
                 ObjectId id = ref.getObjectId();
-                result.add(new RemoteRef(ref.getName(), id == null ? "" : id.getName()));
+                String sha = id == null ? "" : id.getName();
+                if (name.endsWith(PEEL_SUFFIX)) {
+                    peeled.put(name.substring(0, name.length() - PEEL_SUFFIX.length()), sha);
+                    continue;
+                }
+                ObjectId peeledId = ref.getPeeledObjectId();
+                if (peeledId != null) {
+                    peeled.put(name, peeledId.getName());
+                }
+                names.add(name);
+                shas.add(sha);
+            }
+            List<RemoteRef> result = new ArrayList<>();
+            for (int i = 0; i < names.size(); i++) {
+                String name = names.get(i);
+                result.add(new RemoteRef(name, shas.get(i), peeled.get(name)));
             }
             return List.copyOf(result);
         } catch (GitAPIException e) {

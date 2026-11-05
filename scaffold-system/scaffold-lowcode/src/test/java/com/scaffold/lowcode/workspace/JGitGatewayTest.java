@@ -191,6 +191,32 @@ class JGitGatewayTest {
     }
 
     @Test
+    void 附注tag在远端读数里要能拿回它指的那个提交() {
+        // 版本 tag 是合并与回滚的锚点，按它取内容时平台要的是那个提交。而 ls-remote 对附注 tag 给两行：
+        // 第一行是 tag 对象自己的号，带 ^{} 的那行才是提交 —— 只读第一行就会拿一个不是提交的号去找内容。
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "gen");
+        write(workspace, "a.txt", "1\n");
+        String sha = gateway.commitAll(workspace, "chore: 第一次发布");
+        gateway.pushBranch(workspace, "gen");
+        assertThat(gateway.tagCommit(workspace, "v-order_list-1", sha, "元搭低代码平台发布")).isTrue();
+        gateway.pushTag(workspace, "v-order_list-1");
+
+        List<RemoteRef> refs = gateway.lsRemote(remoteUrl);
+        // 解引用行不该原样漏给调用方：多出来的那一条会被当成第二个引用数，「远端有几个 tag」就此算错
+        assertThat(refs).allSatisfy(ref -> assertThat(ref.name()).doesNotEndWith("^{}"));
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo("v-order_list-1");
+            assertThat(ref.commitSha()).isEqualTo(sha);
+        });
+        // 分支那条不受影响：它本来就直指提交
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.branchName()).isEqualTo("gen");
+            assertThat(ref.commitSha()).isEqualTo(sha);
+        });
+    }
+
+    @Test
     void tag推送被拒时不当成仓库分歧() {
         Path workspace = tempDir.resolve("workspace");
         gateway.initEmpty(workspace, remoteUrl, "gen");

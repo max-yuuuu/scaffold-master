@@ -102,6 +102,20 @@ public interface LcModelMapper {
     Map<String, Object> selectModelBrief(@Param("id") Long id);
 
     /**
+     * 生成器要吃的模型行：{@link #selectModelBrief(Long)} 那份没有生成期要判的四个开关
+     * （树表、逻辑删除、数据权限、审计字段），发布这条链路必须按它们决定产物的形状。
+     */
+    @Select("""
+            SELECT id, project_id AS projectId, model_code AS modelCode, model_name AS modelName,
+                   model_desc AS modelDesc, table_name AS tableName, class_name AS className,
+                   module_name AS moduleName, is_tree AS isTree, enable_logic_delete AS enableLogicDelete,
+                   enable_data_scope AS enableDataScope, enable_audit_field AS enableAuditField, status
+            FROM lc_model
+            WHERE id = #{id} AND deleted = 0
+            """)
+    Map<String, Object> selectModelForGenerate(@Param("id") Long id);
+
+    /**
      * 按「项目 + 模型编码」取模型。
      *
      * <p>页面绑模型走编码而不是 id（方案 §1.5：页面与模型的耦合只发生在 field_code 这个符号上，
