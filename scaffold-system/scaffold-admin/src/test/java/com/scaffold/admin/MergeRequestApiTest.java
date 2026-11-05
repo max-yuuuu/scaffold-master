@@ -211,6 +211,123 @@ class MergeRequestApiTest {
         assertThat(number(second.get("fileCount"))).isEqualTo(1);
     }
 
+    /* ── 第二刀：负责人审核与合并执行 ── */
+
+    @Test
+    void 负责人合并后主干真的前进并记下谁合的() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        setOwner(fx, ADMIN_USER);
+        commitOnGen(fx, "GenPage.vue", "<template>订单</template>\n");
+        Map<String, Object> request = dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
+        String mainBefore = gateway.branchSha(fx.repoUrl, MAIN);
+
+        Map<String, Object> merged = dataOf(post("/api/lowcode/merge-requests/" + number(request.get("id"))
+                + "/merge", Map.of()));
+
+        assertThat(String.valueOf(merged.get("statusText"))).isEqualTo("已合并");
+        assertThat(String.valueOf(merged.get("mergedBy"))).isEqualTo("admin");
+        assertThat(merged.get("mergedTime")).isNotNull();
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isNotEqualTo(mainBefore);
+        // 主干上真的有了发布分支那个文件：合并不是只改了库里的状态
+        Path reader = tempDir.resolve("verify-" + System.nanoTime());
+        gateway.cloneBranch(reader, fx.repoUrl, MAIN);
+        assertThat(reader.resolve("GenPage.vue")).exists();
+        assertThat(reader.resolve("README.md")).exists();
+        deleteRecursively(reader);
+    }
+
+    @Test
+    void 预检有冲突时合并被拒并且主干一个提交都没多() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        setOwner(fx, ADMIN_USER);
+        gateway.humanEditAndPush(fx.repoUrl, MAIN, "README.md", before -> "主干这一行是人的\n");
+        commitOnGen(fx, "README.md", "发布分支这一行是生成的\n");
+        Map<String, Object> request = dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
+        String mainBefore = gateway.branchSha(fx.repoUrl, MAIN);
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/" + number(request.get("id")) + "/merge", Map.of()).getBody();
+
+        assertThat(body).as(String.valueOf(body)).containsEntry("code", 400);
+        assertThat(String.valueOf(body.get("message"))).contains("冲突").contains("人解");
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(mainBefore);
+    }
+
+    @Test
+    void 提交之后主干又前进时合并被拒而不是合到错的内容上() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        setOwner(fx, ADMIN_USER);
+        commitOnGen(fx, "GenPage.vue", "<template>订单</template>\n");
+        Map<String, Object> request = dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
+
+        // 预检之后主干又来一笔：人点的这条请求算的是旧的那一对提交
+        gateway.humanEditAndPush(fx.repoUrl, MAIN, "README.md", before -> "晚来的一笔\n");
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/" + number(request.get("id")) + "/merge", Map.of()).getBody();
+
+        assertThat(body).as(String.valueOf(body)).containsEntry("code", 400);
+        assertThat(String.valueOf(body.get("message"))).contains("已前进");
+    }
+
+    @Test
+    void 按文件能取到真实补丁而没改状态时列表只读到待审() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        commitOnGen(fx, "GenPage.vue", "<template>订单</template>\n");
+        Map<String, Object> request = dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
+        long id = number(request.get("id"));
+
+        Map<String, Object> diff = dataOf(get("/api/lowcode/merge-requests/" + id + "/file-diff?path=GenPage.vue"));
+        assertThat(String.valueOf(diff.get("diff"))).contains("@@", "+<template>订单</template>");
+        // 不在改动里的文件给空串而不是报错：前端展开一行不该看到一条 400
+        assertThat(String.valueOf(dataOf(get("/api/lowcode/merge-requests/" + id + "/file-diff?path=nope.txt")).get("diff"))).isEmpty();
+        assertThat(String.valueOf(detailOf(id).get("statusText"))).isEqualTo("待审");
+    }
+
+    @Test
+    void 待我审核按项目负责人过滤而不是让人挑花眼() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        commitOnGen(fx, "GenPage.vue", "<template>订单</template>\n");
+        dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
+
+        setOwner(fx, ADMIN_USER);
+        assertThat(number(castMap(get("/api/lowcode/merge-requests?onlyMine=true").get("data")).get("total"))).isEqualTo(1);
+
+        setOwner(fx, OTHER_USER);
+        assertThat(number(castMap(get("/api/lowcode/merge-requests?onlyMine=true").get("data")).get("total"))).isZero();
+        // 不限负责人时仍然看得到：审核队列是筛选，不是权限裁剪。
+        // 这里必须按项目过滤来数 —— 全局列表里会有别的项目的真实请求（本机 IT 库就跑过 order-serive），
+        // 断言「整张表只有我这一条」是个假承诺
+        assertThat(number(castMap(get("/api/lowcode/merge-requests?projectId=" + fx.projectId).get("data")).get("total")))
+                .isEqualTo(1);
+    }
+
+    /** admin 的用户 ID（种子数据）；负责人必须是本租户启用中的账号 */
+    private static final long ADMIN_USER = 1L;
+
+    /** 同租户的另一个启用账号，用来验证「待我审核」真的按人过滤 */
+    private static final long OTHER_USER = 2L;
+
+    /** 改负责人得连 projectName / repoUrl 一起发（那两个是 @NotBlank）；repoUrl 一定要用项目真实的那个，
+     *  随手编一个会把项目的仓库地址覆盖掉，后面的合并就找不到远端了 */
+    private void setOwner(Harness fx, long userId) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("projectName", "合并请求验收");
+        body.put("repoUrl", fx.repoUrl);
+        body.put("mainBranch", MAIN);
+        body.put("genBranch", GEN);
+        body.put("ownerUserId", userId);
+        assertThat(put("/api/lowcode/projects/" + fx.projectId, body).getBody()).as(String.valueOf(body))
+                .containsEntry("code", 200);
+    }
+
+    private Map<String, Object> detailOf(long id) {
+        return dataOf(get("/api/lowcode/merge-requests/" + id));
+    }
+
     /* ── 现场 ── */
 
     private final class Harness {
@@ -280,6 +397,12 @@ class MergeRequestApiTest {
         HttpHeaders headers = auth();
         headers.setContentType(MediaType.APPLICATION_JSON);
         return restTemplate.exchange(path, HttpMethod.POST, new HttpEntity<>(body, headers), MAP_TYPE);
+    }
+
+    private ResponseEntity<Map<String, Object>> put(String path, Map<String, Object> body) {
+        HttpHeaders headers = auth();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return restTemplate.exchange(path, HttpMethod.PUT, new HttpEntity<>(body, headers), MAP_TYPE);
     }
 
     private Map<String, Object> get(String path) {

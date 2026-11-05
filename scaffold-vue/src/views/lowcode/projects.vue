@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
-import { DictSelect, FormDialog, ListPage, PermissionButton } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
+import { DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
@@ -26,6 +26,7 @@ const columns: Column[] = [
   { key: 'projectName', title: '项目名称', minWidth: 150 },
   { key: 'repoUrl', title: '仓库地址', minWidth: 240 },
   { key: 'branches', title: '分支', minWidth: 190 },
+  { key: 'ownerName', title: '负责人', width: 108 },
   { key: 'syncStatusText', title: '同步状态', width: 110 },
   { key: 'lastPublishTime', title: '最后发布', width: 150 },
   { key: 'status', title: '状态', width: 96 },
@@ -41,12 +42,14 @@ interface ProjectForm {
   repoUrl: string
   mainBranch: string
   genBranch: string
+  /** 负责人（lc_project.owner_user_id）：合并请求只有他或平台超管能确认合并 */
+  ownerUserId: number | null
   status: number
   remark: string
 }
 const emptyForm = (): ProjectForm => ({
   projectCode: '', projectName: '', projectDesc: '', repoUrl: '',
-  mainBranch: 'main', genBranch: 'platform-generated', status: 1, remark: '',
+  mainBranch: 'main', genBranch: 'platform-generated', ownerUserId: null as number | null, status: 1, remark: '',
 })
 const dialog = ref(false)
 const saving = ref(false)
@@ -69,6 +72,7 @@ function openEdit(row: ProjectRow) {
     repoUrl: row.repoUrl,
     mainBranch: row.mainBranch,
     genBranch: row.genBranch,
+    ownerUserId: row.ownerUserId ?? null,
     status: row.status,
     remark: row.remark ?? '',
   })
@@ -323,6 +327,7 @@ async function remove(row: ProjectRow) {
         <Tag tone="info">{{ row.genBranch }}</Tag>
       </span>
     </template>
+    <template #cell-ownerName="{ row }"><span :class="row.ownerName ? '' : 'soft'">{{ row.ownerName || '未设' }}</span></template>
     <template #cell-syncStatusText="{ row }">
       <span :title="row.syncMessage || undefined" class="sync-cell">
         <Tag :tone="syncTone(row.syncStatus)">{{ row.syncStatusText }}</Tag>
@@ -440,6 +445,10 @@ async function remove(row: ProjectRow) {
       </Field>
       <Field label="发布分支" required hint="平台发布只推这条分支">
         <TextInput v-model="form.genBranch" placeholder="platform-generated" />
+      </Field>
+      <!-- 负责人决定谁来看这条合并请求：留空时只有平台超管能确认合并，界面上把这层含义说清楚 -->
+      <Field label="负责人" hint="合并请求只有他或平台超管能确认合并">
+        <UserSelect v-model="form.ownerUserId" placeholder="暂不设负责人" />
       </Field>
       <Field label="项目状态" group>
         <Switch :model-value="form.status === 1" :label="form.status === 1 ? '正常' : '停用'" @update:model-value="form.status = $event ? 1 : 0" />

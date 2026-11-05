@@ -34,6 +34,9 @@ public class ProjectWriteRequest {
     @Pattern(regexp = "^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$", message = "字母数字开头，仅含字母、数字、点、下划线、短横线、斜杠")
     private String genBranch;
 
+    /** 项目负责人（lc_project.owner_user_id → sys_user.id）：合并请求只有他或超级管理员能确认合并 */
+    private Long ownerUserId;
+
     /** 备注（lc_project.remark） */
     @Size(max = 500, message = "长度不能超过 500")
     private String remark;
@@ -53,6 +56,8 @@ public class ProjectWriteRequest {
     public void setMainBranch(String mainBranch) { this.mainBranch = mainBranch; }
     public String getGenBranch() { return genBranch; }
     public void setGenBranch(String genBranch) { this.genBranch = genBranch; }
+    public Long getOwnerUserId() { return ownerUserId; }
+    public void setOwnerUserId(Long ownerUserId) { this.ownerUserId = ownerUserId; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
     public Integer getStatus() { return status; }

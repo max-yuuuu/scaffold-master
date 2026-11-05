@@ -59,6 +59,9 @@ export interface ProjectRow {
   repoUrl: string
   mainBranch: string
   genBranch: string
+  /** 项目负责人（sys_user.id）：合并请求只有他或平台超管能确认合并；没设时只有超管能合 */
+  ownerUserId: number | null
+  ownerName: string | null
   baseScaffoldSha: string | null
   lastCommitSha: string | null
   syncStatus: number
@@ -133,6 +136,8 @@ export interface ProjectWriteRequest {
   repoUrl?: string
   mainBranch?: string
   genBranch?: string
+  /** 负责人可以留空（还没定由谁审），但不能指一个不存在或已停用的账号，后端会拒 */
+  ownerUserId?: number | null
   status?: number
   remark?: string
 }
@@ -363,6 +368,11 @@ export interface MergeRequestRow {
   checkStatusText: string
   checkMessage: string | null
   checkTime: string | null
+  /** 确认合并的人与时间：只有项目负责人或平台超管写得进来 */
+  mergedBy: string | null
+  mergedTime: string | null
+  projectName: string | null
+  ownerUserId: number | null
   /** 这两个数是按文件表现算的，库里不存计数 */
   fileCount: number
   conflictCount: number
@@ -442,6 +452,10 @@ export function createPlatformApi(client: HttpClient) {
       detail: (id: number) => client.get<MergeRequestDetail>(`/lowcode/merge-requests/${id}`),
       /** 重算是独立权限点（lowcode:merge-request:sync）：它会真连远端仓库，不该挂在「看列表」那个码上 */
       refresh: (body: MergeRequestRefreshRequest) => client.post<MergeRequestDetail>('/lowcode/merge-requests/refresh', body),
+      /** 单个文件的行内差异：抽屉里点开一行才拉一次，不一次把整份补丁搬回浏览器 */
+      fileDiff: (id: number, path: string) => client.get<{ path: string, diff: string }>(`/lowcode/merge-requests/${id}/file-diff`, { path }),
+      /** 确认合并（lowcode:merge-request:merge）：服务里还要再判一次「是不是项目负责人或平台超管」 */
+      merge: (id: number) => client.post<MergeRequestDetail>(`/lowcode/merge-requests/${id}/merge`),
     },
     tenantConfigs: {
       list: (query?: QueryParams) => client.get<PageResult<TenantConfigRow>>('/platform/tenant-configs', query),

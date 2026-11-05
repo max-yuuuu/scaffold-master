@@ -39,6 +39,8 @@ public interface LcProjectMapper {
                    p.repo_url AS repoUrl,
                    p.main_branch AS mainBranch,
                    p.gen_branch AS genBranch,
+                   p.owner_user_id AS ownerUserId,
+                   (SELECT u.nickname FROM sys_user u WHERE u.id = p.owner_user_id) AS ownerName,
                    p.workspace_path AS workspacePath,
                    p.base_scaffold_sha AS baseScaffoldSha,
                    p.last_commit_sha AS lastCommitSha,
@@ -85,6 +87,7 @@ public interface LcProjectMapper {
                    repo_url AS repoUrl,
                    main_branch AS mainBranch,
                    gen_branch AS genBranch,
+                   owner_user_id AS ownerUserId,
                    workspace_path AS workspacePath,
                    base_scaffold_sha AS baseScaffoldSha,
                    last_commit_sha AS lastCommitSha,
@@ -122,10 +125,37 @@ public interface LcProjectMapper {
                         @Param("markInit") boolean markInit,
                         @Param("operator") String operator);
 
+    /**
+     * 负责人必须是本租户一个还在用的账号。sys_user 在租户拦截器白名单里，所以这条天然带租户条件 ——
+     * 不校验的话就会把别租户的用户 ID 指成本项目负责人，而「待我审核」与合并权限都按它判。
+     */
+    @Select("SELECT COUNT(*) FROM sys_user WHERE id = #{userId} AND deleted = 0 AND status = 1")
+    long countUsableUser(@Param("userId") Long userId);
+
+    /**
+     * 是否真正拥有平台超管身份：角色码 {@code super_admin} <b>且账号归属平台租户</b>。
+     *
+     * <p>与 {@code PlatformBoundary.isSuperAdmin} 同一判据 —— 那边要 authMapper 的角色查询，
+     * 低代码模块没有它，而合并这条授权必须在服务层兑现。租户内自建一个同名角色不算数，
+     * 否则任何租户的管理员都能把自己项目的清单推进主干。
+     */
+    @Select("""
+            <script>
+            SELECT COUNT(*) FROM sys_user u
+            JOIN sys_user_role ur ON ur.user_id = u.id
+            JOIN sys_role r ON r.id = ur.role_id
+            WHERE u.id = #{userId} AND u.deleted = 0 AND u.tenant_id = #{platformTenantId}
+              AND r.role_code = 'super_admin'
+            </script>
+            """)
+    long countPlatformSuperAdmin(@Param("userId") Long userId, @Param("platformTenantId") long platformTenantId);
+
     @Insert("""
             INSERT INTO lc_project (project_code, project_name, project_desc, repo_url, main_branch, gen_branch,
+                                    owner_user_id,
                                     sync_status, status, remark, create_by, update_by)
             VALUES (#{row.projectCode}, #{row.projectName}, #{row.projectDesc}, #{row.repoUrl}, #{row.mainBranch}, #{row.genBranch},
+                    #{row.ownerUserId},
                     0, #{row.status}, #{row.remark}, #{operator}, #{operator})
             """)
     @Options(useGeneratedKeys = true, keyProperty = "row.id")
@@ -138,6 +168,7 @@ public interface LcProjectMapper {
                 repo_url = COALESCE(#{row.repoUrl}, repo_url),
                 main_branch = COALESCE(#{row.mainBranch}, main_branch),
                 gen_branch = COALESCE(#{row.genBranch}, gen_branch),
+                owner_user_id = COALESCE(#{row.ownerUserId}, owner_user_id),
                 status = COALESCE(#{row.status}, status),
                 remark = COALESCE(#{row.remark}, remark),
                 update_by = #{operator}

@@ -3,6 +3,7 @@ package com.scaffold.lowcode.merge.service;
 import com.scaffold.common.domain.PageQuery;
 import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.common.tenant.TenantContext;
 import com.scaffold.framework.security.SecurityUtils;
 import com.scaffold.lowcode.merge.domain.MergeRequestState;
 import com.scaffold.lowcode.merge.mapper.LcMergeRequestFileMapper;
@@ -120,19 +121,119 @@ public class MergeRequestService {
      * <p>文案只由 {@link MergeRequestState} 给：让前端拿数字自己拼词，两处就会开始各说各话，
      * 而那时改一个状态词要同时动前后端。
      */
-    public PageResult<Map<String, Object>> list(PageQuery query, Long projectId) {
+    public PageResult<Map<String, Object>> list(PageQuery query, Long projectId, boolean onlyMine) {
         if (projectId != null) {
             requireProject(projectId);
         }
-        long total = requestMapper.countRequests(projectId);
+        // 「待我审核」按项目负责人过滤：需求原话是负责人要看到需要他审的 PR，
+        // 而不是在一堆别人的请求里自己挑
+        Long owner = onlyMine ? SecurityUtils.getUserId() : null;
+        long total = requestMapper.countRequests(projectId, owner);
         List<Map<String, Object>> rows = total == 0
                 ? List.of()
-                : requestMapper.selectRequests(projectId, query.normalizedPageSize(), query.offset());
+                : requestMapper.selectRequests(projectId, owner, query.normalizedPageSize(), query.offset());
         rows.forEach(row -> {
             row.put("statusText", MergeRequestState.text(number(row.get("status"))));
             row.put("checkStatusText", MergeRequestState.checkText(number(row.get("checkStatus"))));
         });
         return PageResult.of(rows, total, query.normalizedPageNum(), query.normalizedPageSize());
+    }
+
+    /**
+     * 确认合并：把人审过的那一对提交合进人工主干并推上去。平台唯一会写主干的动作。
+     *
+     * <p>三道拒绝都在动手之前，顺序是有讲究的：先判请求本身还作不作数（状态、预检结论），
+     * 再判点的人有没有资格（负责人或平台超管），最后才去问仓库 —— 反过来做的话，
+     * 一个越权的点击会先把远端读一遍，等于让没资格的人触发网络动作。
+     *
+     * <p>合并前还要回读一次远端：预检是几分钟前算的，这期间主干或发布分支只要动过，
+     * 人点的这条请求算的就不是眼前这份内容了。{@code mergeIntoTarget} 内部还会比一次主干提交号，
+     * 那是第二道保险，不是重复劳动。
+     */
+    public Map<String, Object> merge(Long id) {
+        Map<String, Object> request = requestMapper.selectRequest(id);
+        if (request == null) {
+            throw new BusinessException("合并请求不存在或已被删除");
+        }
+        int status = number(request.get("status"));
+        if (status != MergeRequestState.PENDING) {
+            throw new BusinessException("这条请求是「" + MergeRequestState.text(status) + "」，不能合并："
+                    + "只有待审的请求可以合入主干");
+        }
+        int checkStatus = number(request.get("checkStatus"));
+        if (checkStatus != MergeRequestState.CHECK_CLEAN) {
+            throw new BusinessException("预检结论是「" + MergeRequestState.checkText(checkStatus)
+                    + "」，不能合入主干" + (checkStatus == MergeRequestState.CHECK_CONFLICT
+                    ? "：冲突文件必须先由人解掉（平台不替人取舍），解完再重算一次"
+                    : "：先重算一次拿到结论"));
+        }
+
+        long projectId = numberAsLong(request.get("projectId"));
+        Map<String, Object> project = requireProject(projectId);
+        String operator = SecurityUtils.getUsername();
+        requireMergeAuthority(project, operator);
+
+        String targetBranch = text(request.get("targetBranch"));
+        String sourceBranch = text(request.get("sourceBranch"));
+        String targetSha = text(request.get("targetSha"));
+        String sourceSha = text(request.get("sourceSha"));
+        Path workspace = requireWorkspace(project);
+        String repoUrl = RepoUrlValidator.normalize(text(project.get("repoUrl")));
+        String remoteSource = remoteSha(gateway.lsRemote(repoUrl), sourceBranch);
+        if (remoteSource == null) {
+            throw new BusinessException("远端已经没有发布分支 " + sourceBranch
+                    + "：这条请求没有可合的内容了，请重建工作区后重新初始化");
+        }
+        if (!remoteSource.equals(sourceSha)) {
+            throw new BusinessException("发布分支 " + sourceBranch + " 在预检之后又前进了（算的是 "
+                    + abbreviate(sourceSha) + "，远端现在是 " + abbreviate(remoteSource) + "）："
+                    + "先重算一次，让人看的是最新的这一份");
+        }
+
+        String merged = gateway.mergeIntoTarget(workspace, repoUrl, targetBranch, targetSha, sourceSha,
+                "合并请求 #" + id + "：" + text(request.get("title")));
+        // WHERE status = 0：两个人同时点合并时，第二个人要发现这条已经收口，而不是把 merged_by 改写成自己
+        if (requestMapper.updateMerged(id, "已合入 " + targetBranch + "（" + abbreviate(merged) + "）", operator) == 0) {
+            throw new BusinessException("这条请求刚刚已被别人收口，本次合并结果请到人主干上核对："
+                    + "平台没有把它记成第二次合并");
+        }
+        return detail(id);
+    }
+
+    /**
+     * 单个文件的行内差异（GitHub 式展开）。两个提交号取自这条请求本身 ——
+     * 看的是「当时算出来的那一对提交之间的差异」，不是分支现在的样子。
+     */
+    public Map<String, Object> fileDiff(Long id, String path) {
+        Map<String, Object> request = requestMapper.selectRequest(id);
+        if (request == null) {
+            throw new BusinessException("合并请求不存在或已被删除");
+        }
+        if (path == null || path.isBlank()) {
+            throw new BusinessException("要看差异必须给出文件路径");
+        }
+        Map<String, Object> project = requireProject(numberAsLong(request.get("projectId")));
+        String diff = gateway.fileDiff(requireWorkspace(project), text(request.get("mergeBaseSha")),
+                text(request.get("sourceSha")), path);
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("path", path);
+        view.put("diff", diff);
+        return view;
+    }
+
+    /** 确认合并的资格：项目负责人，或平台超级管理员。看清单不受这一条限制。 */
+    private void requireMergeAuthority(Map<String, Object> project, String operator) {
+        Long ownerUserId = project.get("ownerUserId") == null ? null : numberAsLong(project.get("ownerUserId"));
+        Long userId = SecurityUtils.getUserId();
+        if (ownerUserId != null && ownerUserId.equals(userId)) {
+            return;
+        }
+        if (projectMapper.countPlatformSuperAdmin(userId == null ? 0L : userId, TenantContext.PLATFORM_TENANT_ID) > 0) {
+            return;
+        }
+        throw new BusinessException("只有项目负责人" + (ownerUserId == null ? "（该项目还没设负责人）"
+                : "（用户 ID " + ownerUserId + "）") + "或平台超级管理员能确认合并「"
+                + project.get("projectCode") + "」：当前账号 " + operator + " 不是");
     }
 
     /**

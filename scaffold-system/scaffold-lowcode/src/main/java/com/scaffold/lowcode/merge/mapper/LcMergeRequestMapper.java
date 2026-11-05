@@ -21,41 +21,70 @@ import java.util.Map;
 public interface LcMergeRequestMapper {
 
     @Select("""
+            <script>
             SELECT r.id, r.project_id AS projectId, r.title, r.description,
                    r.source_branch AS sourceBranch, r.target_branch AS targetBranch,
                    r.source_sha AS sourceSha, r.target_sha AS targetSha, r.merge_base_sha AS mergeBaseSha,
                    r.status, r.check_status AS checkStatus, r.check_message AS checkMessage,
-                   r.check_time AS checkTime, r.create_by AS createBy, r.create_time AS createTime,
-                   r.update_time AS updateTime,
+                   r.check_time AS checkTime, r.merged_by AS mergedBy,
+                   r.merged_time AS mergedTime,
+                   r.create_by AS createBy, r.create_time AS createTime, r.update_time AS updateTime,
+                   p.project_name AS projectName, p.owner_user_id AS ownerUserId,
                    (SELECT COUNT(*) FROM lc_merge_request_file f WHERE f.request_id = r.id) AS fileCount,
                    (SELECT COALESCE(SUM(f.is_conflict), 0) FROM lc_merge_request_file f
                       WHERE f.request_id = r.id) AS conflictCount
             FROM lc_merge_request r
-            WHERE #{projectId} IS NULL OR r.project_id = #{projectId}
+            JOIN lc_project p ON p.id = r.project_id AND p.deleted = 0
+            WHERE 1 = 1
+            <if test="projectId != null">AND r.project_id = #{projectId}</if>
+            <!-- 「待我审核」按项目负责人过滤；不限负责人时看得到全部 -->
+            <if test="ownerUserId != null">AND p.owner_user_id = #{ownerUserId}</if>
             ORDER BY r.id DESC
             LIMIT #{limit} OFFSET #{offset}
+            </script>
             """)
     List<Map<String, Object>> selectRequests(@Param("projectId") Long projectId,
+                                             @Param("ownerUserId") Long ownerUserId,
                                              @Param("limit") int limit,
                                              @Param("offset") long offset);
 
     @Select("""
+            <script>
             SELECT COUNT(*) FROM lc_merge_request r
-            WHERE #{projectId} IS NULL OR r.project_id = #{projectId}
+            JOIN lc_project p ON p.id = r.project_id AND p.deleted = 0
+            WHERE 1 = 1
+            <if test="projectId != null">AND r.project_id = #{projectId}</if>
+            <if test="ownerUserId != null">AND p.owner_user_id = #{ownerUserId}</if>
+            </script>
             """)
-    long countRequests(@Param("projectId") Long projectId);
+    long countRequests(@Param("projectId") Long projectId, @Param("ownerUserId") Long ownerUserId);
 
     @Select("""
             SELECT id, project_id AS projectId, title, description,
                    source_branch AS sourceBranch, target_branch AS targetBranch,
                    source_sha AS sourceSha, target_sha AS targetSha, merge_base_sha AS mergeBaseSha,
                    status, check_status AS checkStatus, check_message AS checkMessage,
-                   check_time AS checkTime, create_by AS createBy, create_time AS createTime,
+                   check_time AS checkTime, merged_by AS mergedBy, merged_time AS mergedTime,
+                   create_by AS createBy, create_time AS createTime,
                    update_time AS updateTime
             FROM lc_merge_request
             WHERE id = #{id}
             """)
     Map<String, Object> selectRequest(@Param("id") Long id);
+
+    /**
+     * 记一笔已合并：状态、合交人、合交时间一次写定。
+     *
+     * <p>{@code WHERE status = 0} 不是多余的防御 —— 两个人同时点合并时，第二个人必须发现这条已经收口，
+     * 而不是把 merged_by 改写成自己、把两次合并说成一件事。
+     */
+    @Update("""
+            UPDATE lc_merge_request
+            SET status = 2, merged_by = #{operator}, merged_time = NOW(), update_by = #{operator},
+                check_message = #{message}
+            WHERE id = #{id} AND status = 0
+            """)
+    int updateMerged(@Param("id") Long id, @Param("message") String message, @Param("operator") String operator);
 
     /**
      * 同一分支对只留一条还活着的请求（待审或陈旧）。

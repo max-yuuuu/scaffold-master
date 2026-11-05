@@ -58,10 +58,10 @@ public class LcProjectService {
         List<Map<String, Object>> rows = mapper.selectProjects(trimToNull(keyword), status, 0, 5000);
         List<List<Object>> data = rows.stream()
                 .map(row -> CsvUtils.row(row.get("projectCode"), row.get("projectName"), row.get("repoUrl"),
-                        row.get("mainBranch"), row.get("genBranch"), row.get("syncStatusText"),
+                        row.get("mainBranch"), row.get("genBranch"), row.get("ownerName"), row.get("syncStatusText"),
                         row.get("lastPublishTime"), statusText(row.get("status")), row.get("createTime"), row.get("remark")))
                 .toList();
-        return CsvUtils.csv(List.of("项目编码", "项目名称", "仓库地址", "主干分支", "发布分支", "同步状态", "最后发布", "状态", "创建时间", "备注"), data);
+        return CsvUtils.csv(List.of("项目编码", "项目名称", "仓库地址", "主干分支", "发布分支", "负责人", "同步状态", "最后发布", "状态", "创建时间", "备注"), data);
     }
 
     /** 模型/页面模块选择项目用的精简列表：只回启用中的项目 */
@@ -88,6 +88,7 @@ public class LcProjectService {
         row.put("repoUrl", RepoUrlValidator.normalize(request.getRepoUrl()));
         row.put("mainBranch", branchOrDefault(request.getMainBranch(), DEFAULT_MAIN_BRANCH));
         row.put("genBranch", branchOrDefault(request.getGenBranch(), DEFAULT_GEN_BRANCH));
+        row.put("ownerUserId", requireUsableOwner(request.getOwnerUserId()));
         row.put("status", request.getStatus() == null ? 1 : request.getStatus());
         row.put("remark", trimToNull(request.getRemark()));
         requireDistinctBranches(row);
@@ -104,6 +105,7 @@ public class LcProjectService {
         row.put("repoUrl", RepoUrlValidator.normalize(request.getRepoUrl()));
         row.put("mainBranch", trimToNull(request.getMainBranch()));
         row.put("genBranch", trimToNull(request.getGenBranch()));
+        row.put("ownerUserId", requireUsableOwner(request.getOwnerUserId()));
         row.put("status", request.getStatus());
         row.put("remark", trimToNull(request.getRemark()));
         requireDistinctBranches(row);
@@ -142,6 +144,21 @@ public class LcProjectService {
     }
 
     /** 主干与发布分支必须不同：同一条分支既被人工写又被平台推，合并请求就没有意义了 */
+    /**
+     * 负责人可以留空（还没定由谁审），但不能指一个不存在、已删除或已停用的账号：
+     * 「待我审核」与确认合并的权限都按这一列判，指错人就等于把这条项目锁死在没人能合的状态。
+     * 留 COALESCE 语义（与同一条 UPDATE 里其余列一致）：只能换人，不能由表单清空。
+     */
+    private Long requireUsableOwner(Long ownerUserId) {
+        if (ownerUserId == null || ownerUserId == 0L) {
+            return null;
+        }
+        if (mapper.countUsableUser(ownerUserId) == 0) {
+            throw new BusinessException("负责人必须是本租户一个启用的账号（用户 ID " + ownerUserId + " 查不到）");
+        }
+        return ownerUserId;
+    }
+
     private static void requireDistinctBranches(Map<String, Object> row) {
         Object main = row.get("mainBranch");
         Object gen = row.get("genBranch");
