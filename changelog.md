@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-05（PR 8A：设计器外壳第一刀 —— 按 Figma 新稿重排三栏，顺手修掉三处既有缺陷）
+
+`designer/` 那份 Figma Make 原型（React 19 + Tailwind v4，6846 行）跑起来逐屏点过之后定下口径：**Vue 重写、原型只当视觉与交互规格书、第一期保守到后端 `ComponentCatalog` 白名单以内**（物料 19 种 kind 里生成器产不出的那些不进面板）。这一刀只做外壳，六刀串行，后面依次是左栏、画布、右栏、浮层与发布、窄屏。
+
+- **设计器不再自带一套顶栏**。原型那条顶栏有面包屑、⌘K、深浅色、撤销重做、保存与发布；平台外壳的 `Topbar.vue` + `CommandPalette.vue` 已经给了前三样。两条顶栏同时挂出来，人分不清哪一条说的是「这个页面」、哪一条说的是「整个控制台」，而且 `?design=页面 ID` 与列表同路由，外壳面包屑只到「页面管理」这一层 —— 所以页面名与模型编码留在设计器自己的工具条里，`DesignerToolbar.vue` 只放改这份设计要用的动作。
+- **`.designer` 的 `height: 100%` 从来没生效过**：它和 `.content` 之间夹着一层 `.route-frame`，而后者只有 `min-width: 0`、高度是 auto，百分比高度在 auto 高度的父元素上算不出来。表现是整份设计稿把外层 `.content` 撑成页面滚动（实测 1000 高视口下 `.designer` 767px 而 `.content` 476px），三栏不各自滚动、画布那个滚动条永远不出现。改成 `position: absolute; inset: 0` 贴住 `.content`（它是这条链上唯一 `position: relative` 的祖先）。**这条是「画布滚动后工具条凝结」写出来才发现自己成了死代码的根因** —— 先有能滚的画布，凝结才有触发的时候。
+- **打开设计器就有可撤销的一步**：`createDesigner(design)` 之后那行 `store.setModel(page.modelCode)` 是一次装配动作，却进了撤销栈。于是刚进来「撤销」就是可点的，点一下 `modelRef` 被抹回 seed 里的空串，而画布看起来什么都没变 —— 下一次保存送出去的是一份没有模型绑定的设计。新增 `bindModel(code)`（任何时候都不产生历史），`setModel` 保留成「人在设计器里换模型」那种该能撤销的动作。用例先跑出 `store.bindModel is not a function`，再实现转绿。
+- **`:saving` 是一个不存在的 prop**：`PermissionButton` 的等待态属性叫 `loading`，设计器一直传的是 `:saving`。Vue 不会为未知属性报错，只把它当普通 attribute 落到 DOM 上 —— 于是保存期间按钮既没有等待态也不禁用，双击就是两次 `PUT /lowcode/pages/59`，而第二次可能带着与第一次不同的设计。
+- **两栏宽度用设计器自己的令牌**：`--dz-rail-w: 236px` / `--dz-inspector-w: 312px` 定义在 scoped 块里，不写进 `packages/scaffold-ui/src/styles/tokens.css` —— 原型那份 CSS 里的 `--rail-w` 是它自己的左栏宽度，而平台的 `--rail-w` 是外壳导航轨的，改它等于连带改掉所有页面的侧栏。撤销 / 重做两枚图标补进 `data/icons.ts`（24 网格、1.6 描边，与既有 `arrowUp`、`sidebar` 同一套线性风格），原型那两枚是 16 网格，按比例搬过来。
+- **收起用 `v-if` 而不是宽度归零**：归零的面板还在 Tab 序列里，键盘要连按好几次才跳过一栏看不见的东西。收起后画布两上角各留一枚展开胶囊，胶囊上是文字不是图标 —— 只留一个图标的话，人得先猜刚才收掉的是哪一栏。
+- **测试**：`design.test.ts` 12→13 例；`npm run typecheck` 两包全绿、单测 14 + 23 例全绿、`vite build` 通过。
+- **真机验收**（宿主 `:5173` + 后端 `:8080`，`admin` 登录，页面 59「销售订单页」）：1600 宽下三栏实测 `236px / 1072px / 312px`；收起左栏 → grid 变 `0px 1fr 312px`、`.dz-left` 从 DOM 摘掉、画布左上出现「展开组件面板」胶囊，点回原状；画布滚 160px → 工具条凝结（描边换 `--line-strong`、挂 `--e2` 阴影）；深色下工具条与面板底色 `#1b1f21`、字色 `#eef2f1`、凝结描边白 10%、胶囊底 `rgba(30,34,37,.9)` 逐项归位；撤销 / 重做在刚打开时都是禁用态。**截图这次拿不到可见浏览器面（in-app browser 未打开），以上都是 DOM 实测计算值，不是像素比对**；拖拽落点与所见即所得归刀 3。
+- **还没做**：① 发布状态胶囊要后端把 `lc_page.current_version` / `publish_status` 放进 `PageRow`，与刀 5 的发布按钮一起接（`POST /lowcode/pages/{id}/publish` 的入参是 `force` + `changeDesc`，原型那格「目标运行环境」库里没有对应字段，砍；「发布版本号」由 `lc_page_version` 生成，不让手填）；② 结构代码 / 预览运行态 / 发布上线三枚按钮归刀 5；③ 原型全站只有 14 处响应式前缀、`index.css` 零 `@media`，627px 视口下中栏被挤到 55px，窄屏归刀 6。
+
+
 ## 2026-11-05（PR 7：页面发布链路 —— 设计到租户仓库的那一跳）
 
 方案 §10.3 的 PR 7 是「发布链路：哈希对比 → 提交 `gen_branch` → 推送 → 打 tag → 写 `lc_publish_log`；no-op 幂等；发布前 C 档引用体检」。这一刀把 §5.1 那张图整个落成 `com.scaffold.lowcode.publish.PagePublishService`，四刀提交：远端 tag 语义、交付裁剪补漏 + 发布主链路、引用体检、文档与本条。

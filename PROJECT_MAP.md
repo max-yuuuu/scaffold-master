@@ -74,6 +74,7 @@
 | 租户参数（当前会话租户的键值参数） | `/platform/tenant-config` | `views/lowcode/tenant-configs.vue` | `api/platform.ts` 的 `platformApi.tenantConfigs` | 已确认 |
 | 项目管理（列表 / 新增 / 编辑 / 启停 / 删除，分支列显示发布分支 → 主干） | `/lowcode/project` | `views/lowcode/projects.vue` | `api/platform.ts` 的 `platformApi.projects` | 已确认 |
 | 模型管理（列表 + 右侧抽屉配字段，选类型实时预览 Java / 列类型） | `/lowcode/model` | `views/lowcode/models.vue` | `api/platform.ts` 的 `platformApi.models`；字典下拉读 `systemApi.dictTypes`（无权限时留空，保存由后端校验） | 已确认 |
+| 页面设计（列表 + 新标签页打开三栏设计器：左物料 / 中画布 / 右属性） | `/lowcode/page` | `views/lowcode/pages.vue` + `views/lowcode/designer/DesignerWorkspace.vue`（装配与手势）+ `designer/DesignerToolbar.vue`（工作区工具条：返回、页面身份、撤销重做、保存） | `designer/design.ts` 是这份设计的唯一事实源（区块树、落点合法性、撤销栈、`design_json` 进出）；保存走 `platformApi.pages.update`，形状与属性白名单与后端 `ComponentCatalog` 同一份；面包屑 / ⌘K / 深浅色用外壳 `Topbar.vue`，设计器不自带顶栏 | PR 8A |
 | 操作日志（横带：概览 / 趋势或泳道 / 明细，抽屉级联） | `/monitor/oper-log` | `views/monitor/OperLog.vue` | `api/system.ts`；日志与统计 | 已确认 |
 | 登录日志（横带：概览 / 趋势或热力 / 异常 / 明细） | `/monitor/login-log` | `views/monitor/LoginLog.vue` | 同上 + `login-logs/heatmap` | 已确认 |
 | 代码生成（三步流水线抽屉） | `/tool/generator` | `views/tool/Generator.vue` + `components/business/GeneratorPipeline.vue` | `api/portal.ts`；生成器 | 已确认 |
@@ -257,6 +258,7 @@
 - `composables/ask.ts` 是本地规则问答引擎：各模块注册 `intent{patterns, run}`，按 `hasPermission` 过滤不可用意图；命令面板输入 `?` 进入同一引擎。
 - 视口平移缩放集中在 `composables/viewport.ts`（`useViewportPan`）：组织画布与关系图共用；`firstTimeInSession` 控制工作台开场等“每会话一次”的编排。
 - 用户按岗位过滤走 `sys_user_post` 关联条件，分页、统计、导出一致生效并沿用 `@DataScope`。
+- **想要「整屏工作台」的页面必须自己贴住 `.content`，不能写 `height: 100%`**（PR 8A 踩到的）：`AppShell.vue` 在路由内容外面套了一层 `.route-frame`，而它只有 `min-width: 0`、高度是 auto —— 百分比高度在 auto 高度的父元素上算不出来，于是页面按内容自然长高，把 `.content` 撑成整页滚动，页面内部的分区滚动（设计器的画布就是其一）永远不触发，绑在它上面的行为成了死代码。做法是 `position: absolute; inset: 0`：`.content` 是这条链上唯一 `position: relative` 的祖先，也是 `min-height: 0` + `overflow: auto` 的滚动容器，贴住它就能拿到确定高度。别去给 `.route-frame` 补 `height: 100%`，那是所有页面共用的外壳层，改它等于把每个普通页面的滚动都接管一遍。
 
 <!-- MANUAL-NOTES-START -->
 ## 十、人工维护备注
