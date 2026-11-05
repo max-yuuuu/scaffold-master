@@ -1,0 +1,183 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createDesigner, initFromModel, propsOf, PROPS, BLOCKS, type ModelField } from '../design.ts'
+
+/**
+ * 设计器状态层（PR 6C）。
+ *
+ * <p>这一层是纯 TS、不碰 Vue：画布与属性面板只负责把「拖到哪、改了哪一格」翻译成功令，
+ * 树的操作、撤销重做、序列化的口径全在这里，能脱离浏览器跑就跑 —— UI 一裹住，
+ * 「move 之后原容器还剩几个」这种问题就只能靠人去点了。
+ *
+ * <p>落点合法性在前端也拦一份是为了手感（拖不动比报错好），<b>权威判定在后端 `PageDesign`</b>：
+ * 两边都收紧的话，前端放过去的存库照样被拒，而那时人已经在设计器里画完了。
+ */
+
+const fields: ModelField[] = [
+  { fieldCode: 'id', fieldName: '主键', javaType: 'Long', formType: 'INPUT', dictType: null, isPrimary: 1, isAutoIncrement: 1, isList: 1, isQuery: 0, queryType: '=', isInsert: 0, isEdit: 0, isRequired: 0 },
+  { fieldCode: 'orderNo', fieldName: '订单编号', javaType: 'String', formType: 'INPUT', dictType: null, isPrimary: 0, isAutoIncrement: 0, isList: 1, isQuery: 1, queryType: 'LIKE', isInsert: 1, isEdit: 1, isRequired: 1 },
+  { fieldCode: 'amount', fieldName: '订单金额', javaType: 'BigDecimal', formType: 'NUMBER', dictType: null, isPrimary: 0, isAutoIncrement: 0, isList: 1, isQuery: 0, queryType: '=', isInsert: 1, isEdit: 1, isRequired: 0 },
+  { fieldCode: 'status', fieldName: '状态', javaType: 'Integer', formType: 'SELECT', dictType: 'order_status', isPrimary: 0, isAutoIncrement: 0, isList: 1, isQuery: 1, queryType: '=', isInsert: 1, isEdit: 1, isRequired: 0 },
+  { fieldCode: 'createTime', fieldName: '创建时间', javaType: 'LocalDateTime', formType: 'DATETIME', dictType: null, isPrimary: 0, isAutoIncrement: 0, isList: 0, isQuery: 0, queryType: '=', isInsert: 0, isEdit: 0, isRequired: 0 },
+]
+
+const blocksOf = (json: any) => json.layout.children.map((node: any) => node.type)
+
+test('空白设计只有一个页面容器，区块要拖进来才有', () => {
+  const store = createDesigner()
+  const json = store.json()
+  assert.equal(json.version, '1.0')
+  assert.equal(json.pageType, 'list')
+  assert.equal(json.layout.type, 'PageContainer')
+  assert.deepEqual(json.layout.children, [])
+})
+
+test('按模型初始化时标志位决定初始摆位，自增主键不进表单', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  assert.equal(store.json().modelRef, 'sales_order')
+  assert.deepEqual(blocksOf(store.json()), ['SearchForm', 'Toolbar', 'DataTable', 'RowActions', 'FormContainer'])
+
+  const search = store.childrenOf('SearchForm').map((node: any) => node.props.field)
+  assert.deepEqual(search, ['orderNo', 'status'])
+  // 列不拖拽，是 DataTable 上的声明：顺序照模型，主键不进列（5G 那条口径）
+  assert.deepEqual(store.columns().map((column: any) => column.field), ['orderNo', 'amount', 'status'])
+  const form = store.childrenOf('FormContainer').map((node: any) => node.props.field)
+  assert.deepEqual(form, ['orderNo', 'amount', 'status'])
+  // 创建时间在模型里不可写也不进列表，一处都不该出现
+  const referenced = store.referencedFields()
+  assert.equal(referenced.includes('createTime'), false)
+  assert.equal(referenced.includes('id'), false)
+})
+
+test('控件插进容器按位置放，index 越界就夹到边界', () => {
+  const store = createDesigner(initFromModel(fields))
+  const [first] = store.childrenOf('SearchForm')
+  store.insert('SearchForm', { type: 'NumberInput', props: { label: '金额下限', field: 'amount', queryType: '>=' } }, 0)
+  assert.deepEqual(store.childrenOf('SearchForm').map((node: any) => node.props.field), ['amount', 'orderNo', 'status'])
+
+  store.insert('SearchForm', { type: 'TextInput', props: { label: '不存在的插法', field: 'orderNo' } }, 99)
+  assert.equal(store.childrenOf('SearchForm').length, 4)
+  assert.equal(store.childrenOf('SearchForm')[3].props.field, 'orderNo')
+  assert.equal(first.props.field, 'orderNo')
+})
+
+test('非法落点当场拒绝并说清该放哪儿', () => {
+  const store = createDesigner(initFromModel(fields))
+  // 按钮不是查询条件
+  assert.throws(() => store.insert('SearchForm', { type: 'Button', props: { label: '查询', action: 'refresh' } }),
+    /SearchForm 里不能放 Button/)
+  // 查询控件不能摆进工具栏
+  assert.throws(() => store.insert('Toolbar', { type: 'TextInput', props: { label: '订单编号', field: 'orderNo' } }),
+    /Toolbar 里只能放 Button/)
+  // 日期区间是查询条件，表单只写一个值
+  assert.throws(() => store.insert('FormContainer', { type: 'DateRangePicker', props: { label: '区间', field: 'createTime' } }),
+    /FormContainer 里不能放 DateRangePicker/)
+  // 列不是组件：往表格上拖一个控件，等于让生成器猜这是列还是控件
+  assert.throws(() => store.insert('DataTable', { type: 'TextInput', props: { label: '备注', field: 'remark' } }),
+    /DataTable 只用 columns 声明列/)
+  // 白名单外的组件也进不来
+  assert.throws(() => store.insert('FormContainer', { type: 'Upload', props: { field: 'remark' } }), /不支持的组件 Upload/)
+  assert.equal(store.childrenOf('SearchForm').length, 2)
+})
+
+test('跨容器移动是移走再插入，不是复制', () => {
+  const store = createDesigner(initFromModel(fields))
+  const amount = store.childrenOf('FormContainer').find((node: any) => node.props.field === 'amount')!
+  store.move(amount.key, 'SearchForm', 0)
+  assert.equal(store.childrenOf('SearchForm')[0].props.field, 'amount')
+  assert.deepEqual(store.childrenOf('FormContainer').map((node: any) => node.props.field), ['orderNo', 'status'])
+
+  // 同容器内换位
+  const status = store.childrenOf('FormContainer').find((node: any) => node.props.field === 'status')!
+  store.move(status.key, 'FormContainer', 0)
+  assert.deepEqual(store.childrenOf('FormContainer').map((node: any) => node.props.field), ['status', 'orderNo'])
+})
+
+test('删容器连带子节点，撤销能整块还原', () => {
+  const store = createDesigner(initFromModel(fields))
+  // 先把节点对象拿到手：childrenOf 返回的是树上那个活数组，splice 之后它自己就变了
+  const [firstControl, secondControl] = store.childrenOf('SearchForm')
+  const formBefore = store.childrenOf('FormContainer').length
+  store.remove(firstControl.key)
+  assert.equal(store.childrenOf('SearchForm').length, 1)
+  store.remove(secondControl.key)
+  assert.equal(store.childrenOf('SearchForm').length, 0)
+  store.undo()
+  store.undo()
+  assert.equal(store.childrenOf('SearchForm').length, 2)
+  assert.equal(store.childrenOf('SearchForm')[0].props.field, 'orderNo')
+  assert.equal(store.childrenOf('FormContainer').length, formBefore)
+  // 属性面板按父容器决定给不给改，所以父节点要问得到
+  assert.equal(store.parentOf(store.childrenOf('SearchForm')[0].key)?.type, 'SearchForm')
+  assert.equal(store.parentOf(store.root.key), null)
+})
+
+test('撤销重做是一进一出，新操作清空重做栈', () => {
+  const store = createDesigner()
+  store.insert('PageContainer', { type: 'DataTable', props: {} })
+  store.insert('PageContainer', { type: 'SearchForm', props: {} })
+  assert.throws(() => store.insert('DataTable', { type: 'SearchForm', props: {} }), /不能再套容器/)
+  // 区块本身是容器，往区块里再塞一个区块就是画布上点不到的第三层
+  store.addColumn({ field: 'orderNo', title: '订单编号' })
+  assert.equal(store.json().layout.children.length, 2)
+  assert.equal(store.canUndo, true)
+
+  store.undo()
+  store.undo()
+  assert.deepEqual(store.json().layout.children.map((node: any) => node.type), ['DataTable'])
+  assert.equal(store.canRedo, true)
+  store.redo()
+  assert.equal(store.json().layout.children.length, 2)
+
+  store.insert('PageContainer', { type: 'Toolbar', props: {} })
+  assert.equal(store.canRedo, false, '新操作之后重做栈要清空，否则会跳回一个已经不在那条历史上的形状')
+})
+
+test('属性面板只渲染这个组件支持的那几格', () => {
+  assert.deepEqual(propsOf('PageContainer'), ['title', 'desc'])
+  assert.deepEqual(propsOf('DictSelect'), ['label', 'field', 'required', 'placeholder', 'queryType'])
+  // 按钮没有「绑定字段」这一说，字典下拉没有「小数位」这一说
+  assert.equal(propsOf('Button').includes('field'), false)
+  assert.equal(propsOf('NumberInput').includes('precision'), false)
+  // 每个组件都在表里，面板遇到没登记的类型会退化成「一格都不给改」，那是最难查的失败
+  ;[...BLOCKS, 'PageContainer', ...Object.keys(PROPS)].forEach(type => {
+    assert.ok(Object.prototype.hasOwnProperty.call(PROPS, type), `${type} 没登记属性清单`)
+  })
+  assert.deepEqual(propsOf('Toolbar'), [])
+})
+
+test('改属性只动那一格，空属性序列化时省略', () => {
+  const store = createDesigner(initFromModel(fields))
+  const [first] = store.childrenOf('SearchForm')
+  store.setProp(first.key, 'label', '单据编号')
+  store.setProp(first.key, 'placeholder', '')
+  assert.equal(store.childrenOf('SearchForm')[0].props.label, '单据编号')
+  assert.equal('placeholder' in (store.json().layout.children[0].children[0].props ?? {}), false)
+
+  store.setTitle('销售订单台账')
+  store.setDesc('只看已支付的')
+  const json = store.json()
+  assert.deepEqual(json.layout.props, { title: '销售订单台账', desc: '只看已支付的' })
+})
+
+test('序列化出去的形状不带内部 key，且读回来再出去是幂等的', () => {
+  const store = createDesigner(initFromModel(fields))
+  const first = store.json()
+  const text = JSON.stringify(first)
+  assert.equal(text.includes('"key"'), false, '内部 key 不该漏进 design_json：它是画布用的，不是协议的一部分')
+
+  const again = createDesigner(JSON.parse(text)).json()
+  assert.deepEqual(again, first, '第二次保存不能把形状改漂：库里存的应该是同一份')
+})
+
+test('引用清单在前端也算得出来，属性面板要能提示字段被哪几格用着', () => {
+  const store = createDesigner(initFromModel(fields))
+  assert.deepEqual(store.referencedFields(), ['orderNo', 'status', 'amount'])
+  // 删掉列不等于不再引用：查询区与表单里还在用这个字段
+  store.removeColumn(1)
+  assert.deepEqual(store.referencedFields(), ['orderNo', 'status', 'amount'])
+  const amount = store.childrenOf('FormContainer').find((node: any) => node.props.field === 'amount')!
+  store.remove(amount.key)
+  assert.deepEqual(store.referencedFields(), ['orderNo', 'status'])
+})
