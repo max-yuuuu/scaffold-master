@@ -237,8 +237,12 @@ export interface Designer {
   insert(target: string, spec: { type: string, props?: Record<string, unknown> }, index?: number): string
   move(key: string, target: string, index?: number): void
   remove(key: string): void
-  /** 复制这一格，插在原件后面。只适用于控件：区块是按 type 定位的，复制出第二个容器会让 locate 找错 */
-  duplicate(key: string): string
+  /**
+   * 复制这一格，插在原件后面。只适用于控件：区块是按 type 定位的，复制出第二个容器会让 locate 找错。
+   * 绑了模型字段的控件，副本会换绑到模型里下一个还没用过的同类型字段（后端禁止同区块重复绑同一字段），
+   * 所以必须把模型字段表给它；换不出来就当场拒绝。
+   */
+  duplicate(key: string, fields: ModelField[]): string
   /** 画布状态开关（锁定 / 显示），进撤销栈但不进 design_json */
   setFlag(key: string, flag: 'visible' | 'locked', value: boolean): void
   setProp(key: string, name: string, value: unknown): void
@@ -422,6 +426,39 @@ function placementError(target: string, type: string): string | null {
   return `${target} 里不能放 ${type}：它能待在的容器是 ${allowed.join(' / ')}`
 }
 
+/** 整页已经绑掉的模型字段：控件的 props.field 与表格列的 field 都算，一个字段只该被收一次 */
+function boundFields(source: UINode, out: string[] = []): string[] {
+  source.columns.forEach(column => {
+    if (column.field && !out.includes(column.field)) out.push(column.field)
+  })
+  source.children.forEach(child => {
+    const field = child.props.field
+    if (typeof field === 'string' && field && !out.includes(field)) out.push(field)
+    boundFields(child, out)
+  })
+  return out
+}
+
+/**
+ * 复制一个绑了模型字段的控件时，副本必须换一格绑 —— 后端 `PageDesign.validateChildren`
+ * 禁止同一个区块绑两遍同一个字段（表单类型会重复声明一个成员，vue-tsc 当场挂；查询区则是
+ * 一个条件出现两个框，人只会改其中一个）。照抄绑定等于复制出一个存不出去的页面。
+ * 没绑字段的（按钮）返回 null 原样复制；绑了但换不出**同类型**的空闲字段就当场报错。
+ */
+function rebindFor(node: UINode, blockType: string, taken: string[], fields: ModelField[]): ModelField | null {
+  const bound = node.props.field
+  if (typeof bound !== 'string' || !bound) return null
+  const inSearch = blockType === 'SearchForm'
+  // 类型也要对得上：controlFor 是 initFromModel 派生控件类型的同一份规则，
+  // 把日期字段复制进 TextInput 会在 validateControlType 那一关被拒
+  const next = fields.find(field => !taken.includes(field.fieldCode) && controlFor(field, inSearch) === node.type)
+  if (!next) {
+    throw new Error(`模型里没有第二个能放进「${BLOCK_LABELS[node.type] ?? node.type}」的未绑定字段：`
+      + `副本没法照抄「${bound}」的绑定（同一区块绑两遍后端会拒）。回模型加字段，或直接从物料拖一个新的`)
+  }
+  return next
+}
+
 /** 报错文案里要报人看得懂的名字，不是 TextInput 这种类型码 */
 function nameOf(target: UINode): string {
   return String(target.props.title || target.props.label || BLOCK_LABELS[target.type] || target.type)
@@ -525,15 +562,22 @@ export function createDesigner(seed?: DesignJson): Designer {
       hit.parent.children.splice(hit.parent.children.indexOf(hit.node), 1)
       if (selected === key) selected = null
     },
-    duplicate(key) {
+    duplicate(key, fields) {
       const hit = search(root, key)
       if (!hit) throw new Error('要复制的组件不在画布上')
       if (hit.node.locked) throw new Error(`「${nameOf(hit.node)}」已锁定，先解锁再复制`)
       if ((BLOCKS as readonly string[]).includes(hit.node.type)) {
         throw new Error(`${hit.node.type} 是按类型定位的容器，复制出第二个会让画布找不到它：一个页面每类区块只有一个`)
       }
+      // 换绑要在 snapshot() 之前判完：换不出字段就是整件事没发生，不该留一个撤销步
+      const rebinding = rebindFor(hit.node, hit.parent.type, boundFields(root), fields)
       snapshot()
       const created = rekey(hit.node)
+      if (rebinding) {
+        created.props.field = rebinding.fieldCode
+        if ('label' in created.props) created.props.label = rebinding.fieldName
+        if ('queryType' in created.props) created.props.queryType = rebinding.queryType || '='
+      }
       hit.parent.children.splice(hit.parent.children.indexOf(hit.node) + 1, 0, created)
       selected = created.key
       return created.key
@@ -592,19 +636,7 @@ export function createDesigner(seed?: DesignJson): Designer {
       table.columns.splice(index, 1)
     },
     referencedFields() {
-      const out: string[] = []
-      const walk = (source: UINode) => {
-        source.columns.forEach(column => {
-          if (column.field && !out.includes(column.field)) out.push(column.field)
-        })
-        source.children.forEach(child => {
-          const field = child.props.field
-          if (typeof field === 'string' && field && !out.includes(field)) out.push(field)
-          walk(child)
-        })
-      }
-      walk(root)
-      return out
+      return boundFields(root)
     },
     undo() {
       const previous = past.pop()

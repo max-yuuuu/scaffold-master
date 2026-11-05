@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-05（PR 8C 补刀：复制出来的那一格根本存不出去）
+
+e2e 阶段查出来的缺陷，不是用户报的。对着后端读 `duplicate()` 的产物时发现的：副本 `props` 整份照抄，`field` 也一起抄了。
+
+- **后端是权威判定方，它不允许**：`PageDesign.validateChildren`（`scaffold-lowcode/.../design/PageDesign.java:287`）对同一个区块里绑两遍同一个字段直接抛 `BusinessException`，`重复绑定 <code>` —— 表单类型会重复声明一个成员（交付项目 `vue-tsc` 当场挂），查询区则是一个条件出现两个框。所以「复制一个绑了字段的控件」这一步按下去之后，画布看着正常、撤销也能撤，但**这一页从此存不出去**，人要等点保存才收到一条 400。这条规则后端早有 `PageDesignTest:208-214` 钉着（「表单里同字段两遍：生成的 TS 类型重复声明一个成员」），是我这边没接住。
+- **改法：副本换绑，换不出就当场拒绝。** `duplicate(key, fields)` 现在收模型字段表（唯一调用点 `LayerTree.vue` 传 `session.fields`）：副本沿用原控件类型，`field` 换到**整页还没绑过、且 `controlFor(field, inSearch)` 派生出同一种控件**的那个字段，`label` 跟着新字段的名字走，`queryType` 也跟着新字段走（把 `orderNo` 的 `LIKE` 抄到 `invoiceNo` 上，等于拿 `LIKE` 去查一个模型里配成 `=` 的列）；其余属性照抄。类型必须一起匹配是因为 `validateControlType` 也在那条链上 —— 把日期字段塞进 `TextInput` 一样被拒。换不出候选就抛错说明原因（「回模型加字段，或直接从物料拖一个新的」），不产一份存不下来的设计。
+- **拒绝要发生在 `snapshot()` 之前**：`rebindFor()` 在压历史之前算完，被拒的这一次既不进树也不占撤销栈的一格。这条一开始用 `canUndo === false` 断，测出来是 `true` —— 前面 `setModel()` 自己占过一格；改成按「一次撤销撤掉的是哪一步」判：`store.undo()` 后 `modelRef()` 必须回到空串，说明撤销落在真做过的那一步上，而不是落在一个没发生的动作上。
+- **顺手把 `boundFields()` 提成模块函数**：`referencedFields()` 里原来是一份就地写的 walk，现在两处共用（面板读数、复制换绑），少一份重复遍历。
+- **e2e 实际跑了什么**：① 前端模型真产两份 `design_json`（换绑的副本 / 把副本 `field` 手动改回 `orderNo` 的旧行为），用一个临时 JUnit 喂给 `PageDesign.parse` + 真实 `DesignContext` —— 前者 `accepted`、后者 `rejected` 并报 `重复绑定 orderNo`，两个方向都验到，临时用例跑完即删未进提交；② `PageApiTest` 真起 Spring 上下文打接口（`DB_PORT=3316 REDIS_PORT=6380`，`JWT_SECRET` 现生成，验证码由 surefire 关掉）6 例全绿；③ `scaffold-lowcode` 全模块 142 例全绿（含 `PageDesignTest` 18 例）；④ 前端 `vite build` → `vue-tsc` → 单测 42 例（40 → 42，两条新用例先跑红：`照抄绑定复制出来的这一格根本存不下去` / `Missing expected exception`）。
+
+
 ## 2026-11-05（PR 8F：窄屏两栏改抽屉，交付演练抓到一处「本地全绿、交付构建挂」）
 
 **窄屏判定收成一处。** 新增 `packages/scaffold-ui/src/composables/narrow.ts`：`NARROW_QUERY`（820px，与 `layout.css` 那条 `@media` 同一个数）、`isNarrow()`（`view.ts` 的「窄屏首次进入用 narrow 默认视图」改用它，不再自己抄一遍字符串）、`useNarrowScreen()`（响应式，`onScopeDispose` 摘监听）。设计器两条实现（1:1 原型与 `?mode=live`）在 820 以下把左右两栏从 grid 列里拿出来，改成盖在画布上的抽屉，一次只开一扇，配遮罩与 Esc 关闭，预览态不参与。实测 627px 宽：原型画布从被压成 **0px** 恢复到 **591px**，整页横向溢出 0，顶栏动作全部可达（「发布上线」在 x=611）；宽表格不再顶开页面，改在 `.pf-table-wrap` 内滚动（内容 955 vs 容器 477）。

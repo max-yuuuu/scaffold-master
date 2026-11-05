@@ -86,8 +86,8 @@ function meta(block: UINode) {
               type="button"
               class="dz-tree-x"
               aria-label="复制这一个控件"
-              title="复制控件：副本紧跟在后面，属性照抄。区块不能复制——一个页面每类区块只有一个"
-              @click.stop="session.act(() => session.store.duplicate(child.key))"
+              title="复制控件：副本紧跟在后面，属性照抄，绑定自动换到模型里下一个还没用的同类型字段。区块不能复制——一个页面每类区块只有一个"
+              @click.stop="session.act(() => session.store.duplicate(child.key, session.fields))"
             >⧉</button>
             <button type="button" class="dz-tree-x" aria-label="移出去" title="移出去" @click.stop="session.act(() => session.store.remove(child.key))">×</button>
           </div>
