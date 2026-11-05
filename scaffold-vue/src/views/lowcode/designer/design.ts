@@ -40,6 +40,13 @@ export interface UINode {
   props: Record<string, unknown>
   children: UINode[]
   columns: DesignColumn[]
+  /**
+   * 画布上的会话状态，与 key 同级、不进 design_json：
+   * locked 是「这一格先别动」，visible 是「这一格我先藏起来专心改别的」。
+   * 生成的那份页面里没有这两个概念，所以存库、比对脏、给生成器看的时候都必须当它们不存在。
+   */
+  locked?: boolean
+  visible?: boolean
 }
 
 export interface JsonNode {
@@ -230,6 +237,10 @@ export interface Designer {
   insert(target: string, spec: { type: string, props?: Record<string, unknown> }, index?: number): string
   move(key: string, target: string, index?: number): void
   remove(key: string): void
+  /** 复制这一格，插在原件后面。只适用于控件：区块是按 type 定位的，复制出第二个容器会让 locate 找错 */
+  duplicate(key: string): string
+  /** 画布状态开关（锁定 / 显示），进撤销栈但不进 design_json */
+  setFlag(key: string, flag: 'visible' | 'locked', value: boolean): void
   setProp(key: string, name: string, value: unknown): void
   setTitle(title: string): void
   setDesc(desc: string): void
@@ -255,6 +266,7 @@ function node(type: string, props: Record<string, unknown> = {}): UINode {
   return { key: nextKey(type), type, props, children: [], columns: [] }
 }
 
+/** 历史快照用：key 与画布状态都照抄，否则撤销一次锁定就把锁定弄丢了 */
 function copy(source: UINode): UINode {
   return {
     key: source.key,
@@ -262,6 +274,19 @@ function copy(source: UINode): UINode {
     props: { ...source.props },
     children: source.children.map(copy),
     columns: source.columns.map(column => ({ ...column })),
+    ...(source.locked ? { locked: true } : {}),
+    ...(source.visible === false ? { visible: false } : {}),
+  }
+}
+
+/** 复制用：整棵子树重新发 key，且不继承锁定/隐藏 —— 副本是新建的东西，不是原件的影子 */
+function rekey(source: UINode): UINode {
+  return {
+    key: nextKey(source.type),
+    type: source.type,
+    props: { ...source.props },
+    children: source.children.map(rekey),
+    columns: source.columns.map(column => ({ ...column, key: nextKey('col') })),
   }
 }
 
@@ -397,6 +422,11 @@ function placementError(target: string, type: string): string | null {
   return `${target} 里不能放 ${type}：它能待在的容器是 ${allowed.join(' / ')}`
 }
 
+/** 报错文案里要报人看得懂的名字，不是 TextInput 这种类型码 */
+function nameOf(target: UINode): string {
+  return String(target.props.title || target.props.label || BLOCK_LABELS[target.type] || target.type)
+}
+
 function clamp(index: number | undefined, length: number) {
   if (index === undefined || Number.isNaN(index)) return length
   return Math.max(0, Math.min(index, length))
@@ -479,6 +509,7 @@ export function createDesigner(seed?: DesignJson): Designer {
       if (!container) throw new Error(`画布上没有 ${target} 这个容器`)
       const hit = search(root, key)
       if (!hit) throw new Error('要移动的组件不在画布上')
+      if (hit.node.locked) throw new Error(`「${nameOf(hit.node)}」已锁定，先解锁再移动`)
       const problem = placementError(target, hit.node.type)
       if (problem) throw new Error(problem)
       snapshot()
@@ -489,9 +520,38 @@ export function createDesigner(seed?: DesignJson): Designer {
     remove(key) {
       const hit = search(root, key)
       if (!hit) return
+      if (hit.node.locked) throw new Error(`「${nameOf(hit.node)}」已锁定，先解锁再删除`)
       snapshot()
       hit.parent.children.splice(hit.parent.children.indexOf(hit.node), 1)
       if (selected === key) selected = null
+    },
+    duplicate(key) {
+      const hit = search(root, key)
+      if (!hit) throw new Error('要复制的组件不在画布上')
+      if (hit.node.locked) throw new Error(`「${nameOf(hit.node)}」已锁定，先解锁再复制`)
+      if ((BLOCKS as readonly string[]).includes(hit.node.type)) {
+        throw new Error(`${hit.node.type} 是按类型定位的容器，复制出第二个会让画布找不到它：一个页面每类区块只有一个`)
+      }
+      snapshot()
+      const created = rekey(hit.node)
+      hit.parent.children.splice(hit.parent.children.indexOf(hit.node) + 1, 0, created)
+      selected = created.key
+      return created.key
+    },
+    setFlag(key, flag, value) {
+      const hit = search(root, key) ?? (key === root.key ? { node: root } : null)
+      if (!hit) return
+      if (flag === 'visible') {
+        snapshot()
+        // 默认就是显示，只有藏起来才需要记一笔，免得撤销栈里多出一堆「显示」的空步
+        if (value) delete hit.node.visible
+        else hit.node.visible = false
+        return
+      }
+      if (Boolean(hit.node.locked) === Boolean(value)) return
+      snapshot()
+      if (value) hit.node.locked = true
+      else delete hit.node.locked
     },
     setProp(key, name, value) {
       const hit = search(root, key) ?? (key === root.key ? { node: root } : null)

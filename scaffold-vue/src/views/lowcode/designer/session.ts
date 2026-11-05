@@ -146,10 +146,19 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     tick,
     act,
     refresh,
-    root: reading(() => store.root),
-    blocks: reading(() => store.root.children),
-    selected: reading(() => (store.selected ? store.find(store.selected) ?? null : null)),
-    selectedParent: reading(() => (store.selected ? store.parentOf(store.selected) : null)),
+    // 必须每次给一个新引用：store 里是普通可变对象，就地改 locked/props 之后
+    // `store.root.children` 还是那个数组、那个节点，computed 认为值没变就不通知下游，
+    // 于是 tick 明明涨了、画布却一动不动 —— 浅克隆一层把「数据变了」翻译成「引用也变了」。
+    root: reading(() => ({ ...store.root })),
+    blocks: reading(() => [...store.root.children]),
+    selected: reading(() => {
+      const node = store.selected ? store.find(store.selected) : null
+      return node ? { ...node } : null
+    }),
+    selectedParent: reading(() => {
+      const node = store.selected ? store.parentOf(store.selected) : null
+      return node ? { ...node } : null
+    }),
     selectedKey: reading(() => store.selected),
     isPage: reading(() => store.selected === null),
     referenced: reading(() => store.referencedFields()),
