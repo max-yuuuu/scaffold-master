@@ -21,6 +21,12 @@ const fields: ModelField[] = [
   { fieldCode: 'createTime', fieldName: '创建时间', javaType: 'LocalDateTime', formType: 'DATETIME', dictType: null, isPrimary: 0, isAutoIncrement: 0, isList: 0, isQuery: 0, queryType: '=', isInsert: 0, isEdit: 0, isRequired: 0 },
 ]
 
+/** 比 fields 多一个「哪都不去」的文本字段（不查、不列、不收、不改）：复制时唯一还空着的同类型字段 */
+const withString: ModelField[] = [
+  ...fields,
+  { fieldCode: 'invoiceNo', fieldName: '发票号', javaType: 'String', formType: 'INPUT', dictType: null, isPrimary: 0, isAutoIncrement: 0, isList: 0, isQuery: 0, queryType: '=', isInsert: 0, isEdit: 0, isRequired: 0 },
+]
+
 const blocksOf = (json: any) => json.layout.children.map((node: any) => node.type)
 
 test('空白设计只有一个页面容器，区块要拖进来才有', () => {
@@ -217,4 +223,128 @@ test('落点默认属性：按钮必须带动作，控件带标签，区块不�
   assert.deepEqual(defaultPropsFor('Button'), { label: '按钮', action: 'refresh' })
   assert.deepEqual(defaultPropsFor('SearchForm'), {})
   assert.equal(defaultPropsFor('TextInput').label, '文本输入')
+})
+
+/**
+ * 画布工具条那三颗（复制 / 隐藏 / 锁定）背后的模型动作（PR 8C）。
+ *
+ * <p>visible 与 locked 是**画布上的会话状态**，不是页面的内容：它们和内部 key 一样
+ * 不进 design_json —— 生成的那份页面里没有「设计器当前不想看这一格」这种概念。
+ * 既然不影响产物，就绝不能被当成内容改动存进库，但必须能被撤销。
+ */
+
+const firstBlock = (store: any) => store.root.children[0].key
+
+test('复制控件：紧跟在原件后面、属性照抄、撤销回到一个', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const original = store.childrenOf('SearchForm')[0]
+
+  const copyKey = store.duplicate(original.key, withString)
+  assert.notEqual(copyKey, original.key, '复制出来的必须是一个新节点')
+  const siblings = store.childrenOf('SearchForm')
+  const at = siblings.findIndex(node => node.key === copyKey)
+  assert.equal(at, siblings.indexOf(original) + 1, '副本就该排在原件后面，插到末尾等于让人再拖一次')
+  assert.equal(siblings[at].type, original.type)
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(siblings[at].props).filter(([name]) => !['field', 'label', 'queryType'].includes(name))),
+    Object.fromEntries(Object.entries(original.props).filter(([name]) => !['field', 'label', 'queryType'].includes(name))),
+    '除绑定以外要连填好的属性一起带走，只复制一个空壳没意义')
+  assert.equal(siblings[at].props.queryType, '=',
+    '查询方式跟着新字段走：把 orderNo 的 LIKE 抄到 invoiceNo 上，等于拿 LIKE 去查一个模型里配成 = 的列')
+  assert.equal(store.selected, copyKey, '复制完就该选中副本，接着改的是刚建出来的那一个')
+
+  store.undo()
+  assert.equal(store.childrenOf('SearchForm').length, siblings.length - 1)
+  assert.ok(!store.childrenOf('SearchForm').some(node => node.key === copyKey))
+})
+
+test('区块不许复制：容器是按类型定位的，多出一个 SearchForm 整个模型就找不到它', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const searchForm = store.root.children.find(node => node.type === 'SearchForm')!
+  assert.throws(() => store.duplicate(searchForm.key), /按类型/,
+    'locate() 靠 type 找容器，复制出第二个 SearchForm 后 insert/move/columns 全都会指到第一个上 —— '
+    + '与其让画布出现一个改不动的幽灵区块，不如当场说清楚')
+})
+
+test('复制要换绑一个还空着的同类型字段：同区块绑两遍同一个字段，后端当场 400', () => {
+  const store = createDesigner(initFromModel(withString))
+  store.setModel('sales_order')
+  const original = store.childrenOf('SearchForm').find(node => node.props.field === 'orderNo')!
+
+  const copyKey = store.duplicate(original.key, withString)
+  const copy = store.childrenOf('SearchForm').find(node => node.key === copyKey)!
+
+  assert.notEqual(copy.props.field, original.props.field,
+    'PageDesign.validateChildren 禁止同一个区块绑两遍同一个字段（表单类型会重复声明一个成员，vue-tsc 当场挂；'
+    + '查询区则是一个条件出现两个框）。照抄绑定复制出来的这一格根本存不下去')
+  assert.ok(withString.some(field => field.fieldCode === copy.props.field), '副本必须绑回模型里真实存在的字段')
+  assert.equal(copy.type, original.type, '复制的还是原来那种控件，只是换了一格绑定')
+  assert.equal(copy.props.label, '发票号', '标签跟着新字段走：留着「订单编号」就是一栏写着 A 实际收的是 B')
+  assert.deepEqual(store.referencedFields().filter(code => code === 'orderNo').length, 1,
+    '一个字段在整页里只该被绑一次')
+})
+
+test('换不出字段就当场拒绝：不产一份存不下来的设计，也不留半个撤销步', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const original = store.childrenOf('SearchForm').find(node => node.props.field === 'orderNo')!
+  const before = JSON.stringify(store.json())
+
+  assert.throws(() => store.duplicate(original.key, fields), /orderNo|字段/,
+    '模型里已经没有第二个能放进 TextInput 的未绑定字段 —— 说清原因，比画出一个存不出去的框好')
+  assert.equal(JSON.stringify(store.json()), before, '拒绝的那一次不许留下半个节点')
+  // canUndo 在这之前已经是 true（setModel 自己占了一格），所以用「按一次撤销撤掉的是哪一步」来判：
+  // 撤掉 setModel 才说明被拒绝的复制没插空步；插了的话这一次撤销只是把没发生的动作抹掉，
+  // modelRef 还停在 sales_order，人按下去看到的却是「什么都没变」，下一步真改动就再也撤不回来了
+  store.undo()
+  assert.equal(store.modelRef(), '', '被拒绝的复制不许占掉撤销栈的一格')
+})
+
+test('锁定：画布上拒绝再动这一格，但不写进 design_json', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const key = firstBlock(store)
+
+  store.setFlag(key, 'locked', true)
+  assert.equal(store.find(key)!.locked, true)
+  assert.ok(!JSON.stringify(store.json()).includes('"locked"'),
+    '锁定是设计器自己的状态，存进库就是一列生成器不认的字段')
+  assert.throws(() => store.remove(key), /锁定/)
+  assert.throws(() => store.duplicate(key, fields), /锁定/)
+  assert.throws(() => store.move(key, 'Toolbar', 0), /锁定/)
+
+  // 关掉就整个删掉，不留 locked: false —— 与 applyProp「空串就是没填」同一口径，
+  // 否则撤销栈里会攒一堆「把不存在的东西改成 false」的空步，读回来的 JSON 也多了噪音
+  store.setFlag(key, 'locked', false)
+  assert.equal(store.find(key)!.locked, undefined)
+  store.undo()
+  assert.equal(store.find(key)!.locked, true, '取消锁定也要能撤回来')
+})
+
+test('隐藏：只影响画布预览，产物里那一格还在', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const key = firstBlock(store)
+
+  store.setFlag(key, 'visible', false)
+  assert.equal(store.find(key)!.visible, false)
+  assert.deepEqual(blocksOf(store.json()), ['SearchForm', 'Toolbar', 'DataTable', 'RowActions', 'FormContainer'],
+    '画布上藏起来不等于从页面里删掉 —— 藏了还能存出去，存出去的东西必须还是那一套')
+
+  store.setFlag(key, 'visible', true)
+  assert.equal(store.find(key)!.visible, undefined, '显示是默认态，不该在节点上留一个 visible: true')
+  store.undo()
+  assert.equal(store.find(key)!.visible, false, '显示回去也要能撤回来')
+})
+
+test('标志位翻动不算内容改动：脏比对只看 design_json', () => {
+  const store = createDesigner(initFromModel(fields))
+  store.setModel('sales_order')
+  const snapshot = JSON.stringify(store.json())
+  store.setFlag(firstBlock(store), 'locked', true)
+  store.setFlag(firstBlock(store), 'visible', false)
+  assert.equal(JSON.stringify(store.json()), snapshot,
+    '锁一下藏一下就提示「有未保存改动」，会让人为了关掉提示去点保存，那是把人往错的方向推')
 })

@@ -146,4 +146,14 @@ const state = computed(() => {
   border-color: var(--blue);
   color: var(--blue);
 }
+
+/* 窄屏（narrow.ts 那条 820px）：先丢装饰、保住动作。
+   面包屑和 ⌘K 搜索在 627px 下会把预览/保存/发布三颗推出可视区，
+   而 .designer 那层是 overflow: clip —— 被裁掉的按钮不是滚动看不见，是点不到。 */
+@media (max-width: 820px) {
+  .crumbs,
+  .cmd-trigger { display: none; }
+  .dz-topbar { padding: 0 10px; gap: 8px; }
+  .dz-tb-right .btn { padding: 0 10px; }
+}
 </style>

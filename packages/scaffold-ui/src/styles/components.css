@@ -71,6 +71,9 @@
 .icon-btn:disabled { opacity: .45; }
 .icon-btn.is-bordered { border: 1px solid var(--line-strong); background: var(--input-bg); box-shadow: var(--edge); }
 .icon-btn.is-danger:hover:not(:disabled) { color: var(--red-text); background: var(--red-soft); }
+/* 开关型的图标按钮（锁定、隐藏这类「当前是这个状态」）：不点亮就看不出按过没按过 */
+.icon-btn.is-active { color: var(--blue); background: var(--blue-soft); }
+.icon-btn.is-active:hover:not(:disabled) { color: var(--blue); background: var(--blue-soft); }
 .icon-btn-sm { width: 28px; height: 28px; }
 
 /* ── 表单字段 ───────────────────────────────────────────────── */

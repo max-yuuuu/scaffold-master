@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Button } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { floatBarEnter, floatBarLeave } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
+import { useNarrowScreen } from '@yuanda-lowcode-ai/scaffold-ui/composables/narrow'
 import { useUnsavedGuard } from '@yuanda-lowcode-ai/scaffold-ui/composables/unsavedGuard'
 import { providePrototype } from './context.ts'
 import './proto.css'
@@ -23,8 +24,15 @@ const proto = providePrototype()
 // 设计器独占整个标签页，没有返回按钮，离开就是关标签页 —— 脏了必须拦一道
 useUnsavedGuard(() => proto.unsavedCount.value > 0)
 
+// 窄屏判定走平台那一份 narrow.ts：这里的 JS 断点必须与 proto.css 那条 @media 同一个数，
+// 错开一格就是抽屉展开着但版式还是三栏 —— 两边各写各的没人会报错，只有量得出来。
+const narrow = useNarrowScreen()
+watch(narrow, value => proto.setNarrow(value), { immediate: true })
+
 const collapsedLeft = () => proto.leftCollapsed.value || proto.previewMode.value
 const collapsedRight = () => proto.rightCollapsed.value || proto.previewMode.value
+const paneDrawerOpen = computed(() => proto.narrow.value && !proto.previewMode.value
+  && (!collapsedLeft() || !collapsedRight()))
 
 /** 提示牌堆：最多 3 张，越旧越往上缩 5%、透明度减 .28 */
 const toastStyle = (index: number) => ({
@@ -45,9 +53,15 @@ function onKeydown(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
     proto.openOverlay('command')
-  } else if (event.key === 'Escape' && proto.overlays.value.length) {
-    event.preventDefault()
-    proto.closeOverlay()
+  } else if (event.key === 'Escape') {
+    // 窄屏抽屉是盖在画布上的，Esc 先关它；浮层（命令面板/抽屉/弹窗）优先级更高
+    if (proto.overlays.value.length) {
+      event.preventDefault()
+      proto.closeOverlay()
+    } else if (paneDrawerOpen.value) {
+      event.preventDefault()
+      proto.closePanes()
+    }
   }
 }
 
@@ -66,10 +80,12 @@ onBeforeUnmount(() => {
     <div class="pf-chassis">
       <ProtoTopbar />
 
-      <div :class="['pf-body', collapsedLeft() && 'is-left-collapsed', collapsedRight() && 'is-right-collapsed']">
+      <div :class="['pf-body', proto.narrow.value && 'is-narrow', collapsedLeft() && 'is-left-collapsed', collapsedRight() && 'is-right-collapsed']">
         <ProtoRail v-if="!collapsedLeft()" />
         <ProtoCanvas />
         <ProtoInspector v-if="!collapsedRight()" />
+
+        <div v-if="paneDrawerOpen" class="pf-pane-scrim" aria-hidden="true" @click="proto.closePanes()" />
       </div>
 
       <!-- 未保存改动浮条：与列表页那条批量操作浮条同一条（.float-bar 材质、同一套 plate 色与升起动画） -->

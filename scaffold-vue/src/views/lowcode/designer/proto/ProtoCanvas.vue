@@ -144,7 +144,7 @@ const ghostAt = (index: number) =>
       type="button"
       class="pf-capsule m-pill is-left"
       title="展开左侧组件物料与页面层级面板"
-      @click.stop="proto.leftCollapsed.value = false"
+      @click.stop="proto.openPane('left')"
     >
       <Icon name="panelLeftOpen" :size="14" class="is-blue" />
       <span>展开物料</span>
@@ -201,7 +201,7 @@ const ghostAt = (index: number) =>
         type="button"
         class="pf-capsule m-pill"
         title="展开右侧属性配置面板"
-        @click.stop="proto.rightCollapsed.value = false"
+        @click.stop="proto.openPane('right')"
       >
         <span>展开配置</span>
         <Icon name="panelRightOpen" :size="14" class="is-blue" />

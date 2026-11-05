@@ -28,6 +28,9 @@ function onContentScroll() {
   if (next !== scrolled.value) scrolled.value = next
 }
 
+/* 断点数值与包里的 narrow.ts / layout.css 是同一条 820。这里写死字面量而不是 import NARROW_QUERY，
+   是因为外壳文件会进交付快照，而交付项目装的是 npm 上已发布的 scaffold-ui —— 新导出的子路径在
+   发版前根本解析不到（物化演练就是这么抓到的）。 */
 const mq = window.matchMedia('(max-width: 820px)')
 const syncMobile = () => { mobile.value = mq.matches; if (!mq.matches) mobileOpen.value = false }
 

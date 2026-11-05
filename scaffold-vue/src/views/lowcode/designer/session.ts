@@ -40,6 +40,16 @@ export interface DesignerSession {
   rightCollapsed: Ref<boolean>
   scrolled: Ref<boolean>
 
+  /**
+   * 窄屏（平台 820px 断点）下三栏挤不进：左右两栏改成盖在画布上的抽屉，一次只开一扇。
+   * 状态放在会话里而不是工作台里，是因为两栏各自的展开胶囊分属两个组件，
+   * 「开一扇必须关另一扇」这条规则只能有一个地方说了算。
+   */
+  narrow: Ref<boolean>
+  setNarrow(value: boolean): void
+  openPane(side: 'left' | 'right'): void
+  closePanes(): void
+
   /** 浮层只有一条栈：Escape 关最上层，⌘K 与顶栏按钮共用同一个入口 */
   overlay: Ref<Overlay | null>
   openOverlay: (kind: Overlay) => void
@@ -146,10 +156,19 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     tick,
     act,
     refresh,
-    root: reading(() => store.root),
-    blocks: reading(() => store.root.children),
-    selected: reading(() => (store.selected ? store.find(store.selected) ?? null : null)),
-    selectedParent: reading(() => (store.selected ? store.parentOf(store.selected) : null)),
+    // 必须每次给一个新引用：store 里是普通可变对象，就地改 locked/props 之后
+    // `store.root.children` 还是那个数组、那个节点，computed 认为值没变就不通知下游，
+    // 于是 tick 明明涨了、画布却一动不动 —— 浅克隆一层把「数据变了」翻译成「引用也变了」。
+    root: reading(() => ({ ...store.root })),
+    blocks: reading(() => [...store.root.children]),
+    selected: reading(() => {
+      const node = store.selected ? store.find(store.selected) : null
+      return node ? { ...node } : null
+    }),
+    selectedParent: reading(() => {
+      const node = store.selected ? store.parentOf(store.selected) : null
+      return node ? { ...node } : null
+    }),
     selectedKey: reading(() => store.selected),
     isPage: reading(() => store.selected === null),
     referenced: reading(() => store.referencedFields()),
@@ -170,6 +189,31 @@ export function createSession(page: PageDetail, fieldRows: FieldRow[]): Designer
     leftCollapsed: ref(false),
     rightCollapsed: ref(false),
     scrolled: ref(false),
+
+    narrow: ref(false),
+    setNarrow(value: boolean) {
+      if (session.narrow.value === value) return
+      session.narrow.value = value
+      // 进窄屏先全收起：默认摊开两栏的话画布会被挤成一条缝，而画布才是这页在做的东西
+      if (value) {
+        session.leftCollapsed.value = true
+        session.rightCollapsed.value = true
+      }
+    },
+    openPane(side: 'left' | 'right') {
+      if (session.narrow.value) {
+        session.leftCollapsed.value = side !== 'left'
+        session.rightCollapsed.value = side !== 'right'
+        return
+      }
+      if (side === 'left') session.leftCollapsed.value = false
+      else session.rightCollapsed.value = false
+    },
+    closePanes() {
+      if (!session.narrow.value) return
+      session.leftCollapsed.value = true
+      session.rightCollapsed.value = true
+    },
 
     overlay,
     openOverlay(kind) {

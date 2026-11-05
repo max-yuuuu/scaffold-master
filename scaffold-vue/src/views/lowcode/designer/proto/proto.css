@@ -362,6 +362,30 @@
 .pf-body.is-right-collapsed { grid-template-columns: var(--pf-rail-w) minmax(0, 1fr); }
 .pf-body.is-left-collapsed.is-right-collapsed { grid-template-columns: minmax(0, 1fr); }
 
+/* 窄屏（平台 820px 断点，由 narrow.ts 单一来源判定）：三栏挤不下，画布会被压成一条缝。
+   左右两栏改成盖在画布上的抽屉，画布独占整幅；一次只开一扇，另一扇自动收起。 */
+.pf-body.is-narrow { grid-template-columns: minmax(0, 1fr); }
+.pf-body.is-narrow > .pf-pane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 30;
+  width: min(320px, 86vw);
+  box-shadow: var(--e3), inset 0 1px 0 rgba(255, 255, 255, .5);
+  animation: pfPaneIn .24s var(--ease-premium);
+}
+.pf-body.is-narrow > .pf-pane.is-rail { left: 0; border-radius: 0 var(--r-lg) var(--r-lg) 0; border-right-width: 1px; }
+.pf-body.is-narrow > .pf-pane.is-inspector { right: 0; border-radius: var(--r-lg) 0 0 var(--r-lg); }
+.pf-pane-scrim { position: absolute; inset: 0; z-index: 25; background: var(--overlay); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); }
+
+@keyframes pfPaneIn {
+  from { opacity: 0; transform: translateX(var(--pf-pane-from, -16px)); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 减少动态不需要在这里再写一遍：base.css 那条 * 通配的 prefers-reduced-motion
+   带 !important，已经把所有动画与过渡压到 .01ms，包括这一条 */
+
 .pf-pane {
   display: flex;
   flex-direction: column;
@@ -575,14 +599,16 @@
   background-image: radial-gradient(rgba(255, 255, 255, .14) 1px, transparent 1.2px);
 }
 
-/* 真正滚的是这一层：胶囊浮在舞台上不动，内容从底下走过去 */
+/* 真正滚的是这一层：胶囊浮在舞台上不动，内容从底下走过去。
+   窄屏时宽表格在自己的容器里横滚，而不是把整页顶出横向滚动条 */
 .pf-canvas-scroll {
   position: relative;
   z-index: 1;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: auto;
   padding-bottom: 72px;
+  scrollbar-gutter: stable;
 }
 
 .pf-canvas-list {
@@ -837,3 +863,16 @@
 
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ── 窄屏（与 narrow.ts 的 820px 同一条断点）──
+   顶栏那一条本来按 1600px 排：品牌 + 三段面包屑 + 搜索框 + 五组按钮 + 三颗文字按钮，
+   到 627px 时右端已经伸到 x=1012，被 .pf-chassis 的 overflow: clip 直接裁掉 ——
+   裁掉比让人横向滚更糟，因为那几颗按钮（预览 / 保存 / 发布）根本点不到。
+   所以窄屏先丢装饰（面包屑、搜索框），保住动作。 */
+@media (max-width: 820px) {
+  .pf-crumbs,
+  .pf-search { display: none; }
+  .pf-topbar { padding: 0 10px; gap: 8px; }
+  .pf-chassis { border-width: 6px; border-radius: 22px; padding: 0 8px 8px; gap: 8px; }
+  .pf-stage { padding: 4px; }
+}

@@ -1,6 +1,50 @@
 # Changelog
 
+## 2026-11-05（PR 8C 补刀：复制出来的那一格根本存不出去）
+
+e2e 阶段查出来的缺陷，不是用户报的。对着后端读 `duplicate()` 的产物时发现的：副本 `props` 整份照抄，`field` 也一起抄了。
+
+- **后端是权威判定方，它不允许**：`PageDesign.validateChildren`（`scaffold-lowcode/.../design/PageDesign.java:287`）对同一个区块里绑两遍同一个字段直接抛 `BusinessException`，`重复绑定 <code>` —— 表单类型会重复声明一个成员（交付项目 `vue-tsc` 当场挂），查询区则是一个条件出现两个框。所以「复制一个绑了字段的控件」这一步按下去之后，画布看着正常、撤销也能撤，但**这一页从此存不出去**，人要等点保存才收到一条 400。这条规则后端早有 `PageDesignTest:208-214` 钉着（「表单里同字段两遍：生成的 TS 类型重复声明一个成员」），是我这边没接住。
+- **改法：副本换绑，换不出就当场拒绝。** `duplicate(key, fields)` 现在收模型字段表（唯一调用点 `LayerTree.vue` 传 `session.fields`）：副本沿用原控件类型，`field` 换到**整页还没绑过、且 `controlFor(field, inSearch)` 派生出同一种控件**的那个字段，`label` 跟着新字段的名字走，`queryType` 也跟着新字段走（把 `orderNo` 的 `LIKE` 抄到 `invoiceNo` 上，等于拿 `LIKE` 去查一个模型里配成 `=` 的列）；其余属性照抄。类型必须一起匹配是因为 `validateControlType` 也在那条链上 —— 把日期字段塞进 `TextInput` 一样被拒。换不出候选就抛错说明原因（「回模型加字段，或直接从物料拖一个新的」），不产一份存不下来的设计。
+- **拒绝要发生在 `snapshot()` 之前**：`rebindFor()` 在压历史之前算完，被拒的这一次既不进树也不占撤销栈的一格。这条一开始用 `canUndo === false` 断，测出来是 `true` —— 前面 `setModel()` 自己占过一格；改成按「一次撤销撤掉的是哪一步」判：`store.undo()` 后 `modelRef()` 必须回到空串，说明撤销落在真做过的那一步上，而不是落在一个没发生的动作上。
+- **顺手把 `boundFields()` 提成模块函数**：`referencedFields()` 里原来是一份就地写的 walk，现在两处共用（面板读数、复制换绑），少一份重复遍历。
+- **e2e 实际跑了什么**：① 前端模型真产两份 `design_json`（换绑的副本 / 把副本 `field` 手动改回 `orderNo` 的旧行为），用一个临时 JUnit 喂给 `PageDesign.parse` + 真实 `DesignContext` —— 前者 `accepted`、后者 `rejected` 并报 `重复绑定 orderNo`，两个方向都验到，临时用例跑完即删未进提交；② `PageApiTest` 真起 Spring 上下文打接口（`DB_PORT=3316 REDIS_PORT=6380`，`JWT_SECRET` 现生成，验证码由 surefire 关掉）6 例全绿；③ `scaffold-lowcode` 全模块 142 例全绿（含 `PageDesignTest` 18 例）；④ 前端 `vite build` → `vue-tsc` → 单测 42 例（40 → 42，两条新用例先跑红：`照抄绑定复制出来的这一格根本存不下去` / `Missing expected exception`）。
+
+
+## 2026-11-05（PR 8F：窄屏两栏改抽屉，交付演练抓到一处「本地全绿、交付构建挂」）
+
+**窄屏判定收成一处。** 新增 `packages/scaffold-ui/src/composables/narrow.ts`：`NARROW_QUERY`（820px，与 `layout.css` 那条 `@media` 同一个数）、`isNarrow()`（`view.ts` 的「窄屏首次进入用 narrow 默认视图」改用它，不再自己抄一遍字符串）、`useNarrowScreen()`（响应式，`onScopeDispose` 摘监听）。设计器两条实现（1:1 原型与 `?mode=live`）在 820 以下把左右两栏从 grid 列里拿出来，改成盖在画布上的抽屉，一次只开一扇，配遮罩与 Esc 关闭，预览态不参与。实测 627px 宽：原型画布从被压成 **0px** 恢复到 **591px**，整页横向溢出 0，顶栏动作全部可达（「发布上线」在 x=611）；宽表格不再顶开页面，改在 `.pf-table-wrap` 内滚动（内容 955 vs 容器 477）。
+
+**交付演练抓到的那件事才是这一刀的收获。** 按 AGENTS.md 的规矩把交付快照物化后真装真建：物化 180 文件 → 在快照里 `npm install`（装到 registry 上真实发布的 `@yuanda-lowcode-ai/scaffold-ui@1.0.0`）→ `vue-tsc` + `vite build`。第一趟就挂：
+
+- 我为了「断点单一来源」把平台外壳 `AppShell.vue` 的 `window.matchMedia('(max-width: 820px)')` 改成 `import { NARROW_QUERY } from '@yuanda-lowcode-ai/scaffold-ui/composables/narrow'`。**本地两包 typecheck、40 例单测、`vite build` 全绿**（workspace 直接软链包源码），交付快照里却报 `Rollup failed to resolve import "@yuanda-lowcode-ai/scaffold-ui/composables/narrow"`。
+- 根因不在代码而在交付形状：**交付项目按 npm 版本号拿物料包，包源码里新增的导出在发版之前对交付项目根本不存在**。而 `AppShell.vue` 是要进交付快照的平台外壳，设计器 `views/lowcode/**` 整体被裁剪清单剔掉 —— 所以全仓唯一会因此挂掉的就是外壳这一条。为核实这件事把已发布的包 `npm pack` 下来数了：108 个文件，没有 `narrow.ts`、没有 `unsavedGuard.ts`，`IconButton.vue` 里也没有 `hint` / `aria-pressed`。本 PR 给包加的 API 全部只被裁掉的设计器用到，交付面因此无感。
+- **取舍**：外壳那条退回写死字面量并留注释说明原因，不做「顺手改成 import」这种会把交付弄挂的重构。断点手写副本现在有四份（`narrow.ts` / `AppShell.vue` / `layout.css` / `proto.css` + `DesignerTopbar.vue`），由新增的 `proto.test.ts` 一条用例钉住同一个 820 —— 反向验证过：把 `proto.css` 或 `AppShell.vue` 改成 821 立刻红。**真正该守的是「改了包内 API 的宿主文件如果要进交付，必须同步发版并抬 `scaffold.lowcode.scaffold-ui-version`」，这条写进 `PROJECT_MAP.md` 的踩坑清单。**
+- 演练的可复现性与「这条闸门真的守得住」：落盘用一个临时 `TempSnapshotMaterializeTest`（`-Dscaffold.rehearsal.dir` 驱动，跑完即删，没进提交）；负向对照是把坏 import 塞回**快照副本**，`vite build` 退出 1 报上面那条 resolve 错误，还原后退出 0 —— 不是「绿色只是因为没人碰过」。
+
+**还没验到的**：`prefers-reduced-motion` 只按 CSSOM 确认了平台 `base.css` 里那条 `*, *::before, *::after { animation-duration / transition-duration … !important }` 覆盖存在，没有真的模拟该 media feature；浅色 / 深色 / 窄屏 / 键盘可达都量过实数。
+
+**测试与构建**：前端单测 39 → 40 例（新增断点一致性，先因路径写错 ENOENT 暴露了自己，修好后正向绿、两处反向红）、物料包 14 例、`ScaffoldSnapshotPlannerTest` 12 例；两包 typecheck + `vite build` 全绿；交付快照 `npm install` + `vue-tsc` + `vite build` 全绿。
+
+
+## 2026-11-05（PR 8C：画布补复制 / 隐藏 / 锁定与落点预览，顺带修掉一处「改了但画布不动」）
+
+**模型补三个动作，接进撤销栈。** `design.ts`：
+
+- `duplicate(key)`：副本紧跟原件、属性照抄、整棵子树连同列 key 一起重新发号（`rekey()`），复制完选中副本。**区块不给复制** —— `locate()` 是按 `type` 找容器的，多出第二个 `SearchForm` 会让 `insert` / `move` / `columns` 全指到第一个上，画布上就多出一个改不动的幽灵区块；宁可当场报错，不产一份看着能改实际无效的节点。
+- `setFlag(key, 'visible' | 'locked', value)`：这两个是**画布上的会话状态**，与内部 `key` 同级、不进 `design_json`（生成的页面里没有「设计器当前不想看这一格」这种概念）。既然不影响产物，翻动它们不该把整页标成「有未保存改动」（脏比对只看 `design_json`），但必须能撤销。关掉时整个 `delete` 不留 `false`，与 `applyProp` 的「空串就是没填」同一口径，否则撤销栈里会攒一堆空步。历史快照 `copy()` 要照抄这两个位，否则撤销一次锁定就把锁定弄丢了。
+- 锁定后 `move` / `remove` / `duplicate` 当场抛错（报错文案用 `nameOf()` 报人看得懂的名字，不是 `TextInput` 这种类型码），工具条那三颗同步 `disabled`，区块挂「已锁定」标；隐藏后淡出 + 虚线边，意思是「还在，只是现在不看」。
+- 视图接线：`DesignCanvas.vue` 区块工具条挂 上移 / 下移 / 显示-隐藏 / 锁定 / 删除，拖拽手柄 `:draggable="!block.locked"`；`LayerTree.vue` 行尾挂同款微标。`visible` 的缺省语义是「显示」，只有 `=== false` 才算藏着 —— 写 `!node.visible` 会把 `undefined` 当成隐藏，`toggleFlag()` 里先算当前值再取反，这个坑当时踩过一次（点了隐藏没反应）。
+- **落点预览**：拖拽中的蓝槽写「松手插到第 3 个 · 工具栏」，末尾槽同理；补上 `dragleave`（且只在指针真的离开这一格时退高亮，`relatedTarget` 还在子树里就不退），否则拖过去又拖走时蓝槽一直亮在已经离开的位置。
+- **`IconButton` 加 `hint` 与 `active`**：无障碍名要短（「解锁这一格」），tooltip 要说清后果（「锁定后这一格移动不了、删不掉、也拖不进东西 —— 防误操作，不是内容改动」），以前只有 `label` 一个字段只能二选一；`active` 同时驱动 `icon-btn.is-active`（点亮 `--blue` + `--blue-soft`），开关型的图标按钮不点亮就看不出按过没按过，另配 `aria-pressed`。
+
+**修掉一处顺手暴露的老 bug（不是新代码引入的）。** `session.ts` 的 `root` / `blocks` / `selected` 三个读数返回的是**同一个引用** —— `store` 是普通可变 TS 对象，就地改完之后 `store.root.children` 还是那个数组，`computed` 重算得 `Object.is` 相等就不通知下游，于是 `tick` 明明涨了、画布一动不动。改成每次浅克隆一层，把「数据变了」翻译成「引用也变了」。`setProp` 一直有同样的问题，只是以前没人就地改过 `visible`，属性面板每次都是整值赋新，撞不上。
+
+**测试**：`design.test.ts` 14 → 19 例，全部先跑红（`duplicate is not a function`）再实现；新增的三条钉的是「区块复制必须当场拒绝且树和撤销栈都不动」「标志位翻动不算内容改动」「锁定后 move/remove/duplicate 都抛错」。
+
+
 ## 2026-11-05（PR 8B 第十二刀：折叠箭头贴在悬浮带的圆角上）
+
 
 用户截图指出：有子组件的行悬停后，左侧那颗展开箭头自己那圈高亮跟整行的悬浮带挤在一起，边距不对。
 

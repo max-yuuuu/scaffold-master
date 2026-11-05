@@ -42,9 +42,10 @@ function meta(block: UINode) {
             class="dz-grip"
             role="button"
             tabindex="0"
-            aria-label="拖动调整区块顺序"
-            title="拖动调整区块顺序"
-            draggable="true"
+            :aria-label="block.locked ? '区块已锁定，不可拖拽' : '拖动调整区块顺序'"
+            :title="block.locked ? '已锁定，不可拖拽' : '拖动调整区块顺序'"
+            :class="{ 'is-off': block.locked }"
+            :draggable="!block.locked"
             @dragstart="session.drag.value = { kind: 'move', type: block.type, key: block.key }"
             @dragend="session.drag.value = null"
           ><Icon name="more" :size="13" /></span>
@@ -55,9 +56,18 @@ function meta(block: UINode) {
           >
             <Icon :name="iconOf(block.type)" :size="14" />
             <span class="dz-tree-name">{{ BLOCK_LABELS[block.type] ?? block.type }}</span>
+            <span v-if="block.locked" class="dz-tree-flag" title="已锁定"><Icon name="lock" :size="11" /></span>
+            <span v-if="block.visible === false" class="dz-tree-flag" title="在画布上已藏起（不影响生成的页面）"><Icon name="eyeOff" :size="11" /></span>
             <span class="dz-tree-meta">{{ meta(block) }}</span>
           </button>
-          <button type="button" class="dz-tree-x" aria-label="删掉这一整块" title="删掉这一整块" @click.stop="session.act(() => session.store.remove(block.key))">×</button>
+          <button
+            type="button"
+            class="dz-tree-x"
+            aria-label="删掉这一整块"
+            :title="block.locked ? '已锁定，先解锁再删' : '删掉这一整块'"
+            :disabled="block.locked"
+            @click.stop="session.act(() => session.store.remove(block.key))"
+          >×</button>
         </div>
 
         <div v-if="block.children.length" class="dz-tree-thread is-nested">
@@ -72,6 +82,13 @@ function meta(block: UINode) {
               <span class="dz-tree-name">{{ label(child) }}</span>
               <span v-if="child.props.field" class="dz-tree-code">{{ child.props.field }}</span>
             </button>
+            <button
+              type="button"
+              class="dz-tree-x"
+              aria-label="复制这一个控件"
+              title="复制控件：副本紧跟在后面，属性照抄，绑定自动换到模型里下一个还没用的同类型字段。区块不能复制——一个页面每类区块只有一个"
+              @click.stop="session.act(() => session.store.duplicate(child.key, session.fields))"
+            >⧉</button>
             <button type="button" class="dz-tree-x" aria-label="移出去" title="移出去" @click.stop="session.act(() => session.store.remove(child.key))">×</button>
           </div>
         </div>
@@ -201,6 +218,24 @@ function meta(block: UINode) {
 
 .dz-tree-row:hover .dz-grip {
   opacity: 1;
+}
+
+/* 锁定的区块不该亮出一个拖不动的手柄 */
+.dz-grip.is-off,
+.dz-tree-row:hover .dz-grip.is-off {
+  opacity: 0;
+  cursor: not-allowed;
+}
+
+.dz-tree-flag {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--ink-faint);
+}
+
+.dz-tree-flag:first-of-type {
+  color: var(--blue);
 }
 
 .dz-grip:active {

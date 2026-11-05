@@ -49,6 +49,12 @@ function onDrop(target: string, index?: number) {
   if (item) session.place(item, target, index)
 }
 
+/** 拖过去又拖走时高亮必须退掉：只有 dragover/drop 没有 dragleave 的话，蓝槽会一直亮在人已经离开的那个位置 */
+function onDragLeave(hotKey: string, event: DragEvent) {
+  if (event.relatedTarget instanceof Node && (event.currentTarget as Node).contains(event.relatedTarget)) return
+  if (hot.value === hotKey) hot.value = null
+}
+
 function onArmedClick(target: string, index?: number) {
   const type = session.armed.value
   if (!type) return
@@ -59,6 +65,25 @@ function onArmedClick(target: string, index?: number) {
 function pick(node: UINode) {
   session.pick(node.key)
 }
+
+/**
+ * 区块工具条上的三颗状态件。
+ *
+ * <p>锁定与显示都只改画布上的会话状态，不进 design_json，所以翻动它们不该把这一页标成「有未保存改动」；
+ * 但它们在撤销栈里，按错了一下能撤回来。
+ */
+function toggleFlag(node: UINode, flag: 'visible' | 'locked') {
+  // visible 缺省就是「显示」，所以只有 === false 才算藏着；写 `!node.visible` 会把 undefined 当成隐藏
+  const current = flag === 'visible' ? node.visible !== false : node.locked === true
+  session.act(() => session.store.setFlag(node.key, flag, !current))
+}
+
+/** 拖拽中的那颗物料长什么样：落点槽要回答「松手会在这里插什么」，只亮一条蓝线不够。 */
+const dragging = computed(() => {
+  const item = session.drag.value
+  if (!item) return null
+  return { type: item.type, label: BLOCK_LABELS[item.type] ?? item.type, icon: iconOf(item.type) }
+})
 
 function titleOf(block: UINode) {
   return String(block.props.title ?? BLOCK_LABELS[block.type] ?? block.type)
@@ -134,24 +159,52 @@ function dictTypeOf(node: UINode) {
 
       <template v-for="(block, bi) in blocks" :key="block.key">
         <div
-          :class="['dz-drop-slot', hot === `after-${bi}` && 'is-active']"
+          :class="['dz-drop-slot', hot === `after-${bi}` && 'is-active', hot === `after-${bi}` && dragging && 'has-hint']"
           @dragover.prevent="hot = `after-${bi}`"
+          @dragleave="onDragLeave(`after-${bi}`, $event)"
           @drop.stop="onDrop('PageContainer', bi + 1)"
           @click.stop="onArmedClick('PageContainer', bi + 1)"
-        />
+        >
+          <span v-if="hot === `after-${bi}` && dragging" class="dz-drop-hint">
+            <Icon :name="dragging.icon" :size="12" />松手插到第 {{ bi + 2 }} 个 · {{ dragging.label }}
+          </span>
+        </div>
 
         <section
-          :class="['dz-node', `is-${block.type}`, selectedKey === block.key && 'is-selected']"
+          :class="[
+            'dz-node',
+            `is-${block.type}`,
+            selectedKey === block.key && 'is-selected',
+            block.visible === false && 'is-hidden',
+            block.locked && 'is-locked',
+          ]"
           :data-type="block.type"
           @click.stop="pick(block)"
-          @dragover.prevent="hot = block.type"
-          @drop.stop="onDrop(block.type)"
+          @dragover.prevent="!block.locked && (hot = block.type)"
+          @dragleave="onDragLeave(block.type, $event)"
+          @drop.stop="!block.locked && onDrop(block.type)"
         >
           <div v-if="selectedKey === block.key && !session.previewMode.value" class="dz-node-bar">
             <span class="dz-node-bar-name"><Icon :name="iconOf(block.type)" :size="13" />{{ BLOCK_LABELS[block.type] ?? block.type }}</span>
-            <IconButton name="arrowUp" label="上移区块" small @click.stop="session.act(() => session.store.move(block.key, 'PageContainer', Math.max(0, bi - 1)))" />
-            <IconButton name="arrowDown" label="下移区块" small @click.stop="session.act(() => session.store.move(block.key, 'PageContainer', bi + 2))" />
-            <IconButton name="x" label="删掉这一整块" small danger @click.stop="session.act(() => session.store.remove(block.key))" />
+            <IconButton name="arrowUp" label="上移区块" small :disabled="block.locked" @click.stop="session.act(() => session.store.move(block.key, 'PageContainer', Math.max(0, bi - 1)))" />
+            <IconButton name="arrowDown" label="下移区块" small :disabled="block.locked" @click.stop="session.act(() => session.store.move(block.key, 'PageContainer', bi + 2))" />
+            <IconButton
+              :name="block.visible === false ? 'eyeOff' : 'eye'"
+              :label="block.visible === false ? '在画布上显示这一格' : '在画布上藏起这一格'"
+              hint="只影响画布上的专注度：藏起来的这一格照样在生成的页面里，存库也不会少它"
+              small
+              :active="block.visible === false"
+              @click.stop="toggleFlag(block, 'visible')"
+            />
+            <IconButton
+              :name="block.locked ? 'lock' : 'unlock'"
+              :label="block.locked ? '解锁这一格' : '锁定这一格'"
+              hint="锁定后这一格移动不了、删不掉、也拖不进东西 —— 防误操作，不是内容改动"
+              small
+              :active="block.locked"
+              @click.stop="toggleFlag(block, 'locked')"
+            />
+            <IconButton name="x" label="删掉这一整块" small danger :disabled="block.locked" @click.stop="session.act(() => session.store.remove(block.key))" />
           </div>
 
           <div class="dz-node-body">
@@ -250,10 +303,14 @@ function dictTypeOf(node: UINode) {
       <div
         :class="['dz-drop-slot', 'is-tail', hot === 'PageContainer:end' && 'is-active']"
         @dragover.prevent="hot = 'PageContainer:end'"
+        @dragleave="onDragLeave('PageContainer:end', $event)"
         @drop.stop="onDrop('PageContainer')"
         @click.stop="onArmedClick('PageContainer')"
       >
-        <span v-if="!blocks.length" class="dz-tail-hint">把区块拖到这里开始：查询区 / 工具栏 / 表格区 / 行操作 / 表单弹窗</span>
+        <span v-if="hot === 'PageContainer:end' && dragging" class="dz-drop-hint">
+          <Icon :name="dragging.icon" :size="12" />松手插到末尾 · {{ dragging.label }}
+        </span>
+        <span v-else-if="!blocks.length" class="dz-tail-hint">把区块拖到这里开始：查询区 / 工具栏 / 表格区 / 行操作 / 表单弹窗</span>
       </div>
     </div>
   </main>
@@ -394,6 +451,29 @@ function dictTypeOf(node: UINode) {
   border-color: var(--blue);
   box-shadow: var(--edge), var(--e2), 0 0 0 4px var(--blue-soft);
   transform: translateY(-2px);
+}
+
+/* 藏起来不是删掉：留一条淡出 + 虚线，让人知道这一格还在、只是现在不想看 */
+.dz-node.is-hidden {
+  opacity: .42;
+  border-style: dashed;
+}
+
+.dz-node.is-locked {
+  border-color: var(--line-strong);
+}
+
+.dz-node.is-locked::after {
+  content: '已锁定';
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 10.5px;
+  font-weight: 620;
 }
 
 .dz-node-body {
@@ -625,6 +705,25 @@ function dictTypeOf(node: UINode) {
   height: 10px;
   background: var(--blue-soft);
   box-shadow: inset 0 0 0 1.5px var(--blue);
+}
+
+/* 拖拽中：落点槽要回答「松手会在这里插什么、排在第几个」，只亮一条蓝线还得靠人去数 */
+.dz-drop-slot.has-hint {
+  height: auto;
+  min-height: 26px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+}
+
+.dz-drop-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--blue);
+  font-size: 11.5px;
+  font-weight: 620;
+  white-space: nowrap;
 }
 
 .dz-drop-slot.is-tail {
