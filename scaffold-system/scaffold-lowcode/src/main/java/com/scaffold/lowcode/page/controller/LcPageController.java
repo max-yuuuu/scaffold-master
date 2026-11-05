@@ -98,6 +98,6 @@ public class LcPageController {
     @RequiresPermission("lowcode:page:publish")
     @OperLog(module = "页面设计", action = "发布页面")
     public R<Map<String, Object>> publish(@PathVariable Long id, @Valid @RequestBody PagePublishRequest request) {
-        return R.success(publishService.publish(id, request.getChangeDesc()));
+        return R.success(publishService.publish(id, request.isForce(), request.getChangeDesc()));
     }
 }

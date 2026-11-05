@@ -255,8 +255,7 @@ class PagePublishApiTest {
         // 平台不强推、不自动合并：本地与远端不一致时先停下来，让人把工作区重建到与远端一致
         assertThat(messageOf(publish(fx))).contains("远端").contains("重建工作区");
         // 这份工作区没有自己的提交，重建不丢东西：这条若按「未推送提交」拒绝，人往发布分支推过一次之后项目就永远发不动
-        assertThat(delete("/api/lowcode/projects/" + fx.projectId + "/workspace").getBody()).containsEntry("code", 200);
-        assertThat(post("/api/lowcode/projects/" + fx.projectId + "/initialize", Map.of()).getBody()).containsEntry("code", 200);
+        rebuild(fx);
 
         // 重铺固定代码不许把人写的扩展点从工作区里删掉：那一版人补的那一行还在，就是「存在即跳过」认得出它
         assertThat(workspaceFile(fx, EXTENSION)).contains("isLarge");
@@ -301,6 +300,32 @@ class PagePublishApiTest {
         assertThat(gateway.tagSha(fx.repoUrl, "v" + fx.projectCode + "-" + PAGE_CODE + "-1")).isEqualTo(unpushed);
     }
 
+    @Test
+    void 扩展点还在引用被删掉的字段时发布被拦而带force才放行() {
+        Fixture fx = ready();
+        publish(fx);
+        // 人在扩展点里补了一段用 deliveryDate 的业务，推上发布分支后让平台的工作区追上远端
+        gateway.humanEditAndPush(fx.repoUrl, GEN, EXTENSION, src -> src.replace(
+                "// TODO 人工填写：平台只在首次发布生成本类，之后不再覆盖",
+                "rows.forEach(row -> row.setOrderNo(row.getDeliveryDate() + \"|\" + row.getOrderNo()));"));
+        rebuild(fx);
+
+        // 这一列先从设计里撤掉（不然保存就先拦），再从模型里删掉：页面存得下来，扩展点却还认它
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, designWithoutDate())).getBody())
+                .containsEntry("code", 200);
+        assertThat(delete("/api/lowcode/fields/" + fx.fieldIds.get("deliveryDate")).getBody()).containsEntry("code", 200);
+
+        // 默认阻断：等交付项目编译失败时人已经在合并请求里了，而 diff 只会显示「生成物变了」
+        assertThat(messageOf(publish(fx))).contains("deliveryDate").contains("扩展点").contains("force");
+        assertThat(count("SELECT COUNT(*) FROM lc_publish_log WHERE page_id = ?", fx.pageId)).isEqualTo(1);
+
+        // 显式放行才发得出去，而那些命中要原样留在结果里：发出去了，但人得知道自己刚才放过了什么
+        Map<String, Object> forced = dataOf(publish(fx, true));
+        assertThat(number(forced.get("status"))).isEqualTo(1);
+        assertThat(number(forced.get("version"))).isEqualTo(2);
+        assertThat(castList(forced.get("warnings"))).isNotEmpty();
+    }
+
     /* ── 现场 ── */
 
     /**
@@ -315,6 +340,7 @@ class PagePublishApiTest {
         private final long projectId;
         private final long modelId;
         private final long pageId;
+        private final Map<String, Long> fieldIds = new LinkedHashMap<>();
         /** 初始化推到发布分支上那个提交：发布失败用例拿它当「远端仍停在原地」的基准 */
         private String snapshotSha;
 
@@ -353,7 +379,7 @@ class PagePublishApiTest {
             body.put("fieldName", name);
             body.put("fieldType", type);
             body.putAll(extras);
-            post("/api/lowcode/models/" + modelId + "/fields", body);
+            fieldIds.put(code, number(dataOf(post("/api/lowcode/models/" + modelId + "/fields", body)).get("id")));
         }
 
         private Path workspace() {
@@ -381,7 +407,17 @@ class PagePublishApiTest {
     }
 
     private ResponseEntity<Map<String, Object>> publish(Fixture fx) {
-        return post("/api/lowcode/pages/" + fx.pageId + "/publish", Map.of());
+        return publish(fx, false);
+    }
+
+    private ResponseEntity<Map<String, Object>> publish(Fixture fx, boolean force) {
+        return post("/api/lowcode/pages/" + fx.pageId + "/publish", Map.of("force", force));
+    }
+
+    /** 平台的工作区是发布分支的缓存：追上远端就走「清空 + 重新初始化」，人写的东西只有这样才能被认出来 */
+    private void rebuild(Fixture fx) {
+        assertThat(delete("/api/lowcode/projects/" + fx.projectId + "/workspace").getBody()).containsEntry("code", 200);
+        assertThat(post("/api/lowcode/projects/" + fx.projectId + "/initialize", Map.of()).getBody()).containsEntry("code", 200);
     }
 
     /* ── 设计 ── */
@@ -405,6 +441,25 @@ class PagePublishApiTest {
                                 control("TextInput", "订单编号", "orderNo", null),
                                 control("NumberInput", "订单金额", "amount", null),
                                 control("DateInput", "交货日期", "deliveryDate", null),
+                                control("Textarea", "备注", "remark", null)))))));
+        return design;
+    }
+
+    /** 同一份设计，只是把「交货日期」那一格从表单里撤走：撤不掉就存不进库，也就轮到不了引用体检 */
+    private static Map<String, Object> designWithoutDate() {
+        Map<String, Object> design = design("订单金额");
+        design.put("layout", new LinkedHashMap<>(Map.of(
+                "type", "PageContainer",
+                "props", new LinkedHashMap<>(Map.of("title", "销售订单", "desc", "管理所有销售订单")),
+                "children", List.of(
+                        block("SearchForm", Map.of("columns", 3), List.of(
+                                control("TextInput", "查询订单", "orderNo", "LIKE"))),
+                        block("Toolbar", null, List.of(Map.of("type", "Button",
+                                "props", new LinkedHashMap<>(Map.of("label", "新增", "action", "create"))))),
+                        tableBlock("订单金额"),
+                        block("FormContainer", null, List.of(
+                                control("TextInput", "订单编号", "orderNo", null),
+                                control("NumberInput", "订单金额", "amount", null),
                                 control("Textarea", "备注", "remark", null)))))));
         return design;
     }

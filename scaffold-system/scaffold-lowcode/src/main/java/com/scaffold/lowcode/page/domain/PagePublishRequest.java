@@ -15,11 +15,22 @@ public class PagePublishRequest {
     @Size(max = 512, message = "发布说明不能超过 512 字")
     private String changeDesc;
 
+    /** 引用体检的显式放行：默认 false 就是阻断，勾上表示「我看过了，那些只是同名变量或注释」 */
+    private boolean force;
+
     public String getChangeDesc() {
         return changeDesc;
     }
 
     public void setChangeDesc(String changeDesc) {
         this.changeDesc = changeDesc;
+    }
+
+    public boolean isForce() {
+        return force;
+    }
+
+    public void setForce(boolean force) {
+        this.force = force;
     }
 }

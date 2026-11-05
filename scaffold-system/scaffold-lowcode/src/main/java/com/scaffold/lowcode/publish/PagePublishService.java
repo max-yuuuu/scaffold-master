@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 页面发布（方案 §5.1）：设计 → 生成 → 落盘 → 提交 → 推送 → tag → 记账。
@@ -75,9 +76,11 @@ public class PagePublishService {
     }
 
     /**
-     * @return 发布结果：版本号、提交号、tag、落盘的产物清单与一句给人读的话
+     * @param force 显式放行「发布前 C 档引用体检」报出来的可疑引用（方案 §5.2 第 2 条）。
+     *              报出来的东西可能是同名局部变量或注释，平台不替人猜，但要人明确说「我看过」。
+     * @return 发布结果：版本号、提交号、tag、落盘的产物清单、体检报出来但仍放行的告警与一句给人读的话
      */
-    public Map<String, Object> publish(Long pageId, String changeDesc) {
+    public Map<String, Object> publish(Long pageId, boolean force, String changeDesc) {
         Map<String, Object> page = pageMapper.selectPageForPublish(pageId);
         if (page == null) {
             throw new BusinessException("页面不存在");
@@ -114,6 +117,13 @@ public class PagePublishService {
         PageTarget target = new PageTarget(text(page.get("pageName")), text(page.get("routePath")),
                 text(page.get("menuIcon")), integer(page.get("menuSort")), design);
         List<GeneratedFile> files = generator.renderFiles(model, fieldRows, target);
+        // 发布前拿这次的产物对一遍 C 档里的引用：人删了字段而扩展点还在用它，等交付项目编译失败时
+        // 人已经在合并请求里了，而 diff 只会显示「生成物变了」，不会告诉他「你少了一个字段」（§5.2）
+        List<ExtensionReferenceCheck.Stale> stale = staleReferences(site.workspace(), files);
+        if (!stale.isEmpty() && !force) {
+            throw new BusinessException(ExtensionReferenceCheck.describe(stale)
+                    + "\n我已确认这些只是同名变量或注释、仍要发布，就带 force 再来一次");
+        }
         List<Map<String, Object>> fileRows = fileRows(files, GeneratedFileWriter.write(site.workspace(), files));
         String filesJson = json(fileRows);
         PublishLedger.Context context = new PublishLedger.Context(pageId, numberAsLong(project.get("id")), next,
@@ -126,7 +136,7 @@ public class PagePublishService {
         if (committed == null && targetSha.equals(site.remoteSha())) {
             String message = "内容与 " + site.branch() + " 一致，未产生提交";
             ledger.noChange(context, targetSha, message);
-            return result(project, page, current, 2, targetSha, null, site.branch(), fileRows, message);
+            return result(project, page, current, 2, targetSha, null, site.branch(), fileRows, stale, message);
         }
 
         push(context, site, targetSha);
@@ -143,7 +153,7 @@ public class PagePublishService {
                 + count(fileRows, "CREATED") + " 新建 / " + count(fileRows, "OVERWRITTEN") + " 覆盖 / "
                 + count(fileRows, "SKIPPED") + " 跳过）";
         ledger.published(context, targetSha, tagName, json(hashes(fileRows)), message);
-        return result(project, page, next, 1, targetSha, tagName, site.branch(), fileRows, message);
+        return result(project, page, next, 1, targetSha, tagName, site.branch(), fileRows, stale, message);
     }
 
     /* ── 现场 ── */
@@ -245,7 +255,8 @@ public class PagePublishService {
 
     private Map<String, Object> result(Map<String, Object> project, Map<String, Object> page, int version,
                                        int status, String commitSha, String tagName, String branch,
-                                       List<Map<String, Object>> fileRows, String message) {
+                                       List<Map<String, Object>> fileRows,
+                                       List<ExtensionReferenceCheck.Stale> stale, String message) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("pageId", page.get("id"));
         out.put("pageCode", page.get("pageCode"));
@@ -257,8 +268,44 @@ public class PagePublishService {
         out.put("tagName", tagName);
         out.put("branch", branch);
         out.put("files", fileRows);
+        // 体检报出来但仍被 force 放行的那些：发布成功了，但这个人有权知道自己刚才放过了什么
+        out.put("warnings", stale.stream().map(hit -> Map.of(
+                "path", hit.path(), "line", hit.line(), "field", hit.field())).toList());
         out.put("message", message);
         return out;
+    }
+
+    /**
+     * 拿本次生成的 B 档数据类（Row / 实体 / WriteRequest）里声明的成员，去比工作区里那份 C 档扩展点。
+     *
+     * <p>判据用生成物而不是 {@code lc_field} 的字段清单：主键与审计列是模板补到类上的，字段表里没有它们，
+     * 按字段清单判就会把 {@code row.getCreateTime()} 报成错引用。文件还不存在（首次发布）就没有可查的东西。
+     */
+    private List<ExtensionReferenceCheck.Stale> staleReferences(Path workspace, List<GeneratedFile> files) {
+        Set<String> legal = ExtensionReferenceCheck.declaredMembers(
+                files.stream().filter(this::isDataClass).map(GeneratedFile::content).toArray(String[]::new));
+        List<ExtensionReferenceCheck.Stale> hits = new ArrayList<>();
+        for (GeneratedFile file : files) {
+            if (file.tier() != GeneratedFile.Tier.EXTENSION || !file.path().endsWith(".java")) {
+                continue;
+            }
+            Path onDisk = workspace.resolve(file.path());
+            if (!Files.isRegularFile(onDisk)) {
+                continue;
+            }
+            try {
+                hits.addAll(ExtensionReferenceCheck.scan(file.path(),
+                        Files.readString(onDisk, StandardCharsets.UTF_8), Set.of(), legal));
+            } catch (java.io.IOException e) {
+                throw new BusinessException("读不到扩展点文件 " + file.path() + "：" + e.getMessage());
+            }
+        }
+        return hits;
+    }
+
+    /** 生成物里「人会在扩展点上读写的对象」：{@code domain/} 下就是实体、列表行与入参三类 */
+    private boolean isDataClass(GeneratedFile file) {
+        return file.path().contains("/domain/") && file.path().endsWith(".java");
     }
 
     /** 每个产物一行：路径 + 档位 + 落盘动作 + 内容哈希。发布结果与日志里的 files_generated 都用它 */
