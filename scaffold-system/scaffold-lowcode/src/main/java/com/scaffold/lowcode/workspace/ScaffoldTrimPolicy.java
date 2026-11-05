@@ -69,6 +69,7 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/ProjectWorkspaceApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/DeliveryGenerationApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/PagePublishApiTest.java",
+            "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/MergeRequestApiTest.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/StubGitGateway.java",
             "scaffold-system/scaffold-admin/src/test/java/com/scaffold/admin/LocalBareGitGateway.java",
             // 平台前端页面与接口客户端
