@@ -298,6 +298,42 @@ class TenantIsolationApiTest {
         jdbcTemplate.update("DELETE FROM lc_tenant WHERE id = ?", tenantId);
     }
 
+    /**
+     * PR 9 新增的两个入口（版本历史、回滚）都必须先按 pageId 查页面本身，而那次查询带租户条件。
+     *
+     * <p>证据要说「页面不存在」而不是「没有版本」：后者与本租户里一个真没发布过的页面分不开，
+     * 那样的断言即使闸没关上也可能绿。这里也不需要真项目 —— 要验的就是这道闸，不是发布链路。
+     */
+    @Test
+    void 另一个租户读不到本租户页面的版本历史也回滚不了它() {
+        String acme = acmeToken();
+        jdbcTemplate.update("INSERT INTO lc_page (tenant_id, project_id, model_id, page_code, page_name, design_json)"
+                + " VALUES (1, -1, -1, 'it_cross_tenant_page', '跨租户探针', '{}')");
+        try {
+            Long pageId = jdbcTemplate.queryForObject(
+                    "SELECT id FROM lc_page WHERE page_code = 'it_cross_tenant_page'", Long.class);
+            assertThat(pageId).isNotNull();
+            String versions = "/api/lowcode/pages/" + pageId + "/versions";
+            // 本租户的 admin 读得到这一页（证明后面那三个 400 不是夹具本身坏了）：
+            // 返回的是整个响应壳，rows 在 data 里，这里只要 data 不是空就说明这道闸对本租户是开的
+            assertThat(get(versions, platformToken()).get("data")).isNotNull();
+
+            for (String path : List.of(versions, "/api/lowcode/pages/" + pageId + "/versions/1")) {
+                Map<String, Object> body = restTemplate.exchange(
+                        path, HttpMethod.GET, new HttpEntity<>(bearer(acme)), MAP_TYPE).getBody();
+                assertThat(body).as(path).containsEntry("code", 400);
+                assertThat(String.valueOf(body.get("message"))).as(path).contains("页面不存在");
+            }
+            Map<String, Object> denied = restTemplate.exchange(
+                    "/api/lowcode/pages/" + pageId + "/rollback", HttpMethod.POST,
+                    new HttpEntity<>(Map.of("version", 1), bearer(acme)), MAP_TYPE).getBody();
+            assertThat(denied).isNotNull();
+            assertThat(String.valueOf(denied.get("message"))).contains("页面不存在");
+        } finally {
+            jdbcTemplate.update("DELETE FROM lc_page WHERE page_code = 'it_cross_tenant_page'");
+        }
+    }
+
     private String platformToken() {
         return TestAuthClient.login(restTemplate, "admin", "admin123", PLATFORM_TENANT);
     }
