@@ -9,6 +9,8 @@ import com.scaffold.framework.web.CsvResponse;
 import com.scaffold.lowcode.project.domain.ProjectStatusRequest;
 import com.scaffold.lowcode.project.domain.ProjectWriteRequest;
 import com.scaffold.lowcode.project.service.LcProjectService;
+import com.scaffold.lowcode.project.domain.BaseTagRequest;
+import com.scaffold.lowcode.workspace.BaseTagService;
 import com.scaffold.lowcode.workspace.BaseUpgradeService;
 import com.scaffold.lowcode.workspace.ProjectRepositoryService;
 import jakarta.validation.Valid;
@@ -36,12 +38,14 @@ public class LcProjectController {
     private final LcProjectService service;
     private final ProjectRepositoryService repositoryService;
     private final BaseUpgradeService baseUpgradeService;
+    private final BaseTagService baseTagService;
 
     public LcProjectController(LcProjectService service, ProjectRepositoryService repositoryService,
-                               BaseUpgradeService baseUpgradeService) {
+                               BaseUpgradeService baseUpgradeService, BaseTagService baseTagService) {
         this.service = service;
         this.repositoryService = repositoryService;
         this.baseUpgradeService = baseUpgradeService;
+        this.baseTagService = baseTagService;
     }
 
     @GetMapping
@@ -142,6 +146,25 @@ public class LcProjectController {
     @OperLog(module = "项目管理", action = "初始化固定代码")
     public R<Map<String, Object>> initialize(@PathVariable Long id) {
         return R.success(repositoryService.initialize(id));
+    }
+
+    /**
+     * 人工补打底座标记 tag：存量项目（初始化早于「初始化打 tag」那段代码）远端没有这个 tag，
+     * 三方合并就没有 base 侧，底座升级永久封死；而 {@code initialize} 在已就绪的项目上会拒绝重来，
+     * 界面里没有任何一步能补上它 —— 这个动作就是那一步。
+     *
+     * <p>权限沿用 {@code lowcode:project:sync}：它和初始化一样只往发布分支那一侧写一个引用，
+     * 且只创建不移动（同名 tag 已在就拒绝），改动面比「发起升级」小，不该再多要一个按钮。
+     *
+     * <p>{@code commitSha} 可以不填：平台按发布分支上的 {@code .scaffold-project.json} 认那一笔交付，
+     * 认不出来就拒绝并让人指定 —— 猜错 base 的下场是之后每一轮三方合并都算错，而界面上看不出异常。
+     */
+    @PostMapping("/{id}/base-tag")
+    @RequiresPermission("lowcode:project:sync")
+    @OperLog(module = "项目管理", action = "补打底座标记 tag")
+    public R<Map<String, Object>> stampBaseTag(@PathVariable Long id,
+                                               @Valid @RequestBody(required = false) BaseTagRequest request) {
+        return R.success(baseTagService.stamp(id, request == null ? null : request.getCommitSha()));
     }
 
     /** 工作区读数：路径、是否脏、有没有未推送提交 */

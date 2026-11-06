@@ -195,7 +195,21 @@ public interface GitGateway {
     String snapshotCommit(Path dir, Map<String, byte[]> files, String message);
 
     /**
-     * 在目标分支的当前提交上打底座标记 tag 并推到远端（升级合进主干之后要做的第一件事）。
+     * 按分支给出提交号序列，<b>从新到旧</b>，最多 {@code limit} 条（{@code limit <= 0} 表示不限）。
+     *
+     * <p>给「人工补打底座标记 tag」用：要在历史里认出当初交付那一版 A 档的提交，判据是那一笔上的
+     * {@code .scaffold-project.json} 记着项目现在这个底座号。从新到旧才能一命中就停，
+     * 而 {@code limit} 是护栏 —— 跑了几年的仓库有几万笔，逐笔读 blob 不能没有上界。
+     *
+     * @param dir 仓库目录（平台工作区或一份临时 clone）
+     * @param branch 分支名（不带 refs/heads/）
+     * @param limit 最多取多少笔；撞上限时调用方要说「请指定提交号」而不是给一个错的答案
+     * @return 提交号列表；分支不存在返回空列表，不抛
+     */
+    List<String> revList(Path dir, String branch, int limit);
+
+    /**
+     * 在目标分支上打底座标记 tag 并推到远端。
      *
      * <p>为什么不能拿平台工作区去打：合并是在一份临时 clone 里做的，那笔合并提交只活在临时 clone
      * 与远端，工作区连这个对象都没有，本地建出来的 tag 指向一个不存在的提交，推都推不上去。
@@ -204,9 +218,11 @@ public interface GitGateway {
      * <p>只创建不移动：同名 tag 已存在时返回 {@code false} 并且不动它 —— 移动它等于改掉某一轮升级的
      * base 侧，三方合并会算出错的结果。
      *
+     * @param commitSha 要打 tag 的那笔；{@code null} 表示打在该分支当前提交上（升级合入主干后就是那笔合并）
      * @return tag 是这次新打的（{@code true}）还是本来就在（{@code false}，原样留着）
      */
-    boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message);
+    boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName,
+                         String commitSha, String message);
 
     /**
      * 完整一趟底座升级的 git 编排（方案 §5.2）：临时 clone 里算三方合并，把可自动合的文件写进

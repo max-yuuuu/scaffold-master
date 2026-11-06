@@ -247,7 +247,7 @@ public class MergeRequestService {
         String tagName = PlatformBaseTag.name(targetScaffold);
         String warning = null;
         try {
-            gateway.stampBaseTag(workspace, repoUrl, targetBranch, tagName,
+            gateway.stampBaseTag(workspace, repoUrl, targetBranch, tagName, null,
                     PlatformBaseTag.message(targetScaffold) + "\n\n由合并请求 #" + requestId + " 在合入主干后打上。");
         } catch (RuntimeException e) {
             warning = "；底座标记 tag " + tagName + " 没打上：" + e.getMessage()

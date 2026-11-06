@@ -203,7 +203,8 @@ public class StubGitGateway implements GitGateway {
     }
 
     @Override
-    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName,
+                                String commitSha, String message) {
         pushedTags.add(tagName);
         return true;
     }
@@ -228,6 +229,11 @@ public class StubGitGateway implements GitGateway {
     @Override
     public Map<String, String> fileContents(Path dir, String commitRev, List<String> paths) {
         throw new UnsupportedOperationException("StubGitGateway 不模拟提交历史：回滚取内容要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public List<String> revList(Path dir, String branch, int limit) {
+        throw new UnsupportedOperationException("StubGitGateway 不模拟提交历史：补打底座标记 tag 要按 .scaffold-project.json 认那一笔，用真 JGit");
     }
 
     private String remoteSha(String branch) {

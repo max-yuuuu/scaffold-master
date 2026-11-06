@@ -501,6 +501,14 @@ export interface BaseUpgradeResult {
   message: string
 }
 
+/** 补打底座标记 tag 的回执：打在哪一笔、那笔是怎么定出来的 —— 界面必须把后者说给人看 */
+export interface BaseTagResult {
+  tagName: string
+  commitSha: string
+  locatedBy: string
+  message: string
+}
+
 export function createPlatformApi(client: HttpClient) {
   return {
     tenants: {
@@ -524,6 +532,13 @@ export function createPlatformApi(client: HttpClient) {
       baseStatus: (id: number) => client.get<ProjectBaseStatus>(`/lowcode/projects/${id}/base-status`),
       /** 发起底座升级（lowcode:project:upgrade）：推一条 platform-upgrade/* 分支，合不合由人在合并请求里定 */
       baseUpgrade: (id: number) => client.post<BaseUpgradeResult>(`/lowcode/projects/${id}/base-upgrade`),
+      /**
+       * 人工补打底座标记 tag（lowcode:project:sync）：存量项目远端没有这个 tag 时，底座升级做不了
+       * （三方合并缺 base 侧），而 initialize 在已就绪的项目上会拒绝重来 —— 这一步就是补那个缺口。
+       * commitSha 留空表示让平台按发布分支上的 .scaffold-project.json 认那一笔交付，认不出会拒绝。
+       */
+      stampBaseTag: (id: number, commitSha?: string) => client.post<BaseTagResult>(`/lowcode/projects/${id}/base-tag`,
+        commitSha ? { commitSha } : {}),
     },
     tenantAssets: {
       /** 平台加了租户可见菜单后，已有租户靠这一步补齐（幂等，可重复执行） */
