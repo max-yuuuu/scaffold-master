@@ -13,7 +13,21 @@
 
 **测试与 e2e 实际跑了什么**：`JGitGatewayTest` 19 → **41 例**（真 JGit + 真仓库：三方合并五档各有正反例、快照提交的树形状、`stampBaseTag` 打在分支当前提交上且同名不移动）；`ProjectWorkspaceApiTest` 15 → 16 例（读数与三道拒绝）；`MergeRequestApiTest` 11 → **12 例**，新增那条真机形状 —— 手工造一条 `platform-upgrade/abcdef1`、插一条升级记录、按 `sourceBranch` 预检、由负责人确认合并，然后断言 `base_scaffold_sha` 变了、`yuanda/platform-base/{新sha}` 剥开后正指向那笔合并、升级记录收成 `status=1`、**发布分支原地不动**；`TenantIsolationApiTest` 12 例；后端全量套件 **367 例 0 失败**（common 10 + framework 42 + lowcode 172 + generator 6 + admin 137），前端 `vite build` + `vue-tsc --noEmit` + 45 例单测全绿。**两件如实说的**：① 全量套件**第一次**跑时 `ProjectWorkspaceApiTest` 16 例整类报 `HTTP/1.1 header parser received no bytes`（Tomcat 确实起在 63501 而请求拿不到响应），单跑该类绿、原样重跑整套也绿 —— 判它是本机端口/传输的一次抖动，没改动那个类；② **升级的「真有一笔可自动合」这条主路，服务级 IT 是拿手工分支造的**，因为本机只有一份底座 checkout、base 侧与 theirs 侧永远同一份内容，造不出「平台改了什么」。这条只能在真机上补，就是 10G。
 
-**没做的**：10G 真机演练（升级 → 审 → 合 → 重打 tag → 读数归零）卡在两件用户侧的事 —— 平台账号口令（管理员口令已改，我不猜）与「是否允许写 `test-lowcode-push` 的 `main`」；人工「补打底座标记 tag」这个动作仍缺（PR 8 起就记在待办里），tag 推失败目前只有告警、没有一键补救。
+**当时没做的**：10G 真机演练（升级 → 审 → 合 → 重打 tag → 读数归零）与人工「补打底座标记 tag」这个动作 —— 两条都在同日「PR 10 收尾」那一节里落地了，其中补打 tag 仍然是手工做的，界面入口还没做。
+
+## 2026-11-06（PR 10 收尾：10G 真机演练，以及只有真机能抓出的三条）
+
+按用户授权跑完整闭环（升级 → 审 → 合 → 重打 tag → 读数归零），对着的是他自己的测试仓库 `test-lowcode-push`（项目 23 / `order-serive`）。**这一趟把上一节里「服务级用例是手工分支造的」那条空白补实了**：真底座漂移 109 个提交，base 侧从项目仓库的 tag 读回来，三方合并真的算出了东西。
+
+- **落地的因果链**：`base_scaffold_sha` 从 `effbcfe867`（11-04 交付）推进到 `099fd1f748`；升级分支 `platform-upgrade/099fd1f` 上那笔 `315cfbcc` 经合并请求 #177 由负责人合进主干，主干从 `36fff869` 变成**两个父亲的合并提交 `5808aea2`**；新 tag `yuanda/platform-base/099fd1f748…` **剥开后正指向这笔合并提交**（附注 tag 要比 `^{}`，直接比 ref 会拿到 tag 对象 —— 这条坑 PR 9 记过，这次用在了它该在的地方）；**上一轮的 tag 原样停在 `2dbf5989` 没被动过**，发布分支 `platform-generated` 也一个字节没被这次合并碰（`c205f515`）；`lc_base_upgrade` 收成 `status=1`，那句人话是「已合入 main（5808aea2），base 侧搬到 099fd1f7」；`base-status` 回 `upToDate=true`、`behindCommits=0` —— 读数归零。
+- **抓出①「拒绝」被说成网络错**：`fetchTags` 是五条联网命令里唯一漏挂 `transportConfig()` 的，不挂就走 JGit 默认代理工厂，它读本机 HTTP 代理并把 `github.com:22` 指到代理端口，报回来只有一句 `Session is being closed`。于是「项目仓库缺底座标记 tag」这条正当拒绝，用户看到的是一句看不懂也接不下去的错。`SshTransportSupportTest` 里其实早就写着这个错相（「被本机 HTTP 代理劫持时报 Session is being closed」），但那条测试只钉了 `directSshProxy()` 本身，钉不住「新加一条联网命令别忘了挂 callback」—— 这类东西本机裸仓库测不出来，只有真 SSH 会撞。
+- **抓出②口令差点出门**：裁剪走的是文件系统遍历，**`.gitignore` 对它不起作用**。`scaffold-system/scaffold-admin/.env.local`（里面就是开发用的 JWT_SECRET）和 `scaffold-vue/scripts/__pycache__/*.pyc` 都被列进了 A 档清单，还计入「可自动合 4 个文件」报给审的人 —— 实际一个都没写进升级分支，因为交付仓库自己的 `.gitignore` 让 `git add` 跳过了它们。**没推上去是运气，不是闸门**，而报出去的数字是假的。修法按名字进 `IGNORED_NAMES`（`.env.local`、`__pycache__`），用例同时钉规则与结果：`accepts(...)` 两条 + 真跑一遍 `SNAPSHOT` 里 `noneMatch` 这三类路径，并且断言邻居 `.env.example` **仍然**要交付（不能顺手砍错）。修完那一次 `clean` 从 4 变 3、`binary` 从 1 变 0。
+- **抓出③「平台撤掉」名单在诱导人删业务代码**：路径并集按「三棵树里出现过」算，而 base 与 ours 是**整个项目提交**，里面本来就有 B/C 档 —— 于是 `SalesOrderService.java`、`SalesOrder.java` 那一套、`views/sales_order/SalesOrder.vue`、`sql/pages/*.sql` 连同 `.scaffold-project.json` 一起被报成「平台不再交付，删不删由人定」（12 格）。这份名单就这么给审的人看，就是让他删自己的东西：B 档下次发布自己会覆盖，C 档平台永不碰。修法：并集只收平台管得着的 —— `GeneratedPaths.isPagePublishOwned` 命中的形状与项目标记文件一律不进名单（判据仍出自那一份档位真相，不在网关里重算）。修完 `dropped` 从 12 变 0、`unchanged` 从 284 变 275。**留了一条没动**：`.scaffold-project.json` 里的 `baseScaffoldSha` 升级后不更新（DB 的 `lc_project.base_scaffold_sha` 才是真相，10F 负责推进它）；要让标记文件也跟着走，得先决定它是不是该由快照来交付 —— 那是另一个口径，记在这里不当场拍。
+- **存量项目的 base 侧缺口**：项目 23 的远端**根本没有** `yuanda/platform-base/*` tag —— 它的初始化（11-04 07:28）早于「初始化打 tag」那段代码上线，而 `initialize` 在已就绪的项目上会拒绝重来，所以这类项目靠界面永远补不上。演练时按平台自己的格式手工补打了一次（tag 指向 `2dbf5989`，判据是那份 `.scaffold-project.json` 里记的底座号与库里 `base_scaffold_sha` 完全一致 —— 这就是「人工补打底座标记 tag」那个待办的真身，现在有了用例与一句可复现的操作）。
+- **顺手抓到一条 UI 自相矛盾**：抽屉里「底座标记 tag」那行写的是「未记录底座提交号，该项目做不了三方底座升级」，而同一屏上面两行就显示着底座提交 `effbcfe867`。原因是这句文案只看工作区读数里的 `baseTag`，那次请求没回来它就是空的 —— 把「我没读到」说成了「这个项目没记号」。改成两个来源各说各的：有没有记号看项目行本身，远端有没有 tag 才看工作区读数，读不到就明说「未核对」。
+- **环境**：`:8080` 那个 11:20 起的旧包不仅没有 `base-status`，还对所有要鉴权的接口**只接受连接不返回字节**（`/api/health` 200 而 `/api/lowcode/...` 挂死），这就是用户截图里「底座落后 读取中…」转不停的直接原因 —— 不是上面那三条。换新包后同一请求 0.3 秒回。
+
+**测试与 e2e 实际跑了什么**：上一节的三条负向与真合并路径之外，本轮新增 `JGitGatewayTest` 2 例（缺底座 tag 的拒绝要说「补打底座标记 tag」且不动远端任何分支；升级结论里不许出现 B/C 档与项目标记文件，夹具先自证那两条路径确实是页面发布可写的形状）、`ScaffoldSnapshotPlannerTest` 1 例（本机文件不进 A 档清单，规则与结果都断）；后端全量 **370 例 0 失败**（common 10 + framework 42 + lowcode 175 + generator 6 + admin 137），前端 `vue-tsc` + `vite build` + 45 例全绿。**踩了自己记过的那条**：`-Dtest='A+B'` 是「同一个类的多个方法」的写法，我拿来并两个类，结果一条没跑还 `BUILD SUCCESS` —— 判成败要看 `Tests run` 的行数，不能只看 rc。
 
 ## 2026-11-06（PR 9：页面回滚 —— 以一笔新提交把那一版的内容推回发布分支）
 
