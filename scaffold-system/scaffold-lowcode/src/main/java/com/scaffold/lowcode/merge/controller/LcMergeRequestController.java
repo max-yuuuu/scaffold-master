@@ -38,8 +38,10 @@ public class LcMergeRequestController {
 
     @GetMapping("/merge-requests")
     @RequiresPermission("lowcode:merge-request:list")
-    public R<PageResult<Map<String, Object>>> requests(PageQuery query, @RequestParam(required = false) Long projectId) {
-        return R.success(service.list(query, projectId));
+    public R<PageResult<Map<String, Object>>> requests(PageQuery query,
+                                                       @RequestParam(required = false) Long projectId,
+                                                       @RequestParam(defaultValue = "false") boolean onlyMine) {
+        return R.success(service.list(query, projectId, onlyMine));
     }
 
     /** 详情带变更文件清单（冲突的排在最前）；打开时若目标分支已前进，这一条会当场转陈旧 */
@@ -55,5 +57,25 @@ public class LcMergeRequestController {
     @OperLog(module = "合并请求", action = "重新计算合并请求")
     public R<Map<String, Object>> refresh(@Valid @RequestBody MergeRequestRefreshRequest request) {
         return R.success(service.refresh(request.getProjectId()));
+    }
+
+    /** 单个文件的行内差异：抽屉里点开一行才拉一次，不一次把整份补丁搬回浏览器 */
+    @GetMapping("/merge-requests/{id}/file-diff")
+    @RequiresPermission("lowcode:merge-request:list")
+    public R<Map<String, Object>> fileDiff(@PathVariable Long id, @RequestParam String path) {
+        return R.success(service.fileDiff(id, path));
+    }
+
+    /**
+     * 确认合并：把这条请求算过的那一对提交合进人工主干并推送。
+     *
+     * <p>权限点与「看清单」分开，服务里还有一道「必须是项目负责人或平台超管」的判定 ——
+     * 权限点回答「这类动作允许不允许」，负责人判定回答「这个人是不是该为这条主干负责」。
+     */
+    @PostMapping("/merge-requests/{id}/merge")
+    @RequiresPermission("lowcode:merge-request:merge")
+    @OperLog(module = "合并请求", action = "确认合并")
+    public R<Map<String, Object>> merge(@PathVariable Long id) {
+        return R.success(service.merge(id));
     }
 }

@@ -69,6 +69,12 @@
 }
 .icon-btn:hover:not(:disabled) { color: var(--ink); background: var(--hover-bg); }
 .icon-btn:disabled { opacity: .45; }
+/* 执行中那颗不许被禁用态压暗：转圈正是给刚点下去的人看的，压到 .45 就等于没反馈。
+   与上一行同权重，靠顺序取胜，别把它挪到 :disabled 前面 */
+.icon-btn[aria-busy='true'] { opacity: 1; }
+/* .spinner 自己没有默认宽高（只在 .btn 里给过一档），不写这两行会按内容算成 0×0 */
+.icon-btn .spinner { width: 16px; height: 16px; }
+.icon-btn-sm .spinner { width: 14px; height: 14px; }
 .icon-btn.is-bordered { border: 1px solid var(--line-strong); background: var(--input-bg); box-shadow: var(--edge); }
 .icon-btn.is-danger:hover:not(:disabled) { color: var(--red-text); background: var(--red-soft); }
 /* 开关型的图标按钮（锁定、隐藏这类「当前是这个状态」）：不点亮就看不出按过没按过 */

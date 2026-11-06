@@ -40,6 +40,6 @@ const iconName = computed(() => props.icon ?? LABEL_ICONS[props.label ?? ''] ?? 
 </script>
 
 <template>
-  <IconButton v-if="allowed && iconOnly" :name="iconName" :label="label ?? ''" :danger="danger" :disabled="disabled" small />
+  <IconButton v-if="allowed && iconOnly" :name="iconName" :label="label ?? ''" :danger="danger" :loading="loading" :disabled="disabled" small />
   <Button v-else-if="allowed" :variant="variant" :icon="icon" :size="size" :danger="danger" :loading="loading" :disabled="disabled"><slot>{{ label }}</slot></Button>
 </template>

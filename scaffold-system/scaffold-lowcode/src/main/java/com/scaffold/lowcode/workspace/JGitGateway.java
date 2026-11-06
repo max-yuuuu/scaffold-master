@@ -6,6 +6,8 @@ import jakarta.annotation.PreDestroy;
 import org.eclipse.jgit.api.CreateBranchCommand;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.MergeCommand;
+import org.eclipse.jgit.api.MergeResult;
 import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
@@ -471,6 +473,120 @@ public class JGitGateway implements GitGateway {
             }
         }
         return new int[]{additions, deletions};
+    }
+
+    @Override
+    public String fileDiff(Path dir, String baseSha, String headSha, String path) {
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId baseTree = repo.resolve(baseSha + "^{tree}");
+            ObjectId headTree = repo.resolve(headSha + "^{tree}");
+            if (baseTree == null || headTree == null) {
+                throw new BusinessException("要取差异的两个提交不在工作区里：" + baseSha + " / " + headSha);
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            try (ObjectReader reader = repo.newObjectReader();
+                 DiffFormatter formatter = new DiffFormatter(out)) {
+                CanonicalTreeParser base = new CanonicalTreeParser();
+                base.reset(reader, baseTree);
+                CanonicalTreeParser head = new CanonicalTreeParser();
+                head.reset(reader, headTree);
+                formatter.setRepository(repo);
+                formatter.setDetectRenames(true);
+                for (DiffEntry entry : formatter.scan(base, head)) {
+                    // 改名的两侧名字都要比：清单上那一行可能是旧名
+                    if (path.equals(entry.getNewPath()) || path.equals(entry.getOldPath())) {
+                        formatter.format(entry);
+                    }
+                }
+            }
+            return out.toString(StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new BusinessException("读取 " + path + " 的差异失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
+                                  String sourceSha, String message) {
+        Path temp;
+        try {
+            temp = Files.createTempDirectory("scaffold-merge-");
+        } catch (IOException e) {
+            throw new BusinessException("创建合并用的临时目录失败：" + e.getMessage());
+        }
+        try {
+            cloneBranch(temp, repoUrl, targetBranch);
+            String now = localBranchSha(temp, targetBranch);
+            if (now == null) {
+                throw new BusinessException("远端没有分支 " + targetBranch + "，合并没有目标");
+            }
+            if (!now.equals(expectedTargetSha)) {
+                throw new BusinessException("目标分支 " + targetBranch + " 已前进（算清单时是 "
+                        + abbrev(expectedTargetSha) + "，现在远端是 " + abbrev(now) + "）：这条请求要重算再合");
+            }
+            MergeResult result;
+            try (Git git = open(temp)) {
+                ObjectId theirs = resolveRevision(git.getRepository(), sourceSha);
+                if (theirs == null) {
+                    throw new BusinessException("要合进来的提交不在仓库里：" + sourceSha);
+                }
+                result = git.merge()
+                        .include(theirs)
+                        .setFastForward(MergeCommand.FastForwardMode.NO_FF)
+                        .setMessage(message)
+                        .call();
+            }
+            MergeResult.MergeStatus status = result.getMergeStatus();
+            if (status == MergeResult.MergeStatus.ALREADY_UP_TO_DATE) {
+                // 主干已经含着这些内容：没什么可推的，但这条请求确实是了结了
+                return now;
+            }
+            if (status == MergeResult.MergeStatus.CONFLICTING) {
+                List<String> conflicts = result.getConflicts() == null
+                        ? List.of() : List.copyOf(result.getConflicts().keySet());
+                throw new BusinessException("合并有冲突，必须人解（平台不替人取舍）："
+                        + (conflicts.isEmpty() ? "冲突文件清单未给出" : String.join("、", conflicts)));
+            }
+            if (!status.isSuccessful() || result.getNewHead() == null) {
+                throw new BusinessException("合并未成功：" + status + "（远端主干未被改动）");
+            }
+            String merged = result.getNewHead().getName();
+            pushBranch(temp, targetBranch);
+            String confirmed = remoteShaOf(lsRemote(repoUrl), targetBranch);
+            if (!merged.equals(confirmed)) {
+                throw new BusinessException("推送后回读远端 " + targetBranch + " 得到 "
+                        + (confirmed == null ? "无该分支" : abbrev(confirmed)) + "，与本次合并 "
+                        + abbrev(merged) + " 不一致：合并没有记账，请核对远端后重试");
+            }
+            return merged;
+        } catch (GitAPIException | IOException e) {
+            throw new BusinessException("合并到 " + targetBranch + " 失败：" + rootMessage(e)
+                    + "（远端主干未被改动）");
+        } finally {
+            deleteRecursively(temp);
+        }
+    }
+
+    /** 远端某条分支现在的提交号；没有这条分支时返回 null */
+    private static String remoteShaOf(List<RemoteRef> refs, String branch) {
+        String wanted = HEADS_PREFIX + branch;
+        return refs.stream().filter(ref -> wanted.equals(ref.name())).map(RemoteRef::sha).findFirst().orElse(null);
+    }
+
+    private static String abbrev(String sha) {
+        return sha == null || sha.length() < 8 ? sha : sha.substring(0, 8);
+    }
+
+    private static void deleteRecursively(Path dir) {
+        if (dir == null || !Files.exists(dir)) {
+            return;
+        }
+        try (var paths = Files.walk(dir)) {
+            paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> path.toFile().delete());
+        } catch (IOException e) {
+            // 临时目录没删干净不影响合并结果，只是占着磁盘；这里不拿它覆盖已经成功的合并结论
+        }
     }
 
     @PreDestroy

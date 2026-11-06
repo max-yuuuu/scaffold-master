@@ -105,4 +105,36 @@ public interface GitGateway {
      * @param theirsRev 源分支（平台发布分支）的分支名或提交号
      */
     MergeCheck checkMerge(Path dir, String oursRev, String theirsRev);
+
+    /**
+     * 单个文件在 {@code baseSha..headSha} 之间的 unified diff，供审查页展开行内对照。
+     *
+     * <p>按文件现算而不是整份拉回来：一次大重构的全量 diff 能到几百 KB，抽屉首屏不该等它；
+     * 而两个提交号已经把「算的是哪一对」钉死，按需算不会有和清单对不上的风险。
+     *
+     * @return 该文件的补丁文本；这个文件不在这段改动里时返回空串（不是 null，前端不用判两种空）
+     */
+    String fileDiff(Path dir, String baseSha, String headSha, String path);
+
+    /**
+     * 把源分支的提交真合并进目标分支并推上去 —— 平台唯一会写人工主干的动作。
+     *
+     * <p><b>全程在一份临时 clone 里做，平台工作区一条引用都不动</b>：工作区的 HEAD 属于发布分支，
+     * 把它切到主干上合并，下一次发布就可能把生成物提交到主干上去。clone 也从远端重新取，
+     * 于是合并的起点是主干<b>当前</b>的样子，不是本地那份缓存。
+     *
+     * <p>三道拒绝：{@code expectedTargetSha} 与远端现在不一致（预检之后主干又前进了，这条请求算的是旧的一对提交）；
+     * 真冲突（只报文件清单，不替人取舍）；推送非快进被远端拒（refspec 不带 {@code +}，平台永不强推）。
+     * 用 {@code NO_FF} 固定产生合并提交，让「这次审核放行了什么」在历史里是一个可指的两个父亲的提交。
+     *
+     * @param workspace 项目工作区，只用来取凭据与远端地址，不会被改动
+     * @param repoUrl 仓库地址
+     * @param targetBranch 目标分支（人工主干）
+     * @param expectedTargetSha 预检时看到的主干提交号，不一致就拒
+     * @param sourceSha 要合进来的提交号（发布分支当前值）
+     * @param message 合并提交说明
+     * @return 落到远端主干的那个合并提交号
+     */
+    String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
+                           String sourceSha, String message);
 }
