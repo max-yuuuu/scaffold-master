@@ -37,12 +37,12 @@
   },
   {
     "number": 1,
-    "category": "阶段 1：壳包化（不动目录位置）",
+    "category": "阶段 1：壳包化（①a 贡献点机制已落地，①b 搬平台页面未完）",
     "task": "前端壳成为 workspace 包并暴露三个贡献点",
     "steps": [
       {
         "step": "先写红用例：断言宿主能在不改壳源码的前提下注册一条自己的路由（RouteContribution），且菜单解析认得宿主贡献的 component 路径",
-        "completed": false
+        "completed": true
       },
       {
         "step": "再写红用例：断言底座目录内不出现 api/platform 与 views/lowcode 字符串、@/ 只解析到壳自身目录（这一条在旧结构上允许暂时红，作为阶段 3 的守卫提前立好）",
@@ -54,11 +54,11 @@
       },
       {
         "step": "新建 src/shell/index.ts：createScaffoldApp({ routes, menuSource, permission, slots })，沿用 installScaffoldUi 的注入形状，不另造第二套契约",
-        "completed": false
+        "completed": true
       },
       {
         "step": "router/index.ts 改为按贡献表建路由：壳自己的 views 用 glob，宿主页面走显式申报；保留 sys_menu.component 到模块路径的既有解析约定",
-        "completed": false
+        "completed": true
       },
       {
         "step": "AppShell.vue / Topbar.vue / Sidebar.vue 开具名插槽，把平台专属那几处（已切换租户指示、低代码入口）从改源码变成填插槽；顺手收掉 AppShell.vue:34 那条手写 820 断点副本，改读包内 narrow.ts",

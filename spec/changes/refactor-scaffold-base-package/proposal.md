@@ -23,7 +23,8 @@
 ## What Changes
 
 - **⓪ 升级后半截的界面入口（原第一份提案并入，最先合）**：升级结果屏那句「下一步」旁、以及底座读数里状态为「待合并」那行，各挂一颗「生成合并请求」，带该条记录的 `upgradeBranch` 调已有的 `refresh`；复用现成的清单、行内差异与确认合并界面，不放开任意分支进审核队列。今天这两处只能传 `projectId`，后端按口径回落发布分支，所以升级分支在界面上变不成待审请求 —— 10G 那趟闭环是从接口侧跑通的。这一刀与目录无关，单独一条分支当天可合。
-- **① 前端壳包化（不动目录位置）**：`scaffold-vue` 成为一个 workspace 包 `@yuanda-lowcode-ai/scaffold-base-app`，新增 `src/shell/index.ts` 暴露三样东西——路由贡献、菜单与权限来源、外壳具名插槽。平台页面改由宿主显式注册（`import.meta.glob` 只扫得到壳自己的目录，这是注入而非审美的技术理由）。做完这一步**零重复即成立**。
+- **① 前端壳包化**：`scaffold-vue` 成为一个 workspace 包 `@yuanda-lowcode-ai/scaffold-base-app`，新增 `src/shell/index.ts` 暴露三样东西——路由贡献、菜单与权限来源、外壳具名插槽。平台页面改由宿主显式注册（`import.meta.glob` 只扫得到壳自己的目录，这是注入而非审美的技术理由）。做完这一步**零重复即成立**。
+  - **实际拆成两段做（①a 已完成）**：①a 只做「贡献点机制」——`shell/views.ts` 视图注册表（不静默覆盖、冲突留清单）、`shell/routes.ts` 壳外路由申报、`shell/router.ts` 工厂、`shell/index.ts` 装配入口、`src/platform.ts` 平台申报 + 排除表补一行；目录一个没动。①b 才是把平台页面搬出去、`AppShell/Topbar/Sidebar` 开插槽、`package.json` 正式成为 workspace 包并收掉 `AppShell.vue` 那条手写 820 副本。**在 ①b 之前底座的 glob 恰好也覆盖得到平台页面，界面上看不出差别，不能把「能跑」当成「已隔离」。**
 - **② 后端装配下沉**：把 `SecurityConfig`、过滤器顺序、`@MapperScan` 清单、菜单种子从可执行模块拆成 `scaffold-admin-core` 库。原因是 Spring Boot repackage 出的 fat jar **不能被别的 Maven 模块依赖**，不拆就只有拷贝一条路。底座与平台各留一个薄启动模块，两个启动模块各列各的 `*.mapper` 包（写成包根会把服务接口注册成 Mapper，构造注入打成二义）。
 - **③ 搬目录**：`packages/scaffold-app/` 收 `backend/`（Maven 多模块）、`vue/`、`sql/`、`deploy/` + 两份 Dockerfile + `docker-compose.yml`、`README.md`/`DESIGN.md`/`AGENTS.md`；平台侧集中到 `scaffold-platform/`（`lowcode/` 含 `.ftl` 模板、`admin/`、`vue/` 薄宿主、`sql/` 含 `verify/` 与平台 IT）。`packages/scaffold-ui` 不动。
 - **④ 交付路径映射表**：新增「底座内部路径 → 交付路径」的显式表（`packages/scaffold-app/backend/** → scaffold-system/**`、`vue/** → scaffold-vue/**`、`sql/** → scaffold-system/sql/**`）。从此底座内部再怎么挪都不改交付仓库的形状，`GeneratedPaths` 的档位正则与菜单 `component` 契约不受影响。

@@ -72,6 +72,19 @@ class ScaffoldSnapshotPlannerTest {
     }
 
     @Test
+    void 应用壳的宿主申报入口不进交付项目而裁后的装配仍能编译() {
+        // 平台对应用壳的申报（视图解析表 + 壳外路由）指向的是 views/lowcode 里的页面：
+        // 交付项目既没有那些页面也没有 /api/lowcode，留下就是一份指向不存在模块的申报
+        assertThat(ScaffoldTrimPolicy.accepts("scaffold-vue/src/platform.ts")).isFalse();
+        assertThat(SNAPSHOT.paths()).noneMatch(path -> path.equals("scaffold-vue/src/platform.ts"));
+        // 装配处那个调用参数也要一起裁干净：只裁 import 会留下一个不存在的名字，
+        // 而这类"裁完编译不过"的事在单测里完全无感知，只有真起构建才看得见
+        String entry = textOf("scaffold-vue/src/main.ts");
+        assertThat(entry).doesNotContain("platformContribution");
+        assertThat(entry).contains("createScaffoldApp(");
+    }
+
+    @Test
     void 底座机器上的本机文件不进A档清单() {
         // 10G 真机抓的：裁剪走的是文件系统遍历，.gitignore 对它不起作用。
         // scaffold-admin/.env.local 里就是开发用的 JWT_SECRET，__pycache__ 里是编译过的字节码，

@@ -1,15 +1,16 @@
-import { ref, type Component } from 'vue'
+import { ref } from 'vue'
 import type { RouteRecordRaw } from 'vue-router'
 import { ApiError, authApi, authSession, type CurrentUser, type LoginRequest, type LoginResponse, type RegisterRequest, type RouteItem } from '@/api'
 import { setPermissions } from '@/composables/permission'
 import type { NavGroup, NavLeaf } from '@/data'
+import { resolveView } from '@/shell/views'
 import { clearDictCache } from '@yuanda-lowcode-ai/scaffold-ui/composables/dict'
 import { clearDeptCache } from '@yuanda-lowcode-ai/scaffold-ui/composables/dept'
 
 /* ============================================================
    登录态、权限与动态菜单。
    菜单与路由完全来自后端 /api/auth/routes（sys_menu 表），
-   前端只维护「组件路径 → 页面组件」的映射。
+   「组件标识 → 页面组件」这张表由装配处登记进 shell/views.ts，这里只查不建。
    ============================================================ */
 
 export const authed = ref<boolean>(authSession.isAuthenticated())
@@ -40,26 +41,13 @@ setPermissions(currentUser.value?.permissions ?? [])
  * 2. 其余页面按 `views/<component>.vue` 约定自动解析（例如 system/notice/index
  *    对应 views/system/notice/index.vue），新增页面无需再改动本文件。
  */
-const VIEW_MODULES = import.meta.glob('../views/**/*.vue') as Record<string, () => Promise<{ default: Component }>>
-
-const COMPONENT_ALIAS: Record<string, string> = {
-  'dashboard/index': '../views/Dashboard.vue',
-  'system/user/index': '../views/system/Users.vue',
-  'system/role/index': '../views/system/Roles.vue',
-  'system/menu/index': '../views/system/Menus.vue',
-  'system/dept/index': '../views/system/Depts.vue',
-  'system/post/index': '../views/system/Posts.vue',
-  'system/dict/index': '../views/system/Dict.vue',
-  'system/config/index': '../views/system/Configs.vue',
-  'monitor/operlog/index': '../views/monitor/OperLog.vue',
-  'monitor/loginlog/index': '../views/monitor/LoginLog.vue',
-  'tool/gen/index': '../views/tool/Generator.vue',
-}
-
+/**
+ * 菜单里的 component 标识 → 组件：解析表住在 shell/views.ts 的注册表里，由装配处按顺序登记。
+ * 这里不再自己 glob 一次 —— 那样只能覆盖底座自己那一个 views 目录，宿主（平台前端、以及将来
+ * 二开的交付项目）的页面就永远解析不到，只能把文件塞进底座目录，方向刚好反了。
+ */
 function resolveComponent(component: string | undefined) {
-  if (!component) return undefined
-  const target = COMPONENT_ALIAS[component] ?? `../views/${component}.vue`
-  return VIEW_MODULES[target]
+  return resolveView(component)
 }
 
 /** 路由名由路径推导：/system/user → system-user */

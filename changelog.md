@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-06（低代码 · 第①刀 a 段：应用壳的贡献点机制，路由与视图不再只认底座自己那一张表）
+
+`refactor-scaffold-base-package` 的第①刀拆成两段，这次是前一段「贡献点机制」。**目录一个没动**，平台页面仍住在 `scaffold-vue/src/views/lowcode/` —— 后一段（①b）才把它们搬去 `scaffold-platform/vue/`。
+
+为什么要有这一段：`composables/auth.ts` 里那张「菜单 component 标识 → 组件」的表是硬 glob 出来的（只覆盖底座自己的 `views` 目录），静态路由同理写死在 `router/index.ts`。于是宿主（平台前端、以及将来二开的交付项目）想加页面就得**把文件塞进底座目录**，方向刚好反了；而设计器那条挂在壳外的路由，今天靠一对 `scaffold:platform-only` 标记块从交付快照里挖掉 —— 底座得知道一条只有平台才有的路由。
+
+- **`src/shell/views.ts` 视图注册表**：`registerViews(owner, { modules, alias, prefix })` + `resolveView(component)`。口径抄 C 档：**先登记的一方占住标识，后来者不静默覆盖**，被拒的记进冲突清单（`viewConflicts()`）。这一层故意不调 glob，所以能在 node 下直接测。
+- **`src/shell/routes.ts` 壳外路由申报**：同名路由不覆盖，`shellRouteOwner(name)` 说得清是谁挡了谁。
+- **`src/shell/router.ts` 路由工厂 + `src/shell/index.ts` 装配入口**：`createScaffoldApp(contributions)` 先登记底座的 glob 与历史 alias 表、再登记宿主的，然后构造 router。守卫、落点计算（`homePath`）、401 处理、深链查询参数保留这些逻辑**一格都没改**，`src/router/index.ts` 随之删除（此前只有 `main.ts` 引它）。
+- **`src/platform.ts` 平台侧申报**（视图表 + 设计器路由），并在 `ScaffoldTrimPolicy` 的排除表补一行 —— 这条是记忆里那个坑：新增引用平台侧的文件忘了补排除，交付初始化会被残留扫描拒绝而单测全绿看不见。
+- **交付版装配必须还能编译**（这次唯一需要专门想的一处）：`main.ts` 里若只在 `import` 上包标记块，裁完留下的 `createScaffoldApp([platformContribution])` 会引用一个不存在的名字，而前端单测与 `vue-tsc` 都跑在**未裁剪**的源码上，完全无感知。所以调用参数单独包一对块，并新增用例 `应用壳的宿主申报入口不进交付项目而裁后的装配仍能编译`：断言清单里没有 `platform.ts`、裁后的 `main.ts` 不含 `platformContribution` 且仍带着 `createScaffoldApp(`。
+- **实际跑过**：前端 64 例全绿（新增 9 例：视图注册表 5 条 + 路由申报 4 条，先跑出 `ERR_MODULE_NOT_FOUND` 的正红；中途自己踩到一条假红 —— 注释里写了 glob 字面量，`**/*.vue` 里的星号斜杠把块注释提前关掉，导致 `ERR_INVALID_TYPESCRIPT_SYNTAX`）；`vue-tsc` 通过；`vite build` 通过；`ScaffoldSnapshotPlannerTest` 14 例全绿（含那条新用例）。`scaffold-vue/package.json` 的 `test:unit` glob 补上 `src/shell/__tests__/*.test.ts`。
+- **负向对照跑过**：把排除表那一行注释掉复跑，新用例当场红在 `:78`（`accepts("scaffold-vue/src/platform.ts")` 那条），复跑恢复后 14 例绿 —— 这条闸门确实守得住，不是描述现状。
+- **如实记两条没做的**：① **浏览器仍未点过**（本机 :8080 后端在当前库口令不通，:5173 被并行会话占着），所以「动态菜单在真实登录态下解析正常」这件事只是靠「逻辑未改 + 构建通过」推断，不是验证过；② **①b 未完** —— 平台页面还在底座目录里，底座的 glob 恰好也覆盖得到，因此现在界面上看不出任何差别，别把「能跑」读成「已隔离」。真正的隔离要等文件搬走、`platform.ts` 的前缀与 glob 开始起作用。
+
+
 ## 2026-11-06（低代码 · 第 0 刀：让升级分支在界面上变成待审合并请求）
 
 `refactor-scaffold-base-package` 提案并入的第一刀，也是最小的一刀。现象是：平台推出 `platform-upgrade/*` 分支后，人没法在界面上把它变成一条待审的合并请求 —— 合并请求页那颗「生成」只传 `projectId`，后端按口径回落**发布分支**；于是点下去得到的是「发布分支 → 主干」的请求，而人以为自己在审升级内容。少带一个字段不会报错，只会让人审错东西。10G 那趟真机闭环因此是从接口侧跑通的，而升级结果屏那句「下一步：在「合并请求」里选 platform-upgrade/xxx → main」指的是件界面上做不到的事。
