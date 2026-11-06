@@ -611,6 +611,29 @@ public class JGitGateway implements GitGateway {
             return null;
         }
     }
+    @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        Path temp;
+        try {
+            temp = Files.createTempDirectory("scaffold-basetag-");
+        } catch (IOException e) {
+            throw new BusinessException("创建打底座标记用的临时目录失败：" + e.getMessage());
+        }
+        try {
+            cloneBranch(temp, repoUrl, targetBranch);
+            String head = localBranchSha(temp, targetBranch);
+            if (head == null) {
+                throw new BusinessException("远端分支 " + targetBranch + " clone 下来是空的，打不了底座标记");
+            }
+            // tag 打在这条分支当前那一笔上：合并刚做完时它就是那笔合并提交，
+            // 隔了一轮再补打则打在最新一笔上 —— 语义都是「这个仓库现在的 A 档来自哪个底座」
+            boolean created = tagCommit(temp, tagName, head, message);
+            pushTag(temp, tagName);
+            return created;
+        } finally {
+            deleteRecursively(temp);
+        }
+    }
 
     @Override
     public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,

@@ -144,6 +144,11 @@ public class LocalBareGitGateway implements GitGateway {
         return jgit.commitCountBetween(repoDir, fromSha, toSha);
     }
 
+    @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        return jgit.stampBaseTag(workspace, bareUrl(repoUrl), targetBranch, tagName, message);
+    }
+
     /** 升级同样照真 JGit 走，远端地址映射到本机裸仓库 —— 否则用例会去推真 GitHub */
     @Override
     public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,

@@ -203,6 +203,12 @@ public class StubGitGateway implements GitGateway {
     }
 
     @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        pushedTags.add(tagName);
+        return true;
+    }
+
+    @Override
     public BaseUpgrade baseUpgrade(java.nio.file.Path workspace, String repoUrl, String mainBranch, String baseTag,
                                    java.util.Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
         throw new UnsupportedOperationException("StubGitGateway 不做底座升级：三方合并与升级分支要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");

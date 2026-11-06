@@ -747,6 +747,42 @@ class JGitGatewayTest {
         assertThat(gateway.commitCountBetween(tempDir.resolve("不是仓库"), sha, sha)).isNull();
     }
 
+    /** 升级合进主干后的那一步：base 侧要跟着走，否则下一次升级把已经下发过的内容再下发一遍 */
+    @Test
+    void 底座标记tag打在目标分支当前提交上且同名不移动() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String first = gateway.commitAll(workspace, "chore: 主干第一笔");
+        gateway.pushBranch(workspace, "main");
+
+        String tag = PlatformBaseTag.name(first);
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isTrue();
+        assertThat(gateway.lsRemote(remoteUrl)).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(tag);
+            assertThat(ref.commitSha()).isEqualTo(first);
+        });
+
+        // 主干又走了一步：同名 tag 原样留着（移动它等于改掉某一轮升级的 base 侧），新名字才指向新的一笔
+        gateway.checkoutBranch(workspace, "main", first);
+        write(workspace, "b.txt", "2\n");
+        String second = gateway.commitAll(workspace, "chore: 主干第二笔");
+        gateway.pushBranch(workspace, "main");
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isFalse();
+        String newTag = PlatformBaseTag.name(second);
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", newTag, "底座快照")).isTrue();
+
+        List<RemoteRef> refs = gateway.lsRemote(remoteUrl);
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(tag);
+            assertThat(ref.commitSha()).isEqualTo(first);
+        });
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(newTag);
+            assertThat(ref.commitSha()).isEqualTo(second);
+        });
+    }
+
     private String branchSha(String repoUrl, String branch) {
         return gateway.lsRemote(repoUrl).stream().filter(ref -> branch.equals(ref.branchName()))
                 .findFirst().orElseThrow(() -> new AssertionError("远端没有分支 " + branch)).sha();

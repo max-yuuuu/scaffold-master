@@ -5,6 +5,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.util.Map;
 
@@ -41,4 +42,29 @@ public interface LcBaseUpgradeMapper {
             LIMIT 1
             """)
     Map<String, Object> selectLatest(@Param("projectId") long projectId);
+
+    /**
+     * 按升级分支名查那次升级 —— 合并请求只知道分支名，而「这次升级下发到哪个底座」必须回到这条记录。
+     *
+     * <p>{@code ORDER BY id DESC LIMIT 1}：同名分支理论上只对应一次升级（分支名带底座短号，
+     * 重推会被「远端已有同名升级分支」挡住），但取最新一条不依赖那个前提成立。
+     */
+    @Select("""
+            SELECT id, project_id AS projectId, base_scaffold_sha AS baseScaffoldSha,
+                   target_scaffold_sha AS targetScaffoldSha, upgrade_branch AS upgradeBranch,
+                   status, message, create_by AS createBy, create_time AS createTime
+            FROM lc_base_upgrade
+            WHERE upgrade_branch = #{upgradeBranch}
+            ORDER BY id DESC
+            LIMIT 1
+            """)
+    Map<String, Object> selectByBranch(@Param("upgradeBranch") String upgradeBranch);
+
+    /** 收口一次升级：status=1 已合入主干；message 传 null 表示「只改状态不动文案」 */
+    @Update("""
+            UPDATE lc_base_upgrade
+            SET status = #{status}, message = COALESCE(#{message}, message)
+            WHERE id = #{id}
+            """)
+    int markStatus(@Param("id") long id, @Param("status") int status, @Param("message") String message);
 }

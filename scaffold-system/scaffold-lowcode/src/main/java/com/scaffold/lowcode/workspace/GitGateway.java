@@ -193,6 +193,20 @@ public interface GitGateway {
     String snapshotCommit(Path dir, Map<String, byte[]> files, String message);
 
     /**
+     * 在目标分支的当前提交上打底座标记 tag 并推到远端（升级合进主干之后要做的第一件事）。
+     *
+     * <p>为什么不能拿平台工作区去打：合并是在一份临时 clone 里做的，那笔合并提交只活在临时 clone
+     * 与远端，工作区连这个对象都没有，本地建出来的 tag 指向一个不存在的提交，推都推不上去。
+     * 所以这里重新 clone 目标分支（它现在包含那笔合并），在正确的对象图上打 tag。
+     *
+     * <p>只创建不移动：同名 tag 已存在时返回 {@code false} 并且不动它 —— 移动它等于改掉某一轮升级的
+     * base 侧，三方合并会算出错的结果。
+     *
+     * @return tag 是这次新打的（{@code true}）还是本来就在（{@code false}，原样留着）
+     */
+    boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message);
+
+    /**
      * 完整一趟底座升级的 git 编排（方案 §5.2）：临时 clone 里算三方合并，把可自动合的文件写进
      * 从主干切出的升级分支并推上去。
      *
