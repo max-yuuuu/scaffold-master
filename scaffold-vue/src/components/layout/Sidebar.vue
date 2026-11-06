@@ -24,6 +24,8 @@ function go(path: string) {
 
 function sync(instant = false) {
   const target = nav.value?.querySelector<HTMLElement>('.nav-item.is-active') ?? null
+  // 刷新或 ⌘K 跳到靠后的菜单时，那一项本来就在滚动区外面：先把它滚进可视带，否则选中块停在屏幕外，看着就像导航没有高亮
+  target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   slideThumb(thumb.value, target, 'y', instant)
 }
 

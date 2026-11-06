@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-11-06（修复：刷新后左侧导航没定位到当前页面对应的菜单）
+
+- **根因不是竞态**：超管 18 项菜单在 1440×900 下 `.rail-nav` 内容高 945 > 可视带 756，落在 `/lowcode/merge-request` 这类靠后的页面上刷新时，选中玻璃块按内容坐标对位是对的（实测差 1px），但导航仍停在 `scrollTop=0`，那一项连同玻璃块一起停在可视带外 —— 看着就是「导航没有高亮」。顺带排掉一条猜测：外壳入场动画的 `tl.set(..., { y: 8 })` 挂在 paused timeline 上，首帧不生效，`sync()` 量到的就是终位。
+- **改法**：`Sidebar.vue` 的 `sync()` 在量位之前先 `target?.scrollIntoView({ block: 'nearest', inline: 'nearest' })`，挂载、`activeKey` 变化（含 ⌘K 跳转）、`navGroups`/折叠态变化、`ResizeObserver` 四个调用点一并覆盖。站内点击时那一项本来就在视区内，`nearest` 是 no-op，不会多一段跳动；`slideThumb` 用的是 `(tr.top - pr.top) + scrollTop` 的内容坐标，滚动前后都成立，不需要二次对位。
+- **验收**：`session-regression.py` 加了断言（点到最后一项 → 整页刷新 → 激活项必须落在 `.rail-nav` 可视带内、且玻璃块与其顶边相差 ≤2px），但本机没装 python playwright，这条脚本这次没跑起来。等价检查用无头 Chrome + CDP 在 1440×900 真视口跑三组：冷启动 `/lowcode/merge-request`（修前 `inView=false`、`scrollTop=0`；修后 `scrollTop=173`、`inView=true`、错位 0px）、冷启动 `/dashboard` 后用 ⌘K 跳「合并请求」（修后定位到位；把那一行注释掉做负向对照，报「站内跳转后菜单项仍在可视带外：scrollTop=0 项y=891」，说明断言不是空的）、折叠态冷启动。`vue-tsc` 与 `vite build` 全绿。
+
 ## 2026-11-06（PR 12：补打底座标记 tag 的入口 + 交付演练抓出的空操作列与默认导出）
 
 按「交付给别人第一天会撞到什么」的顺位排下来的头两件：10G 留下的「人工补打 tag 只能上命令行」，和 P5 交付 UI 走查收出的两条。这一刀跟着 PR #22 一起走（那条还没合，按「前置 PR 未合就继续提交到那条 PR」的口径不另开分支）。
