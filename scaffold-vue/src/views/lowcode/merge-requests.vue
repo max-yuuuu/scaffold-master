@@ -20,6 +20,7 @@ import {
   type ProjectOption,
 } from '@/api';
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list';
+import { useRoute } from 'vue-router';
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm';
 import {
   pushToast,
@@ -36,11 +37,14 @@ import {
 
 /* 筛选两条：归属项目 + 待我审核（按项目负责人过滤）。请求的标题是平台按分支与文件数生成的，
    对它做关键字过滤没有读者 —— 与其摆一个后端不认的输入框，不如不放。 */
+const route = useRoute();
+/* 项目抽屉里「为这条升级分支生成合并请求」跳过来时带 ?projectId=：跳页再让人自己挑一遍项目，
+   等于把刚建立的上下文丢掉。 */
 const list = useListPage<
   MergeRequestRow,
   { projectId: string; onlyMine: string }
 >({
-  query: { projectId: '', onlyMine: '' },
+  query: { projectId: String(route.query.projectId ?? ''), onlyMine: '' },
   fetch: params => platformApi.mergeRequests.list(params) as Promise<any>,
 });
 
