@@ -166,7 +166,9 @@ async function refresh() {
   }
 }
 
-const CHANGE_TONE: Record<string, string> = { ADD: 'ok', MODIFY: 'info', DELETE: 'danger', RENAME: 'purple' }
+/* ADD 绿 / MODIFY 蓝 / DELETE 红；RENAME 走中性灰 —— Tag 的 TONE_MAP 把 purple 归进 info，
+   原来配的紫色渲染不出来，改名与修改会同色分不开 */
+const CHANGE_TONE: Record<string, string> = { ADD: 'ok', MODIFY: 'info', DELETE: 'danger', RENAME: 'neutral' }
 
 /**
  * 展开那一行的补丁按前缀分类，颜色由 CSS 决定。
