@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
-import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
+import { platformApi, type BaseUpgradeResult, type InitializeResult, type ProjectBaseStatus, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
@@ -164,11 +164,69 @@ async function loadWorkspace() {
   }
 }
 
+/* ── 底座升级（PR 10）──────────────────────────────────────────
+   读数放在抽屉里而不是列表那一列：列表每行算一次就是「看一眼列表变成 N 次仓库动作」那条老坑，
+   哪怕这一步只读本地底座 checkout、一次都不碰远端，口径也不为它破例。
+   升级只推 platform-upgrade/* 分支，合不合由人在合并请求里定 —— 这里不放「顺手帮你合进主干」。 */
+const base = ref<ProjectBaseStatus | null>(null)
+const baseLoading = ref(false)
+const upgrading = ref(false)
+const upgradeResult = ref<BaseUpgradeResult | null>(null)
+
+const UPGRADE_STATUS_TEXT: Record<number, string> = {
+  0: '待合并', 1: '已合入主干', 2: '主干又前进了（陈旧）', 3: '没产生升级分支',
+}
+
+const baseBehindText = computed(() => {
+  if (!base.value) return '—'
+  if (base.value.upToDate) return '已在当前底座'
+  // 数不出来必须显示「未知」：报 0 就是「把不知道说成没问题」，比不报更坏
+  if (base.value.behindCommits === null) return '未知（读不到底座 git 历史，只能按文件比对）'
+  return `落后 ${base.value.behindCommits} 个底座提交`
+})
+
+async function loadBase() {
+  if (!repo.value) return
+  baseLoading.value = true
+  try {
+    base.value = await platformApi.projects.baseStatus(repo.value.id) as ProjectBaseStatus
+  } catch (error) {
+    base.value = null
+    toastError(error, '底座读数读取失败')
+  } finally {
+    baseLoading.value = false
+  }
+}
+
 async function openRepo(row: ProjectRow) {
   repo.value = row
   check.value = null
   workspace.value = null
-  await loadWorkspace()
+  upgradeResult.value = null
+  // 两个读数互不依赖，一起发：等工作区读完再读底座，抽屉首屏就慢一截
+  await Promise.all([loadWorkspace(), loadBase()])
+}
+
+async function runBaseUpgrade() {
+  if (!repo.value) return
+  const go = await confirm({
+    title: '发起底座升级',
+    message: '平台按当前底座重新生成固定代码（A 档），与项目主干做三方合并，'
+      + '只把能自动合的内容推到一条 platform-upgrade/* 分支上。不碰主干、不改历史：'
+      + '冲突的文件一个都不写，列出来由人回本地解；合不合进主干仍由人在合并请求里确认。',
+    confirmText: '发起升级',
+  })
+  if (!go) return
+  upgrading.value = true
+  try {
+    upgradeResult.value = await platformApi.projects.baseUpgrade(repo.value.id) as BaseUpgradeResult
+    pushToast(upgradeResult.value.message || '升级分支已推出', upgradeResult.value.commitSha ? 'ok' : 'info')
+    await loadBase()
+  } catch (error) {
+    toastError(error, '底座升级失败')
+  } finally {
+    upgrading.value = false
+  }
 }
 
 async function runCheck() {
@@ -425,6 +483,40 @@ async function remove(row: ProjectRow) {
       </Descriptions>
       <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
 
+      <Descriptions :column="2">
+        <DescriptionsItem label="底座落后">{{ baseLoading ? '读取中…' : baseBehindText }}</DescriptionsItem>
+        <DescriptionsItem label="底座当前提交">{{ shortSha(base?.scaffoldSha) }}</DescriptionsItem>
+        <DescriptionsItem label="最近一次升级" :span="2">{{ base?.latest?.message || '还没发起过升级' }}</DescriptionsItem>
+        <DescriptionsItem v-if="base?.latest" label="升级状态">{{ UPGRADE_STATUS_TEXT[base.latest.status] ?? base.latest.status }}</DescriptionsItem>
+        <DescriptionsItem v-if="base?.latest" label="升级分支">{{ base.latest.upgradeBranch || '—' }}</DescriptionsItem>
+      </Descriptions>
+
+      <!-- 升级结果：三档计数 + 要人解的清单。冲突的文件没写进分支，所以这里必须把名字列出来，
+           否则「这三格要人解」这句话在升级之后就没地方说了 -->
+      <template v-if="upgradeResult">
+        <Descriptions :column="2">
+          <DescriptionsItem label="可自动合">{{ upgradeResult.clean }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="要人解">{{ upgradeResult.conflict }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="平台撤掉">{{ upgradeResult.dropped }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="无需改动">{{ upgradeResult.unchanged }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="升级分支" :span="2">{{ upgradeResult.upgradeBranch || '未创建（没有可自动下发的内容）' }}</DescriptionsItem>
+        </Descriptions>
+        <ul v-if="upgradeResult.conflictPaths.length || upgradeResult.droppedPaths.length" class="upgrade-paths">
+          <li v-for="path in upgradeResult.conflictPaths" :key="'c' + path"><Tag tone="danger" dot>要人解</Tag><span class="mono">{{ path }}</span></li>
+          <li v-for="path in upgradeResult.droppedPaths" :key="'d' + path"><Tag tone="neutral" dot>平台撤掉</Tag><span class="mono">{{ path }}</span></li>
+        </ul>
+        <p v-if="upgradeResult.commitSha" class="hint">
+          下一步：在「合并请求」里选 {{ upgradeResult.upgradeBranch }} → {{ repo?.mainBranch }} 审这份差异，确认后才进主干。
+        </p>
+      </template>
+
+      <div class="drawer-actions">
+        <PermissionButton perm="lowcode:project:upgrade" variant="primary" icon="branch" :loading="upgrading"
+                          :disabled="baseLoading" @click="runBaseUpgrade">
+          发起底座升级
+        </PermissionButton>
+      </div>
+
       <p v-if="!check" class="hint">还没检查过：检查连通性只读远端引用，不改动项目状态，也不推任何东西。</p>
       <Descriptions v-else :column="2">
         <DescriptionsItem label="能否访问">{{ check.reachable ? '可访问' : '不可访问' }}</DescriptionsItem>
@@ -466,6 +558,36 @@ async function remove(row: ProjectRow) {
     </FormDialog>
   </ListPage>
 </template>
+
+.upgrade-paths {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upgrade-paths li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 路径可能很长：让它自己截断，别把抽屉撑出横向滚动条 */
+.upgrade-paths .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
 
 <style scoped>
 .sync-cell {

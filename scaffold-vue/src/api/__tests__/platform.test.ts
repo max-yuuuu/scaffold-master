@@ -117,6 +117,41 @@ test('版本历史与回滚：读走 GET，写走 POST 且必须点明退回哪�
   assert.equal(result.tagName, 'vorder-serive-sales_order_page-3')
 })
 
+test('底座升级：读数是 GET，发起是 POST 且不带任何「顺手合进主干」的参数', async () => {
+  const calls: Array<{ url: string, method: string, body?: string }> = []
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body as string | undefined })
+    return new Response(JSON.stringify({
+      code: 200,
+      message: 'success',
+      data: calls.length === 1
+        // 数不出来时后端给 null，界面显示「未知」而不是 0 —— 这条形状是契约的一部分
+        ? { baseScaffoldSha: 'a'.repeat(40), scaffoldSha: 'b'.repeat(40), upToDate: false, behindCommits: null, latest: null }
+        : { projectCode: 'order-serive', upgradeBranch: 'platform-upgrade/bbbbbbb', commitSha: 'c'.repeat(40),
+            clean: 3, conflict: 1, dropped: 0, unchanged: 279, binary: 0,
+            conflictPaths: ['scaffold-vue/package.json'], droppedPaths: [], status: 0, message: '已推升级分支' },
+      traceId: 't',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const api = createPlatformApi(createHttpClient({ baseUrl: '/api', tokenProvider: () => 'token', fetcher }))
+
+  const status = await api.projects.baseStatus(23)
+  const upgrade = await api.projects.baseUpgrade(23)
+  await api.mergeRequests.refresh({ projectId: 23, sourceBranch: 'platform-upgrade/bbbbbbb' })
+
+  assert.equal(calls[0].method, 'GET')
+  assert.equal(calls[0].url, '/api/lowcode/projects/23/base-status')
+  assert.equal(status.behindCommits, null)
+  assert.equal(calls[1].method, 'POST')
+  assert.equal(calls[1].url, '/api/lowcode/projects/23/base-upgrade')
+  // 发起升级不收任何入参：期望值由后端按底座 checkout 现算，前端带一份就是「前端说是什么就算什么」
+  assert.equal(calls[1].body, undefined)
+  assert.equal(upgrade.upgradeBranch, 'platform-upgrade/bbbbbbb')
+  assert.deepEqual(upgrade.conflictPaths, ['scaffold-vue/package.json'])
+  assert.equal(calls[2].url, '/api/lowcode/merge-requests/refresh')
+  assert.deepEqual(JSON.parse(calls[2].body ?? '{}'), { projectId: 23, sourceBranch: 'platform-upgrade/bbbbbbb' })
+})
+
 test('merge request api maps list detail and refresh to the read-only backend endpoints', async () => {
   const calls: Array<{ url: string, method: string, body?: string }> = []
   const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
