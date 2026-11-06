@@ -124,8 +124,10 @@ public interface GitGateway {
      * 把它切到主干上合并，下一次发布就可能把生成物提交到主干上去。clone 也从远端重新取，
      * 于是合并的起点是主干<b>当前</b>的样子，不是本地那份缓存。
      *
-     * <p>三道拒绝：{@code expectedTargetSha} 与远端现在不一致（预检之后主干又前进了，这条请求算的是旧的一对提交）；
-     * 真冲突（只报文件清单，不替人取舍）；推送非快进被远端拒（refspec 不带 {@code +}，平台永不强推）。
+     * <p>四道拒绝：{@code expectedTargetSha} 与远端现在不一致（预检之后主干又前进了，这条请求算的是旧的一对提交）；
+     * 真冲突（只报文件清单，不替人取舍）；<b>源已是目标的祖先</b>（主干早就含着这些内容，这不是「合完了」而是
+     * 「没什么可合」—— 放过就会在台账上记一次根本没发生的放行，升级分支走这里还会凭空搬走 base 号）；
+     * 推送非快进被远端拒（refspec 不带 {@code +}，平台永不强推）。
      * 用 {@code NO_FF} 固定产生合并提交，让「这次审核放行了什么」在历史里是一个可指的两个父亲的提交。
      *
      * @param workspace 项目工作区，只用来取凭据与远端地址，不会被改动
@@ -134,7 +136,7 @@ public interface GitGateway {
      * @param expectedTargetSha 预检时看到的主干提交号，不一致就拒
      * @param sourceSha 要合进来的提交号（发布分支当前值）
      * @param message 合并提交说明
-     * @return 落到远端主干的那个合并提交号
+     * @return 新落到远端主干的那个合并提交号（一定不等于 {@code expectedTargetSha}：没动过就不会返回成功）
      */
     String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
                            String sourceSha, String message);

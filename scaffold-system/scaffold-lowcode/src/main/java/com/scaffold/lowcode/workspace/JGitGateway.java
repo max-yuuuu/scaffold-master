@@ -988,8 +988,12 @@ public class JGitGateway implements GitGateway {
             }
             MergeResult.MergeStatus status = result.getMergeStatus();
             if (status == MergeResult.MergeStatus.ALREADY_UP_TO_DATE) {
-                // 主干已经含着这些内容：没什么可推的，但这条请求确实是了结了
-                return now;
+                // 主干已经含着这些内容 —— 这不是「合完了」，是「没什么可合」。如实返回目标 sha 的话，
+                // 调用方会把这条记成已合并、merged_by 落一个人名，而主干一个字节没动（11A 真机就是这样：
+                // 台账写着「已合入 main（上一次那个提交号）」）。升级分支走这里更危险：10F 会照这笔
+                // 「合并」去搬 base_scaffold_sha，等于凭空把底座号推到没下发过的位置。所以拒。
+                throw new BusinessException("主干 " + targetBranch + " 已经包含 " + abbrev(sourceSha)
+                        + " 的全部内容，没有要合进主干的内容：这条请求无需合并（先重算一次看它是不是已经合过了）");
             }
             if (status == MergeResult.MergeStatus.CONFLICTING) {
                 List<String> conflicts = result.getConflicts() == null

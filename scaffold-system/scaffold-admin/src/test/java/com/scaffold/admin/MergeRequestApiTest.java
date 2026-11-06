@@ -362,6 +362,57 @@ class MergeRequestApiTest {
     }
 
     /** 项目行上那个「当初交付在哪个底座上」的号，10F 前后各读一次 */
+    /**
+     * 11A 真机抓的第一格：主干已经把发布分支的内容全包含了，就不该再生成一条请求。
+     *
+     * <p>界面上那条点下去只能对着空清单发呆；更糟的是它还能被「合并」成功，台账写「已合入 main（上一次
+     * 那个提交号）」而主干一个字节没动 —— 记了一次根本没发生的放行。与底座升级「一格可自动合的都没有
+     * 就不建分支」同一口径：噪音不该进队列。
+     */
+    @Test
+    void 主干已包含发布分支全部内容时不生成请求() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);   // 主干 == 快照 == 发布分支 tip：两边零差异
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).as(String.valueOf(body)).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("没有要合进主干的内容");
+        assertThat(requestRows(fx.projectId)).as("一条都不建，别在待审队列里留噪音").isZero();
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(fx.snapshotSha);
+    }
+
+    /**
+     * 11A 的第二格：这道闸上线前库里已经躺着的那种零变更请求，点合并也必须被拒。
+     *
+     * <p>只堵生成侧不够 —— 存量条目还在，而它一旦合下去，`merged_by` 与「已合入 main（…）」就都是假的。
+     * 拒绝之后状态必须仍是待审：不能因为「没什么可合」就替人把这条收口。
+     */
+    @Test
+    void 零变更的请求点合并被拒且不记成已合并() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        String sha = fx.snapshotSha;
+        jdbcTemplate.update("""
+                INSERT INTO lc_merge_request (tenant_id, project_id, title, source_branch, target_branch,
+                    source_sha, target_sha, merge_base_sha, status, check_status, check_message, create_by)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, 0, 1, '可自动合并：两边改动不重叠', 'admin')
+                """, fx.projectId, GEN + " → main：主干已包含来源分支的全部内容",
+                GEN, MAIN, sha, sha, sha);
+        long id = jdbcTemplate.queryForObject("SELECT MAX(id) FROM lc_merge_request WHERE project_id = ?",
+                Long.class, fx.projectId);
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/" + id + "/merge", Map.of()).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).as(String.valueOf(body)).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("没有要合进主干的内容");
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM lc_merge_request WHERE id = ?", Integer.class, id))
+                .as("不能替人把这条收口").isEqualTo(0);
+        assertThat(jdbcTemplate.queryForObject("SELECT merged_by FROM lc_merge_request WHERE id = ?", String.class, id))
+                .isNull();
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(sha);
+    }
+
     private Map<String, Object> projectRow(long projectId) {
         return jdbcTemplate.queryForMap("SELECT base_scaffold_sha FROM lc_project WHERE id = ?", projectId);
     }
