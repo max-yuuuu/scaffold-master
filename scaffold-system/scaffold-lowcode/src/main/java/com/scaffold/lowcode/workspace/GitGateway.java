@@ -2,6 +2,7 @@ package com.scaffold.lowcode.workspace;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 仓库读写原语。全部走 JGit（纯 Java，不拼命令行），把 {@code repo_url}、分支名这些用户输入
@@ -137,4 +138,19 @@ public interface GitGateway {
      */
     String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
                            String sourceSha, String message);
+
+    /**
+     * 取回某个提交里指定路径的文件内容 —— 三级回滚的取数就靠它（方案 §5.4「取该版本对应文件的内容」）。
+     *
+     * <p><b>只读</b>：直接从对象库读 blob，不 checkout、不写索引、不动 HEAD，所以工作区脏着也能安全调用。
+     *
+     * <p>那个提交里没有的路径<b>不出现在结果里</b>，而不是给一个空串：空内容是合法内容，调用方把它写回去
+     * 就是把一个文件清空；缺了哪些由「请求的路径 − 结果的键」算出来，让服务去说那句人话。
+     *
+     * @param dir 项目工作区，只用来打开仓库
+     * @param commitRev 提交号（版本历史里记的那个 {@code commit_sha}）
+     * @param paths 相对仓库根的路径，用 {@code /} 分隔
+     * @return 路径 → 文本内容，只含取到的那些；二进制与查不到的提交当场拒绝，不返回乱码
+     */
+    Map<String, String> fileContents(Path dir, String commitRev, List<String> paths);
 }

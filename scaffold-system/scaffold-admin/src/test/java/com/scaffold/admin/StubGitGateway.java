@@ -188,6 +188,11 @@ public class StubGitGateway implements GitGateway {
         throw new UnsupportedOperationException("StubGitGateway 不真合并也不推主干：合并执行要用真 JGit，见 LocalBareGitGateway");
     }
 
+    @Override
+    public Map<String, String> fileContents(Path dir, String commitRev, List<String> paths) {
+        throw new UnsupportedOperationException("StubGitGateway 不模拟提交历史：回滚取内容要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
     private String remoteSha(String branch) {
         return remoteRefs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
     }

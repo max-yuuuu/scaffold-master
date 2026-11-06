@@ -82,6 +82,41 @@ test('发布只送 force 与 changeDesc 两个入参，版本号由后端按 cur
   assert.equal(result.tagName, 'vorder-serive-sales_order_page-2')
 })
 
+test('版本历史与回滚：读走 GET，写走 POST 且必须点明退回哪一版', async () => {
+  const calls: Array<{ url: string, method: string, body?: string }> = []
+  const fetcher = async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), method: init?.method ?? 'GET', body: init?.body as string | undefined })
+    return new Response(JSON.stringify({
+      code: 200,
+      message: 'success',
+      data: calls.length === 1
+        ? { rows: [{ version: 2 }], total: 2, pageNum: 1, pageSize: 10 }
+        : calls.length === 2
+          ? { pageId: 59, version: 1, commitSha: 'b'.repeat(40), files: [{ path: 'x.vue', sha256: 'a', tier: 'GENERATED', rollbackable: true }] }
+          : { pageId: 59, version: 3, rolledBackTo: 1, publishType: 'ROLLBACK', status: 1, commitSha: 'c'.repeat(40), tagName: 'vorder-serive-sales_order_page-3', branch: 'platform-generated', files: [], message: '已回滚到 v1' },
+      traceId: 't',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const api = createPlatformApi(createHttpClient({ baseUrl: '/api', tokenProvider: () => 'token', fetcher }))
+
+  await api.pages.versions(59, { pageNum: 1, pageSize: 10 })
+  await api.pages.version(59, 1)
+  const result = await api.pages.rollback(59, { version: 1, files: ['x.vue'] })
+
+  assert.equal(calls[0].method, 'GET')
+  assert.equal(calls[0].url, '/api/lowcode/pages/59/versions?pageNum=1&pageSize=10')
+  assert.equal(calls[1].method, 'GET')
+  assert.equal(calls[1].url, '/api/lowcode/pages/59/versions/1')
+  // 回滚是写动作：POST，且 body 里必须带 version —— 少了它后端无从知道退回哪一版
+  assert.equal(calls[2].method, 'POST')
+  assert.equal(calls[2].url, '/api/lowcode/pages/59/rollback')
+  assert.deepEqual(JSON.parse(calls[2].body ?? '{}'), { version: 1, files: ['x.vue'] })
+  // 回滚产出的是「新的一版」，界面要读的是这两个号：v3 是新的，v1 是被退回的那一版
+  assert.equal(result.version, 3)
+  assert.equal(result.rolledBackTo, 1)
+  assert.equal(result.tagName, 'vorder-serive-sales_order_page-3')
+})
+
 test('merge request api maps list detail and refresh to the read-only backend endpoints', async () => {
   const calls: Array<{ url: string, method: string, body?: string }> = []
   const fetcher = async (url: string | URL | Request, init?: RequestInit) => {

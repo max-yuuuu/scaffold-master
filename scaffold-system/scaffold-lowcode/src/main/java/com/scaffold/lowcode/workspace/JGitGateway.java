@@ -13,6 +13,7 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -25,6 +26,7 @@ import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.revwalk.filter.RevFilter;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.TreeWalk;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteRefUpdate;
@@ -42,6 +44,9 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -503,6 +508,65 @@ public class JGitGateway implements GitGateway {
             return out.toString(StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new BusinessException("读取 " + path + " 的差异失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public Map<String, String> fileContents(Path dir, String commitRev, List<String> paths) {
+        Map<String, String> contents = new LinkedHashMap<>();
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId commit = repo.resolve(commitRev + "^{commit}");
+            if (commit == null) {
+                throw new BusinessException("提交 " + commitRev + " 不在这份仓库里：版本历史记的那一笔这里查不到，"
+                        + "回滚不能照着它写文件。通常是工作区落后或历史被改过，请先重建工作区再回来");
+            }
+            // TreeWalk.forPath 要的是树，直接把提交号给它会当场报「is not a tree」：先剥出那一笔的根树
+            ObjectId rootTree;
+            try (RevWalk revWalk = new RevWalk(repo)) {
+                rootTree = revWalk.parseCommit(commit).getTree();
+            }
+            try (ObjectReader reader = repo.newObjectReader()) {
+                for (String path : paths) {
+                    try (TreeWalk walk = TreeWalk.forPath(reader, path, rootTree)) {
+                        // 没取到的路径不进结果：调用方按「请求 − 取回」算缺，缺了就停手（见接口注释）
+                        if (walk == null) {
+                            continue;
+                        }
+                        byte[] raw = reader.open(walk.getObjectId(0), Constants.OBJ_BLOB).getBytes();
+                        contents.put(path, decodeText(path, raw));
+                    } catch (IOException e) {
+                        throw new BusinessException("读取 " + path + " 的内容失败：" + e.getMessage());
+                    }
+                }
+            }
+            return contents;
+        } catch (IOException e) {
+            throw new BusinessException("打开仓库读历史内容失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 历史里的产物必须是 UTF-8 文本才敢还回去。
+     *
+     * <p>B 档产物全是文本，所以读出一个二进制只有两种解释：有人在发布分支上往这些路径塞了东西，
+     * 或版本快照里的路径记错了。两种都要停手让人看清是哪一个，而不是把乱码写进工作区再提交回去 ——
+     * 那笔提交一旦推到发布分支，下一次合并请求就把它带进主干了。
+     */
+    private static String decodeText(String path, byte[] raw) {
+        for (byte b : raw) {
+            if (b == 0) {
+                throw new BusinessException(path + " 在那个提交里是二进制（读到空字节），"
+                        + "平台只还原文本产物，这一版回滚停手");
+            }
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException e) {
+            throw new BusinessException(path + " 在那个提交里不是 UTF-8 文本，平台不把它当生成物回滚");
         }
     }
 

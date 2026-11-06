@@ -293,14 +293,16 @@ class MergeRequestApiTest {
         commitOnGen(fx, "GenPage.vue", "<template>订单</template>\n");
         dataOf(post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)));
 
+        // 三条断言一律按项目来数：本机 dev 后端与 IT 用例共用同一个库（.env.local 里 DB_PORT=3316），
+        // 真机验证写下的那条请求（order-serive，id=26）就在这张表里。断言全局 total 等于几，
+        // 量的其实是「这台机器上今天有没有人真发过请求」，跟这条验收没关系
+        String mine = "/api/lowcode/merge-requests?projectId=" + fx.projectId + "&onlyMine=true";
         setOwner(fx, ADMIN_USER);
-        assertThat(number(castMap(get("/api/lowcode/merge-requests?onlyMine=true").get("data")).get("total"))).isEqualTo(1);
+        assertThat(number(castMap(get(mine).get("data")).get("total"))).isEqualTo(1);
 
         setOwner(fx, OTHER_USER);
-        assertThat(number(castMap(get("/api/lowcode/merge-requests?onlyMine=true").get("data")).get("total"))).isZero();
-        // 不限负责人时仍然看得到：审核队列是筛选，不是权限裁剪。
-        // 这里必须按项目过滤来数 —— 全局列表里会有别的项目的真实请求（本机 IT 库就跑过 order-serive），
-        // 断言「整张表只有我这一条」是个假承诺
+        assertThat(number(castMap(get(mine).get("data")).get("total"))).isZero();
+        // 不限负责人时仍然看得到：审核队列是筛选，不是权限裁剪
         assertThat(number(castMap(get("/api/lowcode/merge-requests?projectId=" + fx.projectId).get("data")).get("total")))
                 .isEqualTo(1);
     }

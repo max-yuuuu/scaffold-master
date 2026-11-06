@@ -16,13 +16,11 @@ import com.scaffold.lowcode.project.mapper.LcProjectMapper;
 import com.scaffold.lowcode.repo.RepoUrlValidator;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.RemoteRef;
-import com.scaffold.lowcode.workspace.WorkspacePaths;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,12 +56,12 @@ public class PagePublishService {
     private final ModelCodeGenerator generator;
     private final PublishLedger ledger;
     private final GitGateway gateway;
-    private final WorkspacePaths paths;
+    private final PublishSiteResolver sites;
     private final ObjectMapper objectMapper;
 
     public PagePublishService(LcPageMapper pageMapper, LcModelMapper modelMapper, LcFieldMapper fieldMapper,
                               LcProjectMapper projectMapper, ModelCodeGenerator generator, PublishLedger ledger,
-                              GitGateway gateway, WorkspacePaths paths, ObjectMapper objectMapper) {
+                              GitGateway gateway, PublishSiteResolver sites, ObjectMapper objectMapper) {
         this.pageMapper = pageMapper;
         this.modelMapper = modelMapper;
         this.fieldMapper = fieldMapper;
@@ -71,7 +69,7 @@ public class PagePublishService {
         this.generator = generator;
         this.ledger = ledger;
         this.gateway = gateway;
-        this.paths = paths;
+        this.sites = sites;
         this.objectMapper = objectMapper;
     }
 
@@ -96,14 +94,16 @@ public class PagePublishService {
             throw new BusinessException("模型「" + model.get("modelCode") + "」已停用，先启用再发布");
         }
         Map<String, Object> project = requireProject(page);
-        Site site = openSite(project, page);
+        // 现场守卫与回滚共用一份（PublishSiteResolver）：两条链路都是「整目录暂存 + 提交 + 推送」，
+        // 守卫抄两份的话改一条要记得改两处，这种约定迟早漂
+        PublishSiteResolver.Site site = sites.open(project, "发布", "页面 " + text(page.get("pageCode")));
 
         int current = number(page.get("currentVersion"), 0);
         int next = current + 1;
         String projectCode = text(project.get("projectCode"));
         String pageCode = text(page.get("pageCode"));
         String tagName = PublishTag.name(projectCode, pageCode, next);
-        if (remoteTagName(site.refs(), tagName) != null) {
+        if (PublishSiteResolver.remoteTagName(site.refs(), tagName) != null) {
             // 库里记的版本与仓库里的 tag 对不上，不是这次的内容冲突，是两边状态漂开了。
             // 平台不挪 tag（挪掉就改了那一版的锚点），也不覆盖那一版
             throw new BusinessException("远端已经有版本标记 " + tagName + "，而库里这个页面的当前版本是 " + current
@@ -140,10 +140,10 @@ public class PagePublishService {
         }
 
         push(context, site, targetSha);
-        String confirmed = remoteSha(gateway.lsRemote(site.repoUrl()), site.branch());
+        String confirmed = PublishSiteResolver.remoteSha(gateway.lsRemote(site.repoUrl()), site.branch());
         if (!targetSha.equals(confirmed)) {
             String why = "推送后回读远端 " + site.branch() + " 得到的是 "
-                    + (confirmed == null ? "无该分支" : confirmed) + "，与本次提交 " + abbreviate(targetSha) + " 不一致";
+                    + (confirmed == null ? "无该分支" : confirmed) + "，与本次提交 " + PublishSiteResolver.abbreviate(targetSha) + " 不一致";
             ledger.failed(context, targetSha, "远端没有拿到这次提交，这一版没记进版本历史：" + why, why);
             throw new BusinessException(why + "：平台不强推，也没有把这一版记进版本历史，请核对远端后重试");
         }
@@ -158,53 +158,6 @@ public class PagePublishService {
 
     /* ── 现场 ── */
 
-    /** 发布现场：工作区、发布分支，以及本地与远端各自停在哪一个提交 */
-    private record Site(Path workspace, String repoUrl, String branch, String localSha, String remoteSha,
-                        List<RemoteRef> refs) {
-    }
-
-    /**
-     * 这几条守卫拦的都是「编得过、单测绿、真机才炸」那一类：
-     * 项目没就绪就发布，产物会写进一个没有 git 仓库的目录，提交根本建不出来；
-     * 工作区脏着提交，就把人的临时改动挂进了这次发布；
-     * 本地与远端不一致还硬推，要么非快进被远端拒（那时提交已经落在本地了），要么盖掉别人推的东西。
-     */
-    private Site openSite(Map<String, Object> project, Map<String, Object> page) {
-        int syncStatus = number(project.get("syncStatus"), ProjectSyncStatus.UNINITIALIZED);
-        if (syncStatus != ProjectSyncStatus.READY) {
-            throw new BusinessException("项目仓库当前是「" + ProjectSyncStatus.text(syncStatus)
-                    + "」，先把固定代码初始化到发布分支再发布");
-        }
-        String projectCode = text(project.get("projectCode"));
-        Path workspace = paths.of(projectCode);
-        if (!Files.isDirectory(workspace.resolve(".git"))) {
-            throw new BusinessException("工作区 " + paths.relative(projectCode) + " 不存在或不是一个 git 仓库："
-                    + "页面是发布到项目仓库里的，请先初始化项目仓库");
-        }
-        if (gateway.isDirty(workspace)) {
-            throw new BusinessException("工作区里有未提交的改动，平台不会替您丢弃，也不会把它们一起提交进发布分支："
-                    + "请先在项目仓库里处理掉这些改动（提交或搬走），再回来发布");
-        }
-        String branch = text(project.get("genBranch"));
-        String repoUrl = RepoUrlValidator.normalize(text(project.get("repoUrl")));
-        List<RemoteRef> refs = gateway.lsRemote(repoUrl);
-        String localSha = gateway.localBranchSha(workspace, branch);
-        String remoteSha = remoteSha(refs, branch);
-        if (localSha == null) {
-            throw new BusinessException("工作区的 " + branch + " 分支不存在（页面 " + page.get("pageCode")
-                    + " 无处落）：请重建工作区后重新初始化");
-        }
-        if (remoteSha == null) {
-            throw new BusinessException("远端已经没有发布分支 " + branch + "（可能被删过）：请重建工作区后重新初始化");
-        }
-        if (!localSha.equals(remoteSha) && !remoteSha.equals(text(project.get("lastCommitSha")))) {
-            throw new BusinessException("发布分支 " + branch + " 的远端已前进（本地 " + abbreviate(localSha)
-                    + "，远端 " + abbreviate(remoteSha) + "）：平台不强推也不自动合并，请先重建工作区，"
-                    + "让这份工作区追上远端之后再发布");
-        }
-        return new Site(workspace, repoUrl, branch, localSha, remoteSha, refs);
-    }
-
     private Map<String, Object> requireProject(Map<String, Object> page) {
         Map<String, Object> project = projectMapper.selectProjectForSync(numberAsLong(page.get("projectId")));
         if (project == null) {
@@ -216,12 +169,12 @@ public class PagePublishService {
         return project;
     }
 
-    private void push(PublishLedger.Context context, Site site, String targetSha) {
+    private void push(PublishLedger.Context context, PublishSiteResolver.Site site, String targetSha) {
         try {
             gateway.pushBranch(site.workspace(), site.branch());
         } catch (RuntimeException e) {
             String error = "推送发布分支 " + site.branch() + " 失败：" + e.getMessage();
-            String message = "提交 " + abbreviate(targetSha) + " 留在本地工作区、没有推到远端，重试发布会把它推上去";
+            String message = "提交 " + PublishSiteResolver.abbreviate(targetSha) + " 留在本地工作区、没有推到远端，重试发布会把它推上去";
             ledger.failed(context, targetSha, message, error);
             throw new BusinessException(error + "：" + message);
         }
@@ -233,7 +186,8 @@ public class PagePublishService {
      * <p>{@code tagCommit} 返回 {@code false} 表示本地已有同名 tag —— 那是上一次「tag 建了但没推上去」
      * 留下的，它指向的就是本次这个提交（平台从不挪动已存在的 tag），照原样推上去就是对的锚点。
      */
-    private void tag(PublishLedger.Context context, Site site, String targetSha, String tagName,
+    private void tag(PublishLedger.Context context, PublishSiteResolver.Site site, String targetSha,
+                     String tagName,
                      String projectCode, String pageCode) {
         String error = null;
         try {
@@ -318,7 +272,7 @@ public class PagePublishService {
             row.put("path", write.path());
             row.put("tier", file.tier().name());
             row.put("action", write.action().name());
-            row.put("sha256", sha256(file.content()));
+            row.put("sha256", ContentHash.sha256(file.content()));
             rows.add(row);
         }
         return rows;
@@ -344,33 +298,8 @@ public class PagePublishService {
         }
     }
 
-    private static String sha256(String content) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(content.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hex = new StringBuilder(digest.length * 2);
-            for (byte b : digest) {
-                hex.append(Character.forDigit((b >> 4) & 0xF, 16)).append(Character.forDigit(b & 0xF, 16));
-            }
-            return hex.toString();
-        } catch (Exception e) {
-            throw new BusinessException("算不出产物哈希：" + e.getMessage());
-        }
-    }
-
     private static int count(List<Map<String, Object>> rows, String action) {
         return (int) rows.stream().filter(row -> action.equals(row.get("action"))).count();
-    }
-
-    private static String remoteSha(List<RemoteRef> refs, String branch) {
-        return refs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
-    }
-
-    private static String remoteTagName(List<RemoteRef> refs, String tagName) {
-        return refs.stream().filter(ref -> tagName.equals(ref.tagName())).map(RemoteRef::sha).findFirst().orElse(null);
-    }
-
-    private static String abbreviate(String sha) {
-        return sha == null ? null : sha.substring(0, Math.min(10, sha.length()));
     }
 
     private static String text(Object value) {
