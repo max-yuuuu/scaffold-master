@@ -5,11 +5,13 @@ import com.scaffold.common.domain.PageResult;
 import com.scaffold.common.domain.R;
 import com.scaffold.framework.audit.OperLog;
 import com.scaffold.framework.security.RequiresPermission;
+import com.scaffold.lowcode.page.domain.PageRollbackRequest;
 import com.scaffold.lowcode.page.domain.PageStatusRequest;
 import com.scaffold.lowcode.page.domain.PagePublishRequest;
 import com.scaffold.lowcode.page.domain.PageWriteRequest;
 import com.scaffold.lowcode.page.service.LcPageService;
 import com.scaffold.lowcode.publish.PagePublishService;
+import com.scaffold.lowcode.publish.PageRollbackService;
 import com.scaffold.lowcode.publish.PageVersionService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,12 +37,14 @@ public class LcPageController {
     private final LcPageService pageService;
     private final PagePublishService publishService;
     private final PageVersionService versionService;
+    private final PageRollbackService rollbackService;
 
     public LcPageController(LcPageService pageService, PagePublishService publishService,
-                            PageVersionService versionService) {
+                            PageVersionService versionService, PageRollbackService rollbackService) {
         this.pageService = pageService;
         this.publishService = publishService;
         this.versionService = versionService;
+        this.rollbackService = rollbackService;
     }
 
     @GetMapping("/pages")
@@ -113,6 +117,19 @@ public class LcPageController {
     @RequiresPermission("lowcode:page:list")
     public R<PageResult<Map<String, Object>>> versions(@PathVariable Long id, PageQuery query) {
         return R.success(versionService.versions(id, query));
+    }
+
+    /**
+     * 回滚到某一版（方案 §5.4）：以一笔<b>新提交</b>还原内容并推到发布分支，不碰主干、不倒带历史。
+     *
+     * <p>权限单独一个 {@code lowcode:page:rollback}：看历史是读，这一笔会往租户仓库写代码，
+     * 与 V9 把「发布」与「编辑」分开是同一个理由。
+     */
+    @PostMapping("/pages/{id}/rollback")
+    @RequiresPermission("lowcode:page:rollback")
+    @OperLog(module = "页面设计", action = "回滚页面")
+    public R<Map<String, Object>> rollback(@PathVariable Long id, @Valid @RequestBody PageRollbackRequest request) {
+        return R.success(rollbackService.rollback(id, request.getVersion(), request.getFiles()));
     }
 
     /** 单版详情：文件清单带档位，文件级回滚就是在这份清单里挑 B 档那几个 */

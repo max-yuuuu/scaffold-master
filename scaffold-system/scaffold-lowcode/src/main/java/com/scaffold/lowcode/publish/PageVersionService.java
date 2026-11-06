@@ -43,7 +43,7 @@ public class PageVersionService {
      * @param files 路径 → 内容 sha256，回滚前后都拿它对账
      */
     public record VersionRow(long pageId, int version, String commitSha, String tagName, String publishType,
-                             String changeDesc, Map<String, String> files) {
+                             String changeDesc, Map<String, String> files, String designSnapshot) {
     }
 
     private final LcPageMapper pageMapper;
@@ -99,7 +99,8 @@ public class PageVersionService {
         Map<String, Object> action = logMapper.selectSuccessActions(pageId, List.of(version)).stream()
                 .findFirst().orElse(Map.of());
         return new VersionRow(pageId, version, text(row.get("commitSha")), text(action.get("tagName")),
-                text(action.get("publishType")), text(row.get("changeDesc")), readSnapshot(row));
+                text(action.get("publishType")), text(row.get("changeDesc")), readSnapshot(row),
+                text(row.get("designSnapshot")));
     }
 
     /** 页面归属校验：{@code selectPageBrief} 带租户条件，别的租户拿同一个 pageId 进来就是「页面不存在」 */

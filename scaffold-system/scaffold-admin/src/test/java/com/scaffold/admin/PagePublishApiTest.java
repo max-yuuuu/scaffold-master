@@ -47,6 +47,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>远端用 {@link LocalBareGitGateway}（真 JGit 打在本机裸仓库上），不用 {@code StubGitGateway}：
  * 桩只能证明平台自己怎么记账，证明不了仓库里真有什么。生成物落盘后顺手真起 {@code javac}，
  * 把「设计驱动的产物」与「编得过的产物」钉在同一条链上 —— 这正是 PR 6 那条验收的落点。
+ *
+ * <p>PR 9 的回滚用例也住在这里，不另开一个类复制一份 250 行的夹具：两条链共用同一个现场
+ * （项目 + 主干 + 模型字段 + 设计 + 已初始化的工作区），而复制出去的夹具会各自漂 —— 一边补了守卫
+ * 另一边不知道，测试就还在绿。代价是类名比内容窄了一格，{@code 回滚…} 那几条用例的注释里写明它们验的是 §5.4。
  */
 @SpringBootTest(
         classes = {ScaffoldAdminApplication.class, LocalBareGitGateway.Config.class},
@@ -70,6 +74,8 @@ class PagePublishApiTest {
     private static final String BUSINESS_ROOT = "scaffold-system/scaffold-business/src/main/java/com/scaffold/business/";
     private static final String BUSINESS_DIR = BUSINESS_ROOT + MODULE + "/";
     private static final String EXTENSION = BUSINESS_DIR + "service/" + CLASS_NAME + "Extension.java";
+    /** 表单入参那一档：设计里撤掉一格，这个文件的内容就会跟着变，文件级回滚拿它当「没被点名的文件」 */
+    private static final String WRITE_REQUEST = BUSINESS_DIR + "domain/" + CLASS_NAME + "WriteRequest.java";
     private static final String VIEW = "scaffold-vue/src/views/" + MODULE + "/" + CLASS_NAME + ".vue";
     /** 11 份产物：7 个 java + 接口 ts + 列表页 vue + 建表 SQL + 菜单 SQL */
     private static final int FILE_COUNT = 11;
@@ -380,6 +386,153 @@ class PagePublishApiTest {
         });
         // 哈希是回滚前后要对账的那个号，缺了它就只能「信仓库」
         assertThat(String.valueOf(rows.get(0).get("sha256"))).hasSize(64);
+    }
+
+    /**
+     * 回滚到上一版：发布分支上多一笔新提交，内容回到那一版，而主干一个提交都没多。
+     *
+     * <p>这条是 §5.4 那句「一律以新提交实现，不倒带分支历史」的正面验收：历史是 append-only 的，
+     * v3 的内容等于 v1，但 v2 仍在历史里、仍能被指出来、仍能被回滚过去。
+     */
+    @Test
+    void 回滚到上一版在发布分支上加一笔新提交而主干不动() {
+        Fixture fx = ready();
+        String v1 = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, design("含税金额"))).getBody())
+                .containsEntry("code", 200);
+        String v2 = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+        assertThat(workspaceFile(fx, VIEW)).contains("title: '含税金额'");
+        String mainBefore = gateway.branchSha(fx.repoUrl, MAIN);
+
+        Map<String, Object> data = dataOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 1)));
+        assertThat(data).containsEntry("version", 3).containsEntry("rolledBackTo", 1)
+                .containsEntry("publishType", "ROLLBACK")
+                .containsEntry("tagName", "v" + fx.projectCode + "-" + PAGE_CODE + "-3");
+        String v3 = String.valueOf(data.get("commitSha"));
+        // 内容真的回到 v1：断言的是文件里那一行，不是「接口说成功了」
+        assertThat(workspaceFile(fx, VIEW)).contains("title: '订单金额'").doesNotContain("title: '含税金额'");
+
+        assertThat(gateway.branchSha(fx.repoUrl, GEN)).isEqualTo(v3);
+        assertThat(gateway.tagSha(fx.repoUrl, "v" + fx.projectCode + "-" + PAGE_CODE + "-3")).isEqualTo(v3);
+        // 主干没被碰：回滚只写发布分支，要进主干仍然得走合并请求、由人确认
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(mainBefore);
+        // 历史没被倒带：三笔提交各指向自己那一版，v2 仍然在，也仍然能被回滚过去
+        assertThat(jdbcTemplate.queryForList("SELECT commit_sha FROM lc_page_version WHERE page_id = ? ORDER BY version",
+                String.class, fx.pageId)).containsExactly(v1, v2, v3);
+        assertThat(jdbcTemplate.queryForList("SELECT publish_type FROM lc_publish_log"
+                        + " WHERE page_id = ? AND publish_status = 1 ORDER BY version", String.class, fx.pageId))
+                .containsExactly("CREATE", "UPDATE", "ROLLBACK");
+        assertThat(count("SELECT COUNT(*) FROM lc_page WHERE id = ?", fx.pageId)).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject("SELECT current_version FROM lc_page WHERE id = ?", Integer.class,
+                fx.pageId)).isEqualTo(3);
+    }
+
+    /**
+     * 文件级回滚：只把选中的那几个文件还原，其余保持当前这一版。
+     *
+     * <p>用例先证明「这两个文件在 v1 与 v2 之间确实不同」，否则「只回滚了一个」这句断言是空的 ——
+     * 两个文件本来就一样的话，怎么回滚都看不出区别。
+     */
+    @Test
+    void 文件级回滚只还原选中的那几个文件() {
+        Fixture fx = ready();
+        publish(fx);                                    // v1：表单里有「交货日期」
+        String viewV1 = workspaceFile(fx, VIEW);
+        String requestV1 = workspaceFile(fx, WRITE_REQUEST);
+
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, designWithoutDate())).getBody())
+                .containsEntry("code", 200);
+        publish(fx);                                    // v2：把那一格从表单里撤走
+        // 先证明这两个文件在两版之间都变了 —— 不然「只回滚了一个」这句断言是空的
+        assertThat(workspaceFile(fx, VIEW)).isNotEqualTo(viewV1);
+        assertThat(workspaceFile(fx, WRITE_REQUEST)).isNotEqualTo(requestV1);
+
+        Map<String, Object> data = dataOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback",
+                Map.of("version", 1, "files", List.of(VIEW))));
+        assertThat(files(data)).extracting(row -> row.get("path")).containsExactly(VIEW);
+        assertThat(workspaceFile(fx, VIEW)).isEqualTo(viewV1);
+        // 没被点名的文件一个字都没动：文件级的意义就在这
+        assertThat(workspaceFile(fx, WRITE_REQUEST)).isNotEqualTo(requestV1);
+    }
+
+    @Test
+    void C档扩展点不参与回滚因为平台不生成它也没权还原它() {
+        Fixture fx = ready();
+        publish(fx);
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, design("含税金额"))).getBody())
+                .containsEntry("code", 200);
+        publish(fx);
+
+        assertThat(messageOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback",
+                Map.of("version", 1, "files", List.of(EXTENSION)))))
+                .contains("扩展点").contains(EXTENSION);
+        // 整页回滚的清单里也没有它：判据是路径反推出的档位，不是调用方传没传
+        Map<String, Object> data = dataOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 1)));
+        assertThat(files(data)).allSatisfy(row -> assertThat(row.get("path")).isNotEqualTo(EXTENSION));
+    }
+
+    @Test
+    void 回滚到当前这一版本被拒因为那等于什么都不做() {
+        Fixture fx = ready();
+        publish(fx);
+        assertThat(messageOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 1))))
+                .contains("当前的那一版").contains("什么都不做");
+    }
+
+    @Test
+    void 没有的那一版不许回滚也不留下提交() {
+        Fixture fx = ready();
+        String v1 = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+
+        assertThat(messageOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 7))))
+                .contains("v7");
+        assertThat(gateway.branchSha(fx.repoUrl, GEN)).isEqualTo(v1);
+        assertThat(count("SELECT COUNT(*) FROM lc_page_version WHERE page_id = ?", fx.pageId)).isEqualTo(1);
+    }
+
+    /**
+     * 工作区脏着不许回滚 —— 与发布同一条守卫，因为两者都是「整目录暂存 + 提交」。
+     *
+     * <p>这条同时证明两个动作共用同一份守卫代码：改一个而漏另一个，就会出现「发布拦得住、回滚拦不住」。
+     */
+    @Test
+    void 工作区里有未提交的改动时拒绝回滚() {
+        Fixture fx = ready();
+        publish(fx);
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, design("含税金额"))).getBody())
+                .containsEntry("code", 200);
+        publish(fx);
+
+        write(fx.workspace().resolve("人工草稿.txt"), "有人在仓库里写了没提交\n");
+        assertThat(messageOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 1))))
+                .contains("未提交的改动");
+        // 不用手工清掉那个草稿文件：夹具的 clean() 连工作区目录一起删，
+        // 而这里要验的就是「脏着的时候不许写」，不是「写完能不能收拾干净」
+    }
+
+    /**
+     * 负向对照：库里的账与仓库内容对不上时必须停手。
+     *
+     * <p>做法是把 v1 那一版的快照哈希改坏一位。真机上这种状态来自「快照写成功但产物后来被人在发布分支上改了」
+     * 或版本行写错 —— 两种都不该由回滚默默吞掉：吞掉就意味着把一份没人核对过的内容推上发布分支。
+     */
+    @Test
+    void 快照哈希与仓库内容对不上时拒绝回滚() {
+        Fixture fx = ready();
+        publish(fx);
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, design("含税金额"))).getBody())
+                .containsEntry("code", 200);
+        String v2 = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+
+        int changed = jdbcTemplate.update("UPDATE lc_page_version SET files_snapshot ="
+                + " JSON_SET(files_snapshot, '$.\"scaffold-vue/src/views/sales_order/SalesOrder.vue\"',"
+                + " REPEAT('0', 64)) WHERE page_id = ? AND version = 1", fx.pageId);
+        assertThat(changed).isEqualTo(1);
+
+        assertThat(messageOf(post("/api/lowcode/pages/" + fx.pageId + "/rollback", Map.of("version", 1))))
+                .contains("对不上");
+        assertThat(gateway.branchSha(fx.repoUrl, GEN)).isEqualTo(v2);
+        assertThat(count("SELECT COUNT(*) FROM lc_page_version WHERE page_id = ?", fx.pageId)).isEqualTo(2);
     }
 
     /**
