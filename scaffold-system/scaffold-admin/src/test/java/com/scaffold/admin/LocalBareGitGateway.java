@@ -137,6 +137,11 @@ public class LocalBareGitGateway implements GitGateway {
         return jgit.fileDiff(dir, baseSha, headSha, path);
     }
 
+    @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        return jgit.snapshotCommit(dir, files, message);
+    }
+
     /** 三方合并也照真 JGit 走：底座升级验的就是「平台改的那几行与项目改的那几行能不能分开」，桩给不出这个答案 */
     @Override
     public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,

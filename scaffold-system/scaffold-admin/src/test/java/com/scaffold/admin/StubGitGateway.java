@@ -189,6 +189,11 @@ public class StubGitGateway implements GitGateway {
     }
 
     @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        throw new UnsupportedOperationException("StubGitGateway 不做快照提交：底座升级要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
     public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
                                           List<String> paths) {
         throw new UnsupportedOperationException("StubGitGateway 不模拟三方合并：底座升级要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");

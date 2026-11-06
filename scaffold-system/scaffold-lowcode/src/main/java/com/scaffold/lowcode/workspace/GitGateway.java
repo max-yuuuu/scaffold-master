@@ -174,4 +174,21 @@ public interface GitGateway {
      * @param paths 要合并的路径（调用方给两侧路径的并集，不在任何一侧的按未变更处理）
      */
     List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha, List<String> paths);
+
+    /**
+     * 把一份「路径 → 内容」的清单在这份仓库的对象库里做成一个提交并返回它的提交号 ——
+     * 底座升级的 theirs 侧就是这么来的（方案 §5.2：theirs = 按当前底座 checkout 现生成的 A 档快照）。
+     *
+     * <p>三方合并的算法按提交号取树，所以快照必须成为一个提交；但它<b>不挂在任何分支上、也没有父亲</b>：
+     * 升级分支要从项目主干长出来，不能从这份快照长出来 —— 那样项目历史里会凭空多出一段没人认领的提交。
+     *
+     * <p>空清单直接拒绝：一旦做成提交，合并会把项目里每一个文件都报成「平台不再交付」，
+     * 那不是一份升级，那是一份删除清单。底座 checkout 读不到、裁剪清单为空都属于这一类现场错误。
+     *
+     * @param dir 仓库目录（升级流程里是一份临时 clone，平台工作区不被这一步改动）
+     * @param files 相对仓库根的路径 → 文件内容
+     * @param message 提交说明：会出现在人拿 {@code git cat-file} 查这个对象的时候
+     * @return 那个提交号
+     */
+    String snapshotCommit(Path dir, Map<String, byte[]> files, String message);
 }

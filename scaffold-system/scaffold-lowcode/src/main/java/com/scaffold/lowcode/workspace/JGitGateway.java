@@ -11,11 +11,16 @@ import org.eclipse.jgit.api.MergeResult;
 import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.diff.DiffEntry;
 import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.diff.RawTextComparator;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -575,6 +580,50 @@ public class JGitGateway implements GitGateway {
         }
     }
 
+
+
+    @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        if (files.isEmpty()) {
+            throw new BusinessException("底座快照里没有一份文件：底座 checkout 读不到或裁剪清单为空。"
+                    + "这种快照做成提交会把项目里每一个文件都报成「平台不再交付」，那是删除清单不是升级");
+        }
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            // DirCacheBuilder 要求按 canonical 顺序加入，所以先排序再喂
+            Map<String, byte[]> sorted = new java.util.TreeMap<>(files);
+            DirCache cache = DirCache.newInCore();
+            DirCacheBuilder builder = cache.builder();
+            try (ObjectInserter inserter = repo.newObjectInserter()) {
+                for (Map.Entry<String, byte[]> file : sorted.entrySet()) {
+                    String path = file.getKey();
+                    if (path.isBlank() || path.startsWith("/") || path.contains("../") || path.contains("/./")) {
+                        throw new BusinessException("底座快照里的路径越出仓库根：" + path);
+                    }
+                    ObjectId blob = inserter.insert(Constants.OBJ_BLOB, file.getValue());
+                    DirCacheEntry entry = new DirCacheEntry(path);
+                    entry.setObjectId(blob);
+                    entry.setFileMode(FileMode.REGULAR_FILE);
+                    entry.setLength(file.getValue().length);
+                    builder.add(entry);
+                }
+                builder.finish();
+                inserter.flush();
+                ObjectId tree = cache.writeTree(inserter);
+                CommitBuilder commit = new CommitBuilder();
+                commit.setTreeId(tree);
+                commit.setAuthor(committer);
+                commit.setCommitter(committer);
+                commit.setMessage(message);
+                // 不设父提交：这是一份凭空长出来的内容，不是历史的一段
+                ObjectId sha = inserter.insert(commit);
+                inserter.flush();
+                return sha.getName();
+            }
+        } catch (IOException e) {
+            throw new BusinessException("把底座快照做成提交失败：" + e.getMessage());
+        }
+    }
 
     @Override
     public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
