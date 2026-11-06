@@ -491,7 +491,18 @@ async function remove(row: ProjectRow) {
       </Descriptions>
       <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
 
-      <Descriptions :column="2">
+      <!-- 动作跟着它依据的读数走：升不升是从「落后 N 个底座提交」这一格决定的，按钮摆在整段
+           历史下面，读者的眼睛已经离开依据了。已在当前底座时不摆一个注定被后端拒掉的按钮，
+           与页面回滚「当前版自己不给回滚到这一版」同一口径 -->
+      <Descriptions title="底座与升级" :column="2">
+        <template #extra>
+          <PermissionButton perm="lowcode:project:upgrade" variant="primary" icon="branch"
+                            :loading="upgrading" :disabled="baseLoading || base?.upToDate === true"
+                            :title="base?.upToDate ? '已在当前底座，没有要下发的固定代码改动' : '按当前底座重新生成 A 档，推到一条升级分支，之后由人在合并请求里确认合入主干'"
+                            @click="runBaseUpgrade">
+            发起底座升级
+          </PermissionButton>
+        </template>
         <DescriptionsItem label="底座落后">{{ baseLoading ? '读取中…' : baseBehindText }}</DescriptionsItem>
         <DescriptionsItem label="底座当前提交">{{ shortSha(base?.scaffoldSha) }}</DescriptionsItem>
         <DescriptionsItem label="最近一次升级" :span="2">{{ base?.latest?.message || '还没发起过升级' }}</DescriptionsItem>
@@ -517,13 +528,6 @@ async function remove(row: ProjectRow) {
           下一步：在「合并请求」里选 {{ upgradeResult.upgradeBranch }} → {{ repo?.mainBranch }} 审这份差异，确认后才进主干。
         </p>
       </template>
-
-      <div class="drawer-actions">
-        <PermissionButton perm="lowcode:project:upgrade" variant="primary" icon="branch" :loading="upgrading"
-                          :disabled="baseLoading" @click="runBaseUpgrade">
-          发起底座升级
-        </PermissionButton>
-      </div>
 
       <p v-if="!check" class="hint">还没检查过：检查连通性只读远端引用，不改动项目状态，也不推任何东西。</p>
       <Descriptions v-else :column="2">
@@ -588,13 +592,6 @@ async function remove(row: ProjectRow) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.drawer-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
 }
 
 <style scoped>
