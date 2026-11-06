@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.function.UnaryOperator;
 
 /**
@@ -134,6 +135,12 @@ public class LocalBareGitGateway implements GitGateway {
     @Override
     public String fileDiff(Path dir, String baseSha, String headSha, String path) {
         return jgit.fileDiff(dir, baseSha, headSha, path);
+    }
+
+    /** 取历史内容也照真 JGit 走：回滚用例验的就是「那一版里这个文件到底是什么」，桩给不出这个答案 */
+    @Override
+    public Map<String, String> fileContents(Path dir, String commitRev, List<String> paths) {
+        return jgit.fileContents(dir, commitRev, paths);
     }
 
     /**
