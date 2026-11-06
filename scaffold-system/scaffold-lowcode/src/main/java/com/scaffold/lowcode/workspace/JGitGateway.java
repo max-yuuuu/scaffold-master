@@ -12,12 +12,16 @@ import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
 import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.RawText;
+import org.eclipse.jgit.diff.RawTextComparator;
 import org.eclipse.jgit.diff.DiffFormatter;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.merge.MergeAlgorithm;
+import org.eclipse.jgit.merge.MergeChunk;
 import org.eclipse.jgit.merge.MergeStrategy;
 import org.eclipse.jgit.merge.Merger;
 import org.eclipse.jgit.merge.ResolveMerger;
@@ -51,6 +55,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -567,6 +572,151 @@ public class JGitGateway implements GitGateway {
                     .decode(ByteBuffer.wrap(raw)).toString();
         } catch (CharacterCodingException e) {
             throw new BusinessException(path + " 在那个提交里不是 UTF-8 文本，平台不把它当生成物回滚");
+        }
+    }
+
+
+    @Override
+    public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
+                                          List<String> paths) {
+        List<MergedFile> results = new ArrayList<>();
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId baseTree = rootTree(repo, baseSha, "交付时的底座快照");
+            ObjectId oursTree = rootTree(repo, oursSha, "项目主干");
+            ObjectId theirsTree = rootTree(repo, theirsSha, "新的底座快照");
+            try (ObjectReader reader = repo.newObjectReader()) {
+                for (String path : paths) {
+                    results.add(mergeOne(path, blobAt(reader, baseTree, path),
+                            blobAt(reader, oursTree, path), blobAt(reader, theirsTree, path)));
+                }
+            }
+            return results;
+        } catch (IOException e) {
+            throw new BusinessException("三方合并失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 合并矩阵。判据只有一条：平台不静默删项目里有的东西，也不把没编译过的内容写进别人的仓库，
+     * 所以除 {@link MergeOutcome#CLEAN} 外都不给内容，由服务列成清单交人。
+     */
+    private static MergedFile mergeOne(String path, byte[] base, byte[] ours, byte[] theirs) {
+        if (ours == null && theirs == null) {
+            // 两侧都不要它了（项目删过，底座快照也不再交付）：没有可写的，也不用找人
+            return new MergedFile(path, MergeOutcome.UNCHANGED, null);
+        }
+        if (theirs == null) {
+            // 新快照里没有它而项目里有：可能是平台这版不再交付（改名、拆分、裁剪清单收紧）。
+            // 项目里那份可能被人读过、也可能被项目自己改过，删不删是人的决定
+            return new MergedFile(path, MergeOutcome.DROPPED_BY_PLATFORM, null);
+        }
+        if (ours == null) {
+            if (base == null) {
+                // 平台新增、项目里没有：纯粹的新文件，文本就直接写入
+                String added = decodeOrNull(theirs);
+                return added == null ? new MergedFile(path, MergeOutcome.BINARY, null)
+                        : new MergedFile(path, MergeOutcome.CLEAN, added);
+            }
+            // 项目删了：平台没改过就作罢（两边都不要），平台改过就说不清 —— 谁对机器判不了
+            return Arrays.equals(base, theirs)
+                    ? new MergedFile(path, MergeOutcome.UNCHANGED, null)
+                    : new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        if (Arrays.equals(ours, theirs)) {
+            return new MergedFile(path, MergeOutcome.UNCHANGED, null);
+        }
+        String baseText = base == null ? "" : decodeOrNull(base);
+        String oursText = decodeOrNull(ours), theirsText = decodeOrNull(theirs);
+        if (baseText == null || oursText == null || theirsText == null) {
+            return new MergedFile(path, MergeOutcome.BINARY, null);
+        }
+        if (base == null) {
+            // 两侧各自新增且内容不同：没有共同祖先可退让
+            return new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        MergeResult0 merged = mergeText(path, baseText, oursText, theirsText);
+        if (merged == null) {
+            return new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        // 合完仍等于项目那份，就是「平台这次没动它」：不写，免得升级分支里全是零差异的提交
+        return merged.content().equals(oursText)
+                ? new MergedFile(path, MergeOutcome.UNCHANGED, null)
+                : new MergedFile(path, MergeOutcome.CLEAN, merged.content());
+    }
+
+    /** 合并后的文本；冲突时返回 null。冲突标记不往外给，所以这里连拼都不拼 */
+    private record MergeResult0(String content) {
+    }
+
+    private static MergeResult0 mergeText(String path, String baseText, String oursText, String theirsText) {
+        org.eclipse.jgit.merge.MergeResult<RawText> result = new MergeAlgorithm().merge(RawTextComparator.DEFAULT,
+                new RawText(baseText.getBytes(StandardCharsets.UTF_8)),
+                new RawText(oursText.getBytes(StandardCharsets.UTF_8)),
+                new RawText(theirsText.getBytes(StandardCharsets.UTF_8)));
+        if (result.containsConflicts()) {
+            return null;
+        }
+        List<RawText> sources = result.getSequences();
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        StringBuilder text = new StringBuilder();
+        boolean endsWithNewline = true;
+        try {
+            for (MergeChunk chunk : result) {
+                RawText source = sources.get(chunk.getSequenceIndex());
+                for (int index = chunk.getBegin(); index < chunk.getEnd(); index++) {
+                    line.reset();
+                    // RawText.writeLine 只写这一行的内容、不含行尾换行（JGit 让调用方补），
+                    // 忘了补就得到「FROM xCOPY y」这种拼起来的东西 —— 每一格都会被误判成有改动
+                    source.writeLine(line, index);
+                    text.append(line.toString(StandardCharsets.UTF_8)).append('\n');
+                    endsWithNewline = !(index == source.size() - 1 && source.isMissingNewlineAtEnd());
+                }
+            }
+        } catch (IOException e) {
+            throw new BusinessException("拼不出 " + path + " 的合并结果：" + e.getMessage());
+        }
+        if (!endsWithNewline) {
+            text.setLength(text.length() - 1);
+        }
+        return new MergeResult0(text.toString());
+    }
+
+    /** 提交号 → 那棵根树；查不到时说清是哪一侧查不到（三方合并有三侧，光说「提交不存在」没人能定位） */
+    private static ObjectId rootTree(Repository repo, String rev, String role) {
+        try {
+            ObjectId commit = repo.resolve(rev + "^{commit}");
+            if (commit == null) {
+                throw new BusinessException(role + "对应的提交 " + rev + " 不在这份仓库里");
+            }
+            try (RevWalk revWalk = new RevWalk(repo)) {
+                return revWalk.parseCommit(commit).getTree();
+            }
+        } catch (IOException e) {
+            throw new BusinessException("读不出" + role + " " + rev + "：" + e.getMessage());
+        }
+    }
+
+    private static byte[] blobAt(ObjectReader reader, ObjectId tree, String path) throws IOException {
+        try (TreeWalk walk = TreeWalk.forPath(reader, path, tree)) {
+            return walk == null ? null : reader.open(walk.getObjectId(0), Constants.OBJ_BLOB).getBytes();
+        }
+    }
+
+    /** 与 decodeText 同一套判据，但不抛 —— 三方合并要把「读不出文本」当成一种结果而不是一种错误 */
+    private static String decodeOrNull(byte[] raw) {
+        for (byte b : raw) {
+            if (b == 0) {
+                return null;
+            }
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
         }
     }
 

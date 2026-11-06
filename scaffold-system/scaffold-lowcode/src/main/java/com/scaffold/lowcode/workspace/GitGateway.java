@@ -153,4 +153,25 @@ public interface GitGateway {
      * @return 路径 → 文本内容，只含取到的那些；二进制与查不到的提交当场拒绝，不返回乱码
      */
     Map<String, String> fileContents(Path dir, String commitRev, List<String> paths);
+
+    /**
+     * 逐文件三方合并（底座升级用，方案 §5.2）。
+     *
+     * <p>三个来源分别是：{@code baseSha} = 当初交付那份 A 档快照的提交（项目仓库里的
+     * {@code yuanda/platform-base/*} tag 指向它）、{@code oursSha} = 项目主干当前提交、
+     * {@code theirsSha} = 按当前底座 checkout 现生成的 A 档快照提交。
+     *
+     * <p><b>只读</b>：三棵树都从对象库取，合并本身在内存里做（JGit {@code MergeAlgorithm}），
+     * 不 checkout、不写索引、不动 HEAD —— 与 {@link #fileContents} 同一个理由：一次「看看差多少」
+     * 不该改动任何现场。写不写由调用方按 {@link MergedFile#writable()} 决定，
+     * 而只有 {@link MergeOutcome#CLEAN} 可写：平台不静默删项目里有的东西，
+     * 也不把带冲突标记、没编译过的内容推使用者的仓库。
+     *
+     * @param dir 项目工作区，只用来打开仓库
+     * @param baseSha 交付时那份 A 档快照的提交号
+     * @param oursSha 项目主干当前提交号
+     * @param theirsSha 新的 A 档快照提交号
+     * @param paths 要合并的路径（调用方给两侧路径的并集，不在任何一侧的按未变更处理）
+     */
+    List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha, List<String> paths);
 }

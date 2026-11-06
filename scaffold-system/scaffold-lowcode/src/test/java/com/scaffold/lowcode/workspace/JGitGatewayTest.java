@@ -533,6 +533,215 @@ class JGitGatewayTest {
         assertThat(gateway.fileContents(workspace, sha, List.of("a.txt"))).containsOnlyKeys("a.txt");
     }
 
+    /**
+     * 底座升级的逐文件三方合并（PR 10，方案 §5.2「把平台改的那几行与项目改的那几行分开」）。
+     *
+     * <p>base = 项目仓库里交付时打的 yuanda/platform-base/* tag，ours = 项目主干，
+     * theirs = 按当前底座 checkout 现生成的 A 档快照。口径是用户定的那一条：
+     * <b>能自动合的写，冲突的文件一个都不写、只列清单</b> —— 所以 CONFLICT 不给内容，
+     * 平台也不在网页里改代码。
+     */
+    /** 五行的 pom：夹具喂的是真文件的形状，两行那种「整份都是改动」的样本测不出合并算法的行为 */
+    private static final String POM_BASE = "<project>\n  <version>1.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";
+    private static final String POM_THEIRS = "<project>\n  <version>2.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";
+    private static final String POM_OURS = "<project>\n  <version>1.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n  <name>订单中台</name>\n</project>\n";
+
+    @Test
+    void 两侧各改各的行时自动合并且内容同时含两边的改动() {
+        Fixture fixture = baseFixture();
+        // 平台侧改第 2 行，项目侧在第 5 行后追加：中间隔着未改动的行，机器能判
+        String theirs = fixture.commitOn("platform", "pom.xml", POM_THEIRS);
+        String ours = fixture.commitOn("project", "pom.xml", POM_OURS);
+
+        // 先自证三侧现场真是我以为的那三份：合并结论不对时，要能分清是算法判错还是夹具喂错
+        assertThat(gateway.fileContents(fixture.workspace, fixture.base, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_BASE);
+        assertThat(gateway.fileContents(fixture.workspace, theirs, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_THEIRS);
+        assertThat(gateway.fileContents(fixture.workspace, ours, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_OURS);
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+            assertThat(file.content()).isEqualTo("<project>\n  <version>2.0</version>\n  <name>scaffold</name>\n"
+                    + "  <packaging>pom</packaging>\n  <name>订单中台</name>\n</project>\n");
+        });
+    }
+
+    /**
+     * 相邻行的两侧改动，JGit 判冲突 —— 命令行 git 会干净合掉，这是引擎差异，不是这里算错。
+     *
+     * <p>记下来是因为它会出现在真机上：底座把 pom 的第 2 行改了，项目恰好在第 3 行加过东西，
+     * 升级就会报「要人解」。宁可多报一格让人看一眼，也不反过来发明一套更宽松的合并 ——
+     * 平台不替人取舍，也不在自己算不准的时候假装算得准。
+     */
+    @Test
+    void 相邻行的两侧改动按冲突处理并说明这是引擎的保守侧() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "pom.xml", POM_THEIRS);
+        String ours = fixture.commitOn("project", "pom.xml",
+                "<project>\n  <version>1.0</version>\n  <name>订单中台</name>\n  <packaging>pom</packaging>\n</project>\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CONFLICT);
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    @Test
+    void 两侧改同一行时报冲突且不给内容() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "pom.xml", "<version>2.0</version>\n<name>scaffold</name>\n");
+        String ours = fixture.commitOn("project", "pom.xml", "<version>1.9</version>\n<name>scaffold</name>\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CONFLICT);
+            // 不写就不给内容：带着 <<<<<<< 的文本进升级分支，等于平台把没编译过的东西推给人
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    @Test
+    void 只有平台改过的文件才要写而项目自己改过的不动() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "Dockerfile", "FROM temurin:21\nCOPY a b\n");
+        // 项目侧只改 README，Dockerfile 与 base 一致：那 Dockerfile 就是「平台单改」
+        String ours = fixture.commitOn("project", "README.md", "# 订单中台\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("Dockerfile", "README.md"));
+
+        assertThat(merged).filteredOn(file -> file.path().equals("Dockerfile")).singleElement()
+                .satisfies(file -> {
+                    assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+                    assertThat(file.content()).isEqualTo("FROM temurin:21\nCOPY a b\n");
+                });
+        // 项目改了而平台没改 → 平台一个字都不碰它，这才是「不静默覆盖项目私有配置」
+        assertThat(merged).filteredOn(file -> file.path().equals("README.md")).singleElement()
+                .satisfies(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
+    }
+
+    @Test
+    void 平台新增的文件直接写入而平台不再交付的文件不许自动删() {
+        Fixture fixture = baseFixture();
+        // 平台这一版新增一个文件、同时不再交付 README.md —— 只加不删的话 theirs 里 README.md 还在，
+        // 那一格就没被构造出来（第一版就是这么写错的，断言照样能过在别的结果上）
+        String theirs = fixture.commitAddDropOn("platform", "deploy/new.conf", "ok\n", "README.md");
+        String ours = fixture.commitOn("project", "README.md", "# 订单中台\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("deploy/new.conf", "README.md"));
+
+        assertThat(merged).filteredOn(file -> file.path().equals("deploy/new.conf")).singleElement()
+                .satisfies(file -> {
+                    assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+                    assertThat(file.content()).isEqualTo("ok\n");
+                });
+        // theirs 里没有 README.md（底座快照不再交付它）而项目改过：删掉项目里有人读的文件
+        // 不是升级该顺手做的事，列出来让人决定
+        assertThat(merged).filteredOn(file -> file.path().equals("README.md")).singleElement()
+                .satisfies(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.DROPPED_BY_PLATFORM));
+    }
+
+    @Test
+    void 项目删过的文件按平台是否改过分两种处理() {
+        Fixture fixture = baseFixture();
+        fixture.deleteOn("platform", "notes.md");
+        String theirs = gateway.localBranchSha(fixture.workspace, "platform");
+        fixture.checkoutTo("project");
+        delete(fixture.workspace, "notes.md");
+        String ours = gateway.commitAll(fixture.workspace, "chore: 项目侧删掉 notes.md");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("notes.md"));
+
+        // 两侧都删了 → 没事可做；而「平台改了、项目删了」才是真需要人表态的那一格
+        assertThat(merged).singleElement().satisfies(file ->
+                assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
+    }
+
+    @Test
+    void 非文本内容不参与自动合并() throws IOException {
+        Fixture fixture = baseFixture();
+        Path png = fixture.workspace.resolve("assets.png");
+        Files.createDirectories(png.getParent());
+
+        gateway.checkoutBranch(fixture.workspace, "platform", fixture.base);
+        Files.write(png, new byte[]{(byte) 0xFF, (byte) 0xFE, 1});
+        String theirs = gateway.commitAll(fixture.workspace, "feat: 平台侧带了一个二进制");
+        gateway.checkoutBranch(fixture.workspace, "project", fixture.base);
+        Files.write(png, new byte[]{(byte) 0xFF, (byte) 0xFE, 2});
+        String ours = gateway.commitAll(fixture.workspace, "chore: 项目侧也改了它");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("assets.png"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.BINARY);
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    /** 三方合并夹具：一个 base 提交（pom.xml + README.md + notes.md + Dockerfile），平台侧与项目侧各自从它分叉 */
+    private final class Fixture {
+        private final Path workspace;
+        private final String base;
+
+        private Fixture() {
+            workspace = tempDir.resolve("upgrade-" + System.nanoTime());
+            gateway.initEmpty(workspace, remoteUrl, "base");
+            write(workspace, "pom.xml", POM_BASE);
+            write(workspace, "README.md", "# scaffold\n");
+            write(workspace, "notes.md", "原始说明\n");
+            write(workspace, "Dockerfile", "FROM temurin:17\nCOPY a b\n");
+            base = gateway.commitAll(workspace, "chore: 交付时的底座快照");
+            gateway.pushBranch(workspace, "base");
+        }
+
+        /** 在指定分支上改一个文件并提交，返回那个提交号 */
+        private String commitOn(String branch, String path, String content) {
+            gateway.checkoutBranch(workspace, branch, base);
+            write(workspace, path, content);
+            String sha = gateway.commitAll(workspace, "chore: " + branch + " 改 " + path);
+            gateway.pushBranch(workspace, branch);
+            return sha;
+        }
+
+        /** 同一分支上「加一个、删一个」：底座快照收紧裁剪清单时的真实形状 */
+        private String commitAddDropOn(String branch, String add, String content, String drop) {
+            gateway.checkoutBranch(workspace, branch, base);
+            write(workspace, add, content);
+            delete(workspace, drop);
+            String sha = gateway.commitAll(workspace, "chore: " + branch + " 加 " + add + " 撤 " + drop);
+            gateway.pushBranch(workspace, branch);
+            return sha;
+        }
+
+        private void deleteOn(String branch, String path) {
+            gateway.checkoutBranch(workspace, branch, base);
+            delete(workspace, path);
+            gateway.commitAll(workspace, "chore: " + branch + " 删 " + path);
+            gateway.pushBranch(workspace, branch);
+        }
+
+        private void checkoutTo(String branch) {
+            gateway.checkoutBranch(workspace, branch, base);
+        }
+    }
+
+    private Fixture baseFixture() {
+        return new Fixture();
+    }
+
     private static Change changeOf(List<ChangedFile> files, String path) {
         return files.stream().filter(file -> file.path().equals(path)).findFirst()
                 .orElseThrow(() -> new AssertionError("清单里没有 " + path)).change();
