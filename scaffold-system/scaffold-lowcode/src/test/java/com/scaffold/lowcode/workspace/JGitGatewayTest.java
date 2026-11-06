@@ -628,6 +628,132 @@ class JGitGatewayTest {
                 .allSatisfy(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
     }
 
+    /**
+     * 底座升级的完整一趟（10C 的 git 编排）：临时 clone 里算三方合并，把可自动合的文件写进
+     * 从主干切出的升级分支并推上去 —— 平台工作区一条引用都不动，与 mergeIntoTarget 同一口径。
+     */
+    @Test
+    void 升级把可自动合的文件写进从主干切出的升级分支并推上去() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 底座侧改 pom 的版本号那一行、README 原样不动；项目侧改的是 pom 末尾那行与 README
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8),
+                        "README.md", "# scaffold\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/aaaaaaa", "底座升级");
+
+        assertThat(upgrade.oursSha()).isEqualTo(fx.main);
+        assertThat(upgrade.commitSha()).isNotNull();
+        assertThat(upgrade.branch()).isEqualTo("platform-upgrade/aaaaaaa");
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isEqualTo(1);
+        assertThat(upgrade.count(MergeOutcome.UNCHANGED)).isEqualTo(1);
+
+        String pushed = branchSha(fx.repoUrl, upgrade.branch());
+        assertThat(pushed).isEqualTo(upgrade.commitSha());
+        // 主干没被碰：升级只是「供人审的一份内容」，合不合由人
+        assertThat(branchSha(fx.repoUrl, "main")).isEqualTo(fx.main);
+        // 平台改的那一行与项目加的那一行都在升级分支里，README 保持项目那份。
+        // 从远端重新 clone 再读：那份升级提交只活在 baseUpgrade 的临时 clone 里，
+        // 用完就删了 —— 拿平台工作区去读只会得到 Missing unknown
+        Path check = tempDir.resolve("upgrade-check");
+        gateway.cloneBranch(check, fx.repoUrl, upgrade.branch());
+        Map<String, String> onBranch = gateway.fileContents(check, upgrade.commitSha(),
+                List.of("pom.xml", "README.md"));
+        assertThat(onBranch.get("pom.xml")).contains("<version>2.0</version>").contains("订单中台");
+        assertThat(onBranch.get("README.md")).isEqualTo("# 订单中台\n");
+    }
+
+    @Test
+    void 全无可写的内容时不建分支也不推() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 快照与交付时一模一样：每一格都是 UNCHANGED，那就没有「升级」这回事
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_BASE.getBytes(StandardCharsets.UTF_8),
+                        "README.md", "# scaffold\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/unchanged", "底座升级");
+
+        assertThat(upgrade.commitSha()).isNull();
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isZero();
+        assertThat(gateway.lsRemote(fx.repoUrl)).allSatisfy(ref ->
+                assertThat(ref.branchName()).isNotEqualTo("platform-upgrade/unchanged"));
+    }
+
+    @Test
+    void 只有冲突时不建分支并把那一格算进冲突数() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 底座与项目改的是同一行：这一格必须留给人，升级分支里不该出现任何内容
+        // 只给 README：底座与项目改的是同一行 → 冲突；其余三格因为快照里没带 → 平台撤掉。
+        // 两种都不该写，所以一个分支都不建。（上一版这里还带着 pom 的可自动合改动，
+        // 于是照样建了分支 —— 用例名说的「只有冲突」得真的只有冲突才行）
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("README.md", "# 平台把说明也改了\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/conflict", "底座升级");
+
+        assertThat(upgrade.count(MergeOutcome.CONFLICT)).isEqualTo(1);
+        assertThat(upgrade.count(MergeOutcome.DROPPED_BY_PLATFORM)).isEqualTo(3);
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isZero();
+        assertThat(upgrade.commitSha()).isNull();
+    }
+
+    @Test
+    void 升级分支名已经在远端时拒绝而不是强推() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 上一次升级推出去的分支还挂在远端（可能已经有人在审）：同名再推只能靠 force，而平台永不强推
+        gateway.checkoutBranch(fx.workspace, "platform-upgrade/taken", fx.main);
+        write(fx.workspace, "占位.txt", "上一次升级留下的\n");
+        gateway.commitAll(fx.workspace, "chore: 上一次的升级分支");
+        gateway.pushBranch(fx.workspace, "platform-upgrade/taken");
+
+        assertThatThrownBy(() -> gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/taken", "底座升级"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("platform-upgrade/taken");
+    }
+
+    private String branchSha(String repoUrl, String branch) {
+        return gateway.lsRemote(repoUrl).stream().filter(ref -> branch.equals(ref.branchName()))
+                .findFirst().orElseThrow(() -> new AssertionError("远端没有分支 " + branch)).sha();
+    }
+
+    /** 底座升级的现场：主干上有交付提交（打了 base tag），之后项目又提交过一次 */
+    private final class UpgradeFixture {
+        private final Path workspace;
+        private final String repoUrl;
+        private final String main;
+        private final String baseTag;
+
+        private UpgradeFixture() throws IOException {
+            // 远端就用每个测试自己的那个裸仓库（@BeforeEach 已经建好），不再另起一份 ——
+            // 自己拼 bare 仓库的写法要把 GitAPIException 也带进夹具，白多一层
+            workspace = tempDir.resolve("upgrade-flow-" + System.nanoTime());
+            repoUrl = remoteUrl;
+            gateway.initEmpty(workspace, repoUrl, "main");
+            write(workspace, "pom.xml", POM_BASE);
+            write(workspace, "README.md", "# scaffold\n");
+            write(workspace, "notes.md", "原始说明\n");
+            write(workspace, "Dockerfile", "FROM temurin:17\nCOPY a b\n");
+            String delivered = gateway.commitAll(workspace, "chore: 交付固定代码");
+            baseTag = PlatformBaseTag.PREFIX + delivered;
+            gateway.tagCommit(workspace, baseTag, delivered, "底座快照");
+            gateway.pushTag(workspace, baseTag);
+            gateway.pushBranch(workspace, "main");
+            // 项目自己又改了一次：pom 末尾加一行，README 也改了
+            write(workspace, "pom.xml", POM_OURS);
+            write(workspace, "README.md", "# 订单中台\n");
+            main = gateway.commitAll(workspace, "chore: 项目自己的改动");
+            gateway.pushBranch(workspace, "main");
+        }
+    }
+
+    private UpgradeFixture upgradeFixture() throws IOException {
+        return new UpgradeFixture();
+    }
+
+    /** 取前 7 位当分支名后缀，与底座短 sha 的用法一致 */
+    private static String snapshotOf(String content) {
+        return content.hashCode() == 0 ? "0" : String.format("%08x", content.hashCode());
+    }
+
     /** 五行的 pom：夹具喂的是真文件的形状，两行那种「整份都是改动」的样本测不出合并算法的行为 */
     private static final String POM_BASE = "<project>\n  <version>1.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";
     private static final String POM_THEIRS = "<project>\n  <version>2.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";

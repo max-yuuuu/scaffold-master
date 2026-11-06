@@ -191,4 +191,29 @@ public interface GitGateway {
      * @return 那个提交号
      */
     String snapshotCommit(Path dir, Map<String, byte[]> files, String message);
+
+    /**
+     * 完整一趟底座升级的 git 编排（方案 §5.2）：临时 clone 里算三方合并，把可自动合的文件写进
+     * 从主干切出的升级分支并推上去。
+     *
+     * <p><b>平台工作区一条引用都不动</b>，与 {@link #mergeIntoTarget} 同一口径：工作区的 HEAD 属于发布分支，
+     * 拿它去长升级分支会把两条链路的现场搅在一起。
+     *
+     * <p>三道拒绝都在动手之前：远端没有主干（升级分支无处可切）、远端已经有同名升级分支（同名再推只能靠
+     * force，而平台永不强推 —— 那一条可能是别人正在审的）、底座标记 tag 取不到（三方合并缺 base 侧，
+     * 算出来的「谁改了什么」全是猜的）。
+     *
+     * <p>可自动合的文件一个都没有时<b>不建分支也不推</b>：空升级分支会在合并请求里以「零变更」出现，
+     * 浪费的是审的人的注意力。
+     *
+     * @param workspace 项目工作区，只用来取远端与凭据，不会被改动
+     * @param repoUrl 仓库地址
+     * @param mainBranch 项目主干分支名（升级分支的起点，也是唯一能被合进去的目标）
+     * @param baseTag 交付时打的底座标记 tag 名（{@code yuanda/platform-base/{sha}}），三方合并的 base 侧
+     * @param snapshotFiles 当前底座该交付的 A 档快照：路径 → 内容
+     * @param upgradeBranch 升级分支名（不带 refs/heads/）
+     * @param message 升级提交说明
+     */
+    BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                            Map<String, byte[]> snapshotFiles, String upgradeBranch, String message);
 }

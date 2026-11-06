@@ -4,6 +4,7 @@ import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.jgit.api.CreateBranchCommand;
+import org.eclipse.jgit.transport.TagOpt;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
@@ -581,6 +582,116 @@ public class JGitGateway implements GitGateway {
     }
 
 
+
+
+    @Override
+    public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        if (snapshotFiles.isEmpty()) {
+            throw new BusinessException("底座快照里没有一份文件：底座 checkout 读不到或裁剪清单为空，"
+                    + "这种快照做不出升级 —— 它只会把项目里每一个文件都报成「平台不再交付」");
+        }
+        List<RemoteRef> refs = lsRemote(repoUrl);
+        String oursSha = branchSha(refs, mainBranch);
+        if (oursSha == null) {
+            throw new BusinessException("远端没有主干 " + mainBranch + "：底座升级要从主干切分支，"
+                    + "先确认这个仓库的起点还在");
+        }
+        if (branchSha(refs, upgradeBranch) != null) {
+            throw new BusinessException("远端已经有升级分支 " + upgradeBranch + "：上一次推的那一份还在，"
+                    + "多半是有人正在合并请求里审它。平台不强推覆盖 —— 请先把它合掉或关掉再重新发起");
+        }
+        Path temp;
+        try {
+            temp = Files.createTempDirectory("scaffold-upgrade-");
+        } catch (IOException e) {
+            throw new BusinessException("创建升级用的临时目录失败：" + e.getMessage());
+        }
+        try {
+            cloneBranch(temp, repoUrl, mainBranch);
+            String theirsSha = snapshotCommit(temp, snapshotFiles, "底座快照：" + message);
+            List<String> paths;
+            String baseCommit;
+            try (Git git = open(temp)) {
+                Repository repo = git.getRepository();
+                // 交付时那个 tag 指向的提交是三方合并的 base 侧：clone 默认会带上指向已取历史里的 tag，
+                // 但不保证（比如 tag 后来才补打）。补 fetch 一次，取不到就是仓库里真没有
+                ObjectId base = repo.resolve(TAGS_PREFIX + baseTag + "^{commit}");
+                if (base == null) {
+                    fetchTags(git);
+                    base = repo.resolve(TAGS_PREFIX + baseTag + "^{commit}");
+                }
+                if (base == null) {
+                    throw new BusinessException("项目仓库里找不到底座标记 tag " + baseTag
+                            + "：三方合并没有 base 侧，算出来的「谁改了什么」全是猜的。"
+                            + "这个项目是在记不到底座提交号的版本上初始化的，请先补打底座标记 tag");
+                }
+                baseCommit = base.getName();
+                paths = mergePaths(repo, baseCommit, oursSha, theirsSha);
+            }
+            List<MergedFile> merged = threeWayMerge(temp, baseCommit, oursSha, theirsSha, paths);
+            List<MergedFile> writable = merged.stream().filter(MergedFile::writable).toList();
+            if (writable.isEmpty()) {
+                // 一格可写的都没有：不建分支，免得合并请求里多出一条「零变更」让人点开看
+                return new BaseUpgrade(oursSha, theirsSha, null, upgradeBranch, merged);
+            }
+            checkoutBranch(temp, upgradeBranch, oursSha);
+            writeAll(temp, writable);
+            String commitSha = commitAll(temp, message);
+            if (commitSha == null) {
+                return new BaseUpgrade(oursSha, theirsSha, null, upgradeBranch, merged);
+            }
+            pushBranch(temp, upgradeBranch);
+            return new BaseUpgrade(oursSha, theirsSha, commitSha, upgradeBranch, merged);
+        } catch (IOException e) {
+            throw new BusinessException("底座升级失败：" + e.getMessage());
+        } finally {
+            deleteRecursively(temp);
+        }
+    }
+
+    private static void fetchTags(Git git) throws IOException {
+        try {
+            git.fetch().setRemote("origin").setTagOpt(TagOpt.FETCH_TAGS).call();
+        } catch (GitAPIException e) {
+            throw new BusinessException("补取远端 tag 失败：" + e.getMessage());
+        }
+    }
+
+    /** 三棵树里出现过的路径取并集：漏了任何一侧，那一格就永远算不出来（升级里「平台撤掉的文件」就在 theirs 之外） */
+    private static List<String> mergePaths(Repository repo, String baseSha, String oursSha, String theirsSha)
+            throws IOException {
+        java.util.TreeSet<String> paths = new java.util.TreeSet<>();
+        for (String rev : new String[]{baseSha, oursSha, theirsSha}) {
+            ObjectId tree = repo.resolve(rev + "^{tree}");
+            if (tree == null) {
+                continue;
+            }
+            try (ObjectReader reader = repo.newObjectReader(); TreeWalk walk = new TreeWalk(reader)) {
+                walk.addTree(tree);
+                walk.setRecursive(true);
+                while (walk.next()) {
+                    paths.add(walk.getPathString());
+                }
+            }
+        }
+        return List.copyOf(paths);
+    }
+
+    private static void writeAll(Path dir, List<MergedFile> files) throws IOException {
+        for (MergedFile file : files) {
+            Path target = dir.resolve(file.path()).normalize();
+            if (!target.startsWith(dir)) {
+                throw new BusinessException("升级要写的路径越出仓库根：" + file.path());
+            }
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, file.content(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String branchSha(List<RemoteRef> refs, String branch) {
+        return refs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
+    }
 
     @Override
     public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {

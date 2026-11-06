@@ -2,6 +2,8 @@ package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.workspace.ChangedFile;
+import com.scaffold.lowcode.workspace.BaseUpgrade;
+import com.scaffold.lowcode.workspace.MergedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.MergeCheck;
 import com.scaffold.lowcode.workspace.RemoteRef;
@@ -186,6 +188,12 @@ public class StubGitGateway implements GitGateway {
     public String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
                                   String sourceSha, String message) {
         throw new UnsupportedOperationException("StubGitGateway 不真合并也不推主干：合并执行要用真 JGit，见 LocalBareGitGateway");
+    }
+
+    @Override
+    public BaseUpgrade baseUpgrade(java.nio.file.Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   java.util.Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        throw new UnsupportedOperationException("StubGitGateway 不做底座升级：三方合并与升级分支要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
     }
 
     @Override

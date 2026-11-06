@@ -2,6 +2,8 @@ package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.workspace.ChangedFile;
+import com.scaffold.lowcode.workspace.BaseUpgrade;
+import com.scaffold.lowcode.workspace.MergedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.JGitGateway;
 import com.scaffold.lowcode.workspace.MergeCheck;
@@ -135,6 +137,14 @@ public class LocalBareGitGateway implements GitGateway {
     @Override
     public String fileDiff(Path dir, String baseSha, String headSha, String path) {
         return jgit.fileDiff(dir, baseSha, headSha, path);
+    }
+
+    /** 升级同样照真 JGit 走，远端地址映射到本机裸仓库 —— 否则用例会去推真 GitHub */
+    @Override
+    public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        return jgit.baseUpgrade(workspace, bareUrl(repoUrl), mainBranch, baseTag, snapshotFiles, upgradeBranch,
+                message);
     }
 
     @Override
