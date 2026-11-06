@@ -170,6 +170,20 @@ docker compose --profile mysql down -v   # 连 MySQL/Redis 数据卷一起删除
      （`unzip -l target/scaffold-admin-*.jar | grep bcprov`）。
    - **`Session is being closed` 多是代理劫持**：这台机器开着本机 HTTP 代理时，git over ssh 也不该走它 ——
      平台固定直连（与 `ssh` 命令一致）。确实需要代理的，就在 `~/.ssh/config` 里给该主机写 `ProxyCommand`。
+   - **第二个仓库报 `Repository not found`，多半是 deploy key 撞了全局唯一**（11A 整链演练踩到，报错完全不指向真因）：
+     GitHub 上一把公钥只能当**一个**仓库的 deploy key，而且 ssh 只要有一把 key 认证通过就不再往下试 ——
+     第一把（别的仓库的 deploy key）认证是成功的，GitHub 放行认证后再按仓库 ACL 拒绝，于是新仓库永远轮不到
+     第二把 key，看起来就像「仓库不存在」。`ssh -T git@github.com` 回显 `Hi <账号>/<仓库>!` 就是在告诉你
+     这次认证用的是哪把身份。
+
+     **一台主机服务多个租户仓库时别用 deploy key**，两种可行形态：
+
+     1. 一把**账号级 SSH key**（加到仓库所属账号，不是某仓库的 deploy key），`~/.ssh/config` 里给该主机
+        只列这一把并 `IdentitiesOnly yes`。爆炸半径 = 该账号全部仓库，适合单账号/单组织自托管；
+     2. **每租户一个机器账号**，只被邀请进它自己的仓库 —— 最小权限，但要开 N 个账号或改用 GitHub App
+        installation token，属另一期工程。
+
+     只列多把 `IdentityFile` 而不设 `IdentitiesOnly` 是没用的：先通过的那把照样把会话定下来。
 
    HTTPS 地址（`https://github.com/...`）本期不带 token：匿名读可以，推送会被远端拒（回显
    `Authentication is required...`）。要推 HTTPS 得让平台从主机环境变量读凭据，属未交付的能力。
