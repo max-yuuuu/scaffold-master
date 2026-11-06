@@ -9,9 +9,12 @@ import com.scaffold.lowcode.merge.domain.MergeRequestState;
 import com.scaffold.lowcode.merge.mapper.LcMergeRequestFileMapper;
 import com.scaffold.lowcode.merge.mapper.LcMergeRequestMapper;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
+import com.scaffold.lowcode.project.mapper.LcBaseUpgradeMapper;
 import com.scaffold.lowcode.project.mapper.LcProjectMapper;
 import com.scaffold.lowcode.repo.RepoUrlValidator;
 import com.scaffold.lowcode.workspace.ChangedFile;
+import com.scaffold.lowcode.workspace.BaseUpgrade;
+import com.scaffold.lowcode.workspace.PlatformBaseTag;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.MergeCheck;
 import com.scaffold.lowcode.workspace.RemoteRef;
@@ -53,16 +56,18 @@ public class MergeRequestService {
     private final MergeRequestLedger ledger;
     private final GitGateway gateway;
     private final WorkspacePaths paths;
+    private final LcBaseUpgradeMapper upgradeMapper;
 
     public MergeRequestService(LcProjectMapper projectMapper, LcMergeRequestMapper requestMapper,
                                LcMergeRequestFileMapper fileMapper, MergeRequestLedger ledger,
-                               GitGateway gateway, WorkspacePaths paths) {
+                               GitGateway gateway, WorkspacePaths paths, LcBaseUpgradeMapper upgradeMapper) {
         this.projectMapper = projectMapper;
         this.requestMapper = requestMapper;
         this.fileMapper = fileMapper;
         this.ledger = ledger;
         this.gateway = gateway;
         this.paths = paths;
+        this.upgradeMapper = upgradeMapper;
     }
 
     /**
@@ -70,12 +75,16 @@ public class MergeRequestService {
      *
      * @return 重算后的请求视图（含文件数与冲突数）
      */
-    public Map<String, Object> refresh(Long projectId) {
+    public Map<String, Object> refresh(Long projectId, String requestedSource) {
         Map<String, Object> project = requireProject(projectId);
         Path workspace = requireWorkspace(project);
         String repoUrl = RepoUrlValidator.normalize(text(project.get("repoUrl")));
-        String sourceBranch = text(project.get("genBranch"));
+        String genBranch = text(project.get("genBranch"));
+        String sourceBranch = requireAllowedSource(requestedSource, genBranch);
         String targetBranch = text(project.get("mainBranch"));
+        // 提示语里叫它「发布分支」还是「升级分支」按来源走：同一条守卫的话要说对话，
+        // 拿升级分支去念「还没有页面发布到这条分支上」就是把人往错的方向指
+        String sourceLabel = sourceBranch.equals(genBranch) ? "发布分支" : "来源分支";
 
         if (gateway.isDirty(workspace)) {
             throw new BusinessException("工作区 " + paths.relative(text(project.get("projectCode")))
@@ -87,7 +96,7 @@ public class MergeRequestService {
         String sourceSha = remoteSha(refs, sourceBranch);
         String targetSha = remoteSha(refs, targetBranch);
         if (sourceSha == null) {
-            throw new BusinessException("远端没有发布分支 " + sourceBranch + "：还没有页面发布到这条分支上，"
+            throw new BusinessException("远端没有" + sourceLabel + " " + sourceBranch + "：还没有内容推到这条分支上，"
                     + "也就没有要合进主干的东西");
         }
         if (targetSha == null) {
@@ -97,15 +106,15 @@ public class MergeRequestService {
 
         String baseSha = gateway.mergeBase(workspace, targetSha, sourceSha);
         if (baseSha == null) {
-            throw new BusinessException("发布分支 " + sourceBranch + " 与主干 " + targetBranch
-                    + " 没有共同祖先（两条历史是各自初始化的）：先让发布分支从主干重新起，再来算清单");
+            throw new BusinessException(sourceLabel + " " + sourceBranch + " 与主干 " + targetBranch
+                    + " 没有共同祖先（两条历史是各自初始化的）：先让它从主干重新起，再来算清单");
         }
 
         List<ChangedFile> files = gateway.diffFiles(workspace, baseSha, sourceSha);
         MergeCheck check = gateway.checkMerge(workspace, targetSha, sourceSha);
         int checkStatus = check.clean() ? MergeRequestState.CHECK_CLEAN : MergeRequestState.CHECK_CONFLICT;
         String title = files.isEmpty()
-                ? sourceBranch + " → " + targetBranch + "：主干已包含发布分支的全部内容"
+                ? sourceBranch + " → " + targetBranch + "：主干已包含来源分支的全部内容"
                 : sourceBranch + " → " + targetBranch + "：" + files.size() + " 个文件待合并";
 
         Map<String, Object> existing = requestMapper.selectOpenRequest(projectId, sourceBranch, targetBranch);
@@ -179,13 +188,17 @@ public class MergeRequestService {
         String sourceSha = text(request.get("sourceSha"));
         Path workspace = requireWorkspace(project);
         String repoUrl = RepoUrlValidator.normalize(text(project.get("repoUrl")));
+        boolean fromUpgrade = sourceBranch.startsWith(BaseUpgrade.UPGRADE_BRANCH_PREFIX);
         String remoteSource = remoteSha(gateway.lsRemote(repoUrl), sourceBranch);
         if (remoteSource == null) {
-            throw new BusinessException("远端已经没有发布分支 " + sourceBranch
-                    + "：这条请求没有可合的内容了，请重建工作区后重新初始化");
+            // 来源不同，下一步能做的事也不同：发布分支没了要重建工作区重发，升级分支没了要重新发起升级
+            throw new BusinessException("远端已经没有" + (fromUpgrade ? "升级分支 " : "发布分支 ") + sourceBranch
+                    + "：" + (fromUpgrade ? "这条升级分支被删过或已经合过了，请重新发起一次底座升级"
+                    : "这条请求没有可合的内容了，请重建工作区后重新初始化"));
         }
         if (!remoteSource.equals(sourceSha)) {
-            throw new BusinessException("发布分支 " + sourceBranch + " 在预检之后又前进了（算的是 "
+            throw new BusinessException((fromUpgrade ? "升级分支 " : "发布分支 ") + sourceBranch
+                    + " 在预检之后又前进了（算的是 "
                     + abbreviate(sourceSha) + "，远端现在是 " + abbreviate(remoteSource) + "）："
                     + "先重算一次，让人看的是最新的这一份");
         }
@@ -197,7 +210,48 @@ public class MergeRequestService {
             throw new BusinessException("这条请求刚刚已被别人收口，本次合并结果请到人主干上核对："
                     + "平台没有把它记成第二次合并");
         }
+        if (fromUpgrade) {
+            stampBaseAfterMerge(project, workspace, repoUrl, targetBranch, sourceBranch, id, merged, operator);
+        }
         return detail(id);
+    }
+
+    /**
+     * 升级分支合进主干之后，把 base 侧搬到这一版：打新的底座标记 tag、推进
+     * {@code lc_project.base_scaffold_sha}、把那次升级收成「已合入主干」。
+     *
+     * <p>不搬的话下一次升级会把已经下发过的内容再下发一遍 —— 三方合并的 base 侧照 tag 名取，
+     * 而 tag 名由 {@code base_scaffold_sha} 拼出来，那个号不动，base 就永远停在上一轮。
+     *
+     * <p>tag 打不上去（远端开了 tag 保护）<b>不回滚合并</b>：合并是真成了，sha 也照实推进，
+     * 只把告警追加到那条升级记录里。后果是下一次升级会被「找不到底座标记 tag」拦住并说明原因 ——
+     * 拦住重算比拿错的 base 硬算安全。人工「补打底座标记 tag」这个动作还没做，记在待办里。
+     */
+    private void stampBaseAfterMerge(Map<String, Object> project, Path workspace, String repoUrl,
+                                     String targetBranch, String sourceBranch, long requestId,
+                                     String mergedSha, String operator) {
+        Map<String, Object> upgrade = upgradeMapper.selectByBranch(sourceBranch);
+        if (upgrade == null) {
+            // 分支名是 platform-upgrade/* 却查不到升级记录：库与仓库漂开了。不硬猜底座号，
+            // 也不推进 sha —— 猜错一次，之后每一轮三方合并都建立在错的 base 上
+            requestMapper.noteResult(requestId, truncate("已合入主干，但查不到对应的底座升级记录（分支 " + sourceBranch
+                    + "）：base 侧没搬，下一次升级前请先核对 lc_base_upgrade"), operator);
+            return;
+        }
+        String targetScaffold = text(upgrade.get("targetScaffoldSha"));
+        String tagName = PlatformBaseTag.name(targetScaffold);
+        String warning = null;
+        try {
+            gateway.stampBaseTag(workspace, repoUrl, targetBranch, tagName,
+                    PlatformBaseTag.message(targetScaffold) + "\n\n由合并请求 #" + requestId + " 在合入主干后打上。");
+        } catch (RuntimeException e) {
+            warning = "；底座标记 tag " + tagName + " 没打上：" + e.getMessage()
+                    + "（下一次升级会被「找不到底座标记 tag」拦住，需要人工补打）";
+        }
+        projectMapper.updateBaseScaffold(numberAsLong(project.get("id")), targetScaffold, operator);
+        upgradeMapper.markStatus(numberAsLong(upgrade.get("id")), 1,
+                truncate("已合入 " + targetBranch + "（" + abbreviate(mergedSha) + "），base 侧搬到 "
+                        + abbreviate(targetScaffold) + (warning == null ? "" : warning)));
     }
 
     /**
@@ -284,6 +338,25 @@ public class MergeRequestService {
         ledger.markStale(numberAsLong(request.get("id")), message, SecurityUtils.getUsername());
         request.put("status", MergeRequestState.STALE);
         request.put("checkMessage", message);
+    }
+
+    /**
+     * 来源分支只放开两种：项目的发布分支，和底座升级推出去的那种分支。
+     *
+     * <p>这不是校验洁癖：随便指一个分支，就等于把「平台只交付两条链路」这条边界交给调用方 ——
+     * 有人指到自己的临时分支上，就能借合并请求把那份内容推到人工主干，而合并请求的授权看的
+     * 只是「他是不是这个项目的负责人」，不会替他判断这条分支是谁推的。
+     */
+    private static String requireAllowedSource(String requested, String genBranch) {
+        if (requested == null || requested.isBlank() || requested.equals(genBranch)) {
+            return genBranch;
+        }
+        if (requested.startsWith(BaseUpgrade.UPGRADE_BRANCH_PREFIX)) {
+            return requested;
+        }
+        throw new BusinessException("来源分支只能是项目的发布分支或 " + BaseUpgrade.UPGRADE_BRANCH_PREFIX
+                + "* 升级分支，收到的是 " + requested + "：平台只交付这两条链路，"
+                + "别的分支不该借合并请求进人工主干");
     }
 
     private Map<String, Object> requireProject(Long projectId) {

@@ -454,6 +454,51 @@ export interface MergeRequestDetail extends MergeRequestRow {
 /** 重算入参：只要项目 ID，清单与结论全部从仓库现算，前端不带任何期望值 */
 export interface MergeRequestRefreshRequest {
   projectId: number
+  /** 来源分支，默认是项目的发布分支；底座升级推的是 platform-upgrade/*，走同一套审与合 */
+  sourceBranch?: string
+}
+
+/** 最近一次底座升级的结论（lc_base_upgrade 一条） */
+export interface BaseUpgradeRecord {
+  id: number
+  projectId: number
+  baseScaffoldSha: string
+  targetScaffoldSha: string
+  /** 没产生升级分支时为 null：算下来一格可自动合的都没有 */
+  upgradeBranch: string | null
+  /** 0 待合并 / 1 已合入主干 / 2 主干又前进（陈旧）/ 3 没产生升级分支 */
+  status: number
+  message: string | null
+  createBy: string | null
+  createTime: string | null
+}
+
+/** 底座落后读数。behindCommits 为 null 是「数不出来」，界面要显示「未知」而不是 0 */
+export interface ProjectBaseStatus {
+  baseScaffoldSha: string | null
+  scaffoldSha: string | null
+  upToDate: boolean
+  behindCommits: number | null
+  latest: BaseUpgradeRecord | null
+}
+
+/** 发起升级的结果：三档计数 + 冲突与撤掉的清单 + 下一步去哪 */
+export interface BaseUpgradeResult {
+  upgradeId: number | null
+  projectCode: string
+  baseScaffoldSha: string
+  targetScaffoldSha: string
+  upgradeBranch: string | null
+  commitSha: string | null
+  clean: number
+  conflict: number
+  dropped: number
+  unchanged: number
+  binary: number
+  conflictPaths: string[]
+  droppedPaths: string[]
+  status: number
+  message: string
 }
 
 export function createPlatformApi(client: HttpClient) {
@@ -475,6 +520,10 @@ export function createPlatformApi(client: HttpClient) {
       workspace: (id: number) => client.get<WorkspaceStatus>(`/lowcode/projects/${id}/workspace`),
       /** 清空工作区：有未提交改动或未推送提交时后端会拒绝 */
       resetWorkspace: (id: number) => client.delete<{ path: string, cleared: boolean }>(`/lowcode/projects/${id}/workspace`),
+      /** 底座落后读数：只读库里的账与本地底座 checkout，一步不碰远端 */
+      baseStatus: (id: number) => client.get<ProjectBaseStatus>(`/lowcode/projects/${id}/base-status`),
+      /** 发起底座升级（lowcode:project:upgrade）：推一条 platform-upgrade/* 分支，合不合由人在合并请求里定 */
+      baseUpgrade: (id: number) => client.post<BaseUpgradeResult>(`/lowcode/projects/${id}/base-upgrade`),
     },
     tenantAssets: {
       /** 平台加了租户可见菜单后，已有租户靠这一步补齐（幂等，可重复执行） */

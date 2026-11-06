@@ -1,8 +1,10 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.generate.GeneratedPaths;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -11,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -531,6 +534,567 @@ class JGitGatewayTest {
                 .hasMessageContaining("0123456789");
         // 反过来确认正常号是能走的：排除「永远抛错」这种假绿
         assertThat(gateway.fileContents(workspace, sha, List.of("a.txt"))).containsOnlyKeys("a.txt");
+    }
+
+    /**
+     * 底座升级的逐文件三方合并（PR 10，方案 §5.2「把平台改的那几行与项目改的那几行分开」）。
+     *
+     * <p>base = 项目仓库里交付时打的 yuanda/platform-base/* tag，ours = 项目主干，
+     * theirs = 按当前底座 checkout 现生成的 A 档快照。口径是用户定的那一条：
+     * <b>能自动合的写，冲突的文件一个都不写、只列清单</b> —— 所以 CONFLICT 不给内容，
+     * 平台也不在网页里改代码。
+     */
+    /**
+     * 底座升级的 theirs 侧（10B）：把一份 A 档快照在仓库的对象库里做成一个提交。
+     *
+     * <p>它必须是一个「有内容、不在任何历史上」的提交：三方合并按提交号取树，而升级分支不该
+     * 从这份快照长出来 —— 那样项目主干会凭空多出一段没人认领的历史。
+     */
+    @Test
+    void 快照提交能按提交号读回全部文件且不挂在任何分支上() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "README.md", "# 项目自己的起点\n");
+        String main = gateway.commitAll(workspace, "chore: 起点");
+        gateway.pushBranch(workspace, "main");
+
+        String snapshot = gateway.snapshotCommit(workspace, new LinkedHashMap<>(Map.of(
+                "pom.xml", "<project/>\n".getBytes(StandardCharsets.UTF_8),
+                "scaffold-vue/package.json", "{\"dependencies\":{\"@yuanda-lowcode-ai/scaffold-ui\":\"1.2.0\"}}\n"
+                        .getBytes(StandardCharsets.UTF_8))), "平台底座快照");
+
+        Map<String, String> back = gateway.fileContents(workspace, snapshot, List.of("pom.xml", "scaffold-vue/package.json"));
+        assertThat(back).containsOnlyKeys("pom.xml", "scaffold-vue/package.json");
+        assertThat(back.get("pom.xml")).isEqualTo("<project/>\n");
+        // 物料包版本号就在快照内容里：升级时它跟着 theirs 下去，不需要第二个机制
+        assertThat(back.get("scaffold-vue/package.json")).contains("1.2.0");
+
+        // 没改动任何现场：分支还是原来那一笔，远端也看不见这个提交
+        assertThat(gateway.localBranchSha(workspace, "main")).isEqualTo(main);
+        assertThat(gateway.lsRemote(remoteUrl)).allSatisfy(ref -> assertThat(ref.sha()).isNotEqualTo(snapshot));
+        // 也没有父亲 —— 它是凭空长出来的一份内容，不是历史的一段
+        try (Git git = Git.open(workspace.toFile()); RevWalk walk = new RevWalk(git.getRepository())) {
+            assertThat(walk.parseCommit(git.getRepository().resolve(snapshot)).getParentCount()).isZero();
+        }
+    }
+
+    @Test
+    void 空快照不许做成提交() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "README.md", "# demo\n");
+        gateway.commitAll(workspace, "chore: 起点");
+
+        // 空清单一旦做成提交，三方合并会把项目里每一个文件都报成「平台不再交付」——
+        // 那不是升级，那是一份删除清单。底座 checkout 读不到时宁可当场停手
+        assertThatThrownBy(() -> gateway.snapshotCommit(workspace, Map.of(), "空快照"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("没有一份文件");
+    }
+
+    @Test
+    void 快照里的越界路径被拒绝而不是写到仓库外面() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "README.md", "# demo\n");
+        gateway.commitAll(workspace, "chore: 起点");
+
+        assertThatThrownBy(() -> gateway.snapshotCommit(workspace,
+                Map.of("../escape.txt", "越界\n".getBytes(StandardCharsets.UTF_8)), "越界快照"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("../escape.txt");
+    }
+
+    /** 与 10A 串起来：theirs 由快照提交提供时，三方合并照样能分出「平台改的行」与「项目改的行」 */
+    @Test
+    void 快照提交可以直接当三方合并的theirs侧用() throws IOException {
+        Fixture fixture = baseFixture();
+        String ours = fixture.commitOn("project", "pom.xml", POM_OURS);
+        String theirs = gateway.snapshotCommit(fixture.workspace, new LinkedHashMap<>(Map.of(
+                "pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8),
+                "README.md", "# scaffold\n".getBytes(StandardCharsets.UTF_8),
+                "notes.md", "原始说明\n".getBytes(StandardCharsets.UTF_8),
+                "Dockerfile", "FROM temurin:17\nCOPY a b\n".getBytes(StandardCharsets.UTF_8))), "底座快照");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml", "README.md", "notes.md", "Dockerfile"));
+
+        assertThat(merged).filteredOn(file -> file.path().equals("pom.xml")).singleElement()
+                .satisfies(file -> {
+                    assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+                    assertThat(file.content()).contains("<version>2.0</version>").contains("订单中台");
+                });
+        // 快照里没动过的三行都该是 UNCHANGED：升级提交里不该出现「平台什么都没改」的文件
+        assertThat(merged).filteredOn(file -> !file.path().equals("pom.xml")).hasSize(3)
+                .allSatisfy(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
+    }
+
+    /**
+     * 底座升级的完整一趟（10C 的 git 编排）：临时 clone 里算三方合并，把可自动合的文件写进
+     * 从主干切出的升级分支并推上去 —— 平台工作区一条引用都不动，与 mergeIntoTarget 同一口径。
+     */
+    @Test
+    void 升级把可自动合的文件写进从主干切出的升级分支并推上去() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 底座侧改 pom 的版本号那一行、README 原样不动；项目侧改的是 pom 末尾那行与 README
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8),
+                        "README.md", "# scaffold\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/aaaaaaa", "底座升级");
+
+        assertThat(upgrade.oursSha()).isEqualTo(fx.main);
+        assertThat(upgrade.commitSha()).isNotNull();
+        assertThat(upgrade.branch()).isEqualTo("platform-upgrade/aaaaaaa");
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isEqualTo(1);
+        assertThat(upgrade.count(MergeOutcome.UNCHANGED)).isEqualTo(1);
+
+        String pushed = branchSha(fx.repoUrl, upgrade.branch());
+        assertThat(pushed).isEqualTo(upgrade.commitSha());
+        // 主干没被碰：升级只是「供人审的一份内容」，合不合由人
+        assertThat(branchSha(fx.repoUrl, "main")).isEqualTo(fx.main);
+        // 平台改的那一行与项目加的那一行都在升级分支里，README 保持项目那份。
+        // 从远端重新 clone 再读：那份升级提交只活在 baseUpgrade 的临时 clone 里，
+        // 用完就删了 —— 拿平台工作区去读只会得到 Missing unknown
+        Path check = tempDir.resolve("upgrade-check");
+        gateway.cloneBranch(check, fx.repoUrl, upgrade.branch());
+        Map<String, String> onBranch = gateway.fileContents(check, upgrade.commitSha(),
+                List.of("pom.xml", "README.md"));
+        assertThat(onBranch.get("pom.xml")).contains("<version>2.0</version>").contains("订单中台");
+        assertThat(onBranch.get("README.md")).isEqualTo("# 订单中台\n");
+    }
+
+    @Test
+    void 全无可写的内容时不建分支也不推() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 快照与交付时一模一样：每一格都是 UNCHANGED，那就没有「升级」这回事
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_BASE.getBytes(StandardCharsets.UTF_8),
+                        "README.md", "# scaffold\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/unchanged", "底座升级");
+
+        assertThat(upgrade.commitSha()).isNull();
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isZero();
+        assertThat(gateway.lsRemote(fx.repoUrl)).allSatisfy(ref ->
+                assertThat(ref.branchName()).isNotEqualTo("platform-upgrade/unchanged"));
+    }
+
+    @Test
+    void 只有冲突时不建分支并把那一格算进冲突数() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 底座与项目改的是同一行：这一格必须留给人，升级分支里不该出现任何内容
+        // 只给 README：底座与项目改的是同一行 → 冲突；其余三格因为快照里没带 → 平台撤掉。
+        // 两种都不该写，所以一个分支都不建。（上一版这里还带着 pom 的可自动合改动，
+        // 于是照样建了分支 —— 用例名说的「只有冲突」得真的只有冲突才行）
+        BaseUpgrade upgrade = gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("README.md", "# 平台把说明也改了\n".getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/conflict", "底座升级");
+
+        assertThat(upgrade.count(MergeOutcome.CONFLICT)).isEqualTo(1);
+        assertThat(upgrade.count(MergeOutcome.DROPPED_BY_PLATFORM)).isEqualTo(3);
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isZero();
+        assertThat(upgrade.commitSha()).isNull();
+    }
+
+    @Test
+    void 升级分支名已经在远端时拒绝而不是强推() throws Exception {
+        UpgradeFixture fx = upgradeFixture();
+        // 上一次升级推出去的分支还挂在远端（可能已经有人在审）：同名再推只能靠 force，而平台永不强推
+        gateway.checkoutBranch(fx.workspace, "platform-upgrade/taken", fx.main);
+        write(fx.workspace, "占位.txt", "上一次升级留下的\n");
+        gateway.commitAll(fx.workspace, "chore: 上一次的升级分支");
+        gateway.pushBranch(fx.workspace, "platform-upgrade/taken");
+
+        assertThatThrownBy(() -> gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", fx.baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/taken", "底座升级"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("platform-upgrade/taken");
+    }
+
+    /**
+     * 缺 base 侧那道拒绝必须说清「先去补打 tag」，不能只丢一句网络错。
+     *
+     * <p>真机踩过：补 fetch 远端 tag 的那条命令漏挂了 SSH 传输配置，本机 HTTP 代理把 github.com:22
+     * 劫持了，接口回的是「补取远端 tag 失败：Session is being closed」—— 现场什么都没改、拒绝本身是对的，
+     * 人看到的却是一句看不懂也接不下去的错。本例走本机裸仓库，代理那条坑它挡不住（那要靠代码里统一挂
+     * transportConfig），它钉的是 §10.3 那条验收：缺底座标记 tag 的项目要被挡住，并且说得出下一步。
+     */
+    @Test
+    void 远端没有底座标记tag时升级拒绝并指出生路() throws IOException {
+        UpgradeFixture fx = upgradeFixture();
+        String missing = PlatformBaseTag.PREFIX + "0123456789abcdef0123456789abcdef01234567";
+
+        assertThatThrownBy(() -> gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", missing,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/missingtag", "底座升级"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("找不到底座标记 tag").hasMessageContaining(missing)
+                .hasMessageContaining("补打底座标记 tag");
+
+        // 拒绝在动手之前：既没建升级分支，也不该留下半条升级链
+        assertThat(gateway.lsRemote(fx.repoUrl))
+                .filteredOn(ref -> ref.branchName() != null && ref.branchName().startsWith("platform-upgrade/"))
+                .isEmpty();
+    }
+
+    /**
+     * 「平台撤掉」这份名单只该说 A 档（10G 真机抓的）。
+     *
+     * <p>真机上那一次把 {@code SalesOrderService.java}、{@code SalesOrder.vue}、建表 SQL 连同
+     * {@code .scaffold-project.json} 一起报成了「平台不再交付，删不删由人定」—— 因为路径并集是按
+     * 「三棵树里出现过」算的，而 base 与 ours 是**整个项目提交**，里面本来就有 B/C 档。
+     * 这份名单就这么给审的人看，就是在诱导他删掉自己的业务代码：B 档下次发布自己会覆盖，
+     * C 档是人工写的资产，平台连提意见的资格都没有。
+     */
+    @Test
+    void 升级结论里不许出现B档与C档路径() throws IOException {
+        String service = "scaffold-system/scaffold-business/src/main/java/com/scaffold/business/sales_order/service/SalesOrderService.java";
+        String view = "scaffold-vue/src/views/sales_order/SalesOrder.vue";
+        // 先自证夹具：这两条确实是页面发布可写的形状，否则下面的断言就是在比一个不存在的前提
+        assertThat(GeneratedPaths.isPagePublishOwned(service)).isTrue();
+        assertThat(GeneratedPaths.isPagePublishOwned(view)).isTrue();
+
+        Path workspace = tempDir.resolve("upgrade-tier");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "pom.xml", POM_BASE);
+        write(workspace, service, "class SalesOrderService { }\n");
+        write(workspace, view, "<template>项目自己的页面</template>\n");
+        write(workspace, ScaffoldTrimPolicy.MARKER_FILE, "{\"baseScaffoldSha\":\"x\"}\n");
+        String delivered = gateway.commitAll(workspace, "chore: 交付固定代码");
+        String baseTag = PlatformBaseTag.PREFIX + delivered;
+        gateway.tagCommit(workspace, baseTag, delivered, "底座快照");
+        gateway.pushTag(workspace, baseTag);
+        gateway.pushBranch(workspace, "main");
+
+        // 这一轮底座只改了 pom 的版本号那一行，快照里没有别的文件
+        BaseUpgrade upgrade = gateway.baseUpgrade(workspace, remoteUrl, "main", baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/tier", "底座升级");
+
+        assertThat(upgrade.files()).extracting(MergedFile::path)
+                .noneMatch(path -> path.equals(service) || path.equals(view)
+                        || path.equals(ScaffoldTrimPolicy.MARKER_FILE));
+        assertThat(upgrade.count(MergeOutcome.DROPPED_BY_PLATFORM)).isZero();
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isEqualTo(1);
+        assertThat(upgrade.commitSha()).isNotNull();
+    }
+
+    /**
+     * 落后读数（§10.4 那条不变式的正面）：底座 checkout 能数出从交付那一版到现在走了几步。
+     *
+     * <p>数不出来时必须返回 null 而不是 0 —— 「0」在界面上是「已是最新」，
+     * 那是把「我不知道」报成「没问题」，比不报更坏。
+     */
+    @Test
+    void 底座checkout能数出从交付版本到当前走了几个提交() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String delivered = gateway.commitAll(workspace, "chore: 交付时那一版");
+        write(workspace, "b.txt", "2\n");
+        gateway.commitAll(workspace, "feat: 底座往前走了一步");
+        write(workspace, "c.txt", "3\n");
+        String head = gateway.commitAll(workspace, "feat: 又走了一步");
+
+        assertThat(gateway.commitCountBetween(workspace, delivered, head)).isEqualTo(2);
+        assertThat(gateway.commitCountBetween(workspace, head, head)).isZero();
+        // 同一个号自己比自己是 0，这条给「已是最新」用
+        assertThat(gateway.commitCountBetween(workspace, delivered, delivered)).isZero();
+    }
+
+    @Test
+    void 数不出来时返回null而不是0() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String sha = gateway.commitAll(workspace, "chore: 起点");
+
+        // 底座 checkout 不是 git 仓库、或那一笔不在历史里（比如项目是在记不到 sha 的版本上初始化的），
+        // 这两种都要退化成「只给文件级差异清单」，而不是报一个看起来可靠的 0
+        assertThat(gateway.commitCountBetween(workspace, "0123456789abcdef0123456789abcdef01234567", sha)).isNull();
+        assertThat(gateway.commitCountBetween(workspace, sha, "0123456789abcdef0123456789abcdef01234567")).isNull();
+        assertThat(gateway.commitCountBetween(tempDir.resolve("不是仓库"), sha, sha)).isNull();
+    }
+
+    /** 升级合进主干后的那一步：base 侧要跟着走，否则下一次升级把已经下发过的内容再下发一遍 */
+    @Test
+    void 底座标记tag打在目标分支当前提交上且同名不移动() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String first = gateway.commitAll(workspace, "chore: 主干第一笔");
+        gateway.pushBranch(workspace, "main");
+
+        String tag = PlatformBaseTag.name(first);
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isTrue();
+        assertThat(gateway.lsRemote(remoteUrl)).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(tag);
+            assertThat(ref.commitSha()).isEqualTo(first);
+        });
+
+        // 主干又走了一步：同名 tag 原样留着（移动它等于改掉某一轮升级的 base 侧），新名字才指向新的一笔
+        gateway.checkoutBranch(workspace, "main", first);
+        write(workspace, "b.txt", "2\n");
+        String second = gateway.commitAll(workspace, "chore: 主干第二笔");
+        gateway.pushBranch(workspace, "main");
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isFalse();
+        String newTag = PlatformBaseTag.name(second);
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", newTag, "底座快照")).isTrue();
+
+        List<RemoteRef> refs = gateway.lsRemote(remoteUrl);
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(tag);
+            assertThat(ref.commitSha()).isEqualTo(first);
+        });
+        assertThat(refs).anySatisfy(ref -> {
+            assertThat(ref.tagName()).isEqualTo(newTag);
+            assertThat(ref.commitSha()).isEqualTo(second);
+        });
+    }
+
+    private String branchSha(String repoUrl, String branch) {
+        return gateway.lsRemote(repoUrl).stream().filter(ref -> branch.equals(ref.branchName()))
+                .findFirst().orElseThrow(() -> new AssertionError("远端没有分支 " + branch)).sha();
+    }
+
+    /** 底座升级的现场：主干上有交付提交（打了 base tag），之后项目又提交过一次 */
+    private final class UpgradeFixture {
+        private final Path workspace;
+        private final String repoUrl;
+        private final String main;
+        private final String baseTag;
+
+        private UpgradeFixture() throws IOException {
+            // 远端就用每个测试自己的那个裸仓库（@BeforeEach 已经建好），不再另起一份 ——
+            // 自己拼 bare 仓库的写法要把 GitAPIException 也带进夹具，白多一层
+            workspace = tempDir.resolve("upgrade-flow-" + System.nanoTime());
+            repoUrl = remoteUrl;
+            gateway.initEmpty(workspace, repoUrl, "main");
+            write(workspace, "pom.xml", POM_BASE);
+            write(workspace, "README.md", "# scaffold\n");
+            write(workspace, "notes.md", "原始说明\n");
+            write(workspace, "Dockerfile", "FROM temurin:17\nCOPY a b\n");
+            String delivered = gateway.commitAll(workspace, "chore: 交付固定代码");
+            baseTag = PlatformBaseTag.PREFIX + delivered;
+            gateway.tagCommit(workspace, baseTag, delivered, "底座快照");
+            gateway.pushTag(workspace, baseTag);
+            gateway.pushBranch(workspace, "main");
+            // 项目自己又改了一次：pom 末尾加一行，README 也改了
+            write(workspace, "pom.xml", POM_OURS);
+            write(workspace, "README.md", "# 订单中台\n");
+            main = gateway.commitAll(workspace, "chore: 项目自己的改动");
+            gateway.pushBranch(workspace, "main");
+        }
+    }
+
+    private UpgradeFixture upgradeFixture() throws IOException {
+        return new UpgradeFixture();
+    }
+
+    /** 取前 7 位当分支名后缀，与底座短 sha 的用法一致 */
+    private static String snapshotOf(String content) {
+        return content.hashCode() == 0 ? "0" : String.format("%08x", content.hashCode());
+    }
+
+    /** 五行的 pom：夹具喂的是真文件的形状，两行那种「整份都是改动」的样本测不出合并算法的行为 */
+    private static final String POM_BASE = "<project>\n  <version>1.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";
+    private static final String POM_THEIRS = "<project>\n  <version>2.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n</project>\n";
+    private static final String POM_OURS = "<project>\n  <version>1.0</version>\n  <name>scaffold</name>\n  <packaging>pom</packaging>\n  <name>订单中台</name>\n</project>\n";
+
+    @Test
+    void 两侧各改各的行时自动合并且内容同时含两边的改动() {
+        Fixture fixture = baseFixture();
+        // 平台侧改第 2 行，项目侧在第 5 行后追加：中间隔着未改动的行，机器能判
+        String theirs = fixture.commitOn("platform", "pom.xml", POM_THEIRS);
+        String ours = fixture.commitOn("project", "pom.xml", POM_OURS);
+
+        // 先自证三侧现场真是我以为的那三份：合并结论不对时，要能分清是算法判错还是夹具喂错
+        assertThat(gateway.fileContents(fixture.workspace, fixture.base, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_BASE);
+        assertThat(gateway.fileContents(fixture.workspace, theirs, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_THEIRS);
+        assertThat(gateway.fileContents(fixture.workspace, ours, List.of("pom.xml")).get("pom.xml"))
+                .isEqualTo(POM_OURS);
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+            assertThat(file.content()).isEqualTo("<project>\n  <version>2.0</version>\n  <name>scaffold</name>\n"
+                    + "  <packaging>pom</packaging>\n  <name>订单中台</name>\n</project>\n");
+        });
+    }
+
+    /**
+     * 相邻行的两侧改动，JGit 判冲突 —— 命令行 git 会干净合掉，这是引擎差异，不是这里算错。
+     *
+     * <p>记下来是因为它会出现在真机上：底座把 pom 的第 2 行改了，项目恰好在第 3 行加过东西，
+     * 升级就会报「要人解」。宁可多报一格让人看一眼，也不反过来发明一套更宽松的合并 ——
+     * 平台不替人取舍，也不在自己算不准的时候假装算得准。
+     */
+    @Test
+    void 相邻行的两侧改动按冲突处理并说明这是引擎的保守侧() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "pom.xml", POM_THEIRS);
+        String ours = fixture.commitOn("project", "pom.xml",
+                "<project>\n  <version>1.0</version>\n  <name>订单中台</name>\n  <packaging>pom</packaging>\n</project>\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CONFLICT);
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    @Test
+    void 两侧改同一行时报冲突且不给内容() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "pom.xml", "<version>2.0</version>\n<name>scaffold</name>\n");
+        String ours = fixture.commitOn("project", "pom.xml", "<version>1.9</version>\n<name>scaffold</name>\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("pom.xml"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.CONFLICT);
+            // 不写就不给内容：带着 <<<<<<< 的文本进升级分支，等于平台把没编译过的东西推给人
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    @Test
+    void 只有平台改过的文件才要写而项目自己改过的不动() {
+        Fixture fixture = baseFixture();
+        String theirs = fixture.commitOn("platform", "Dockerfile", "FROM temurin:21\nCOPY a b\n");
+        // 项目侧只改 README，Dockerfile 与 base 一致：那 Dockerfile 就是「平台单改」
+        String ours = fixture.commitOn("project", "README.md", "# 订单中台\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("Dockerfile", "README.md"));
+
+        assertThat(merged).filteredOn(file -> file.path().equals("Dockerfile")).singleElement()
+                .satisfies(file -> {
+                    assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+                    assertThat(file.content()).isEqualTo("FROM temurin:21\nCOPY a b\n");
+                });
+        // 项目改了而平台没改 → 平台一个字都不碰它，这才是「不静默覆盖项目私有配置」
+        assertThat(merged).filteredOn(file -> file.path().equals("README.md")).singleElement()
+                .satisfies(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
+    }
+
+    @Test
+    void 平台新增的文件直接写入而平台不再交付的文件不许自动删() {
+        Fixture fixture = baseFixture();
+        // 平台这一版新增一个文件、同时不再交付 README.md —— 只加不删的话 theirs 里 README.md 还在，
+        // 那一格就没被构造出来（第一版就是这么写错的，断言照样能过在别的结果上）
+        String theirs = fixture.commitAddDropOn("platform", "deploy/new.conf", "ok\n", "README.md");
+        String ours = fixture.commitOn("project", "README.md", "# 订单中台\n");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("deploy/new.conf", "README.md"));
+
+        assertThat(merged).filteredOn(file -> file.path().equals("deploy/new.conf")).singleElement()
+                .satisfies(file -> {
+                    assertThat(file.outcome()).isEqualTo(MergeOutcome.CLEAN);
+                    assertThat(file.content()).isEqualTo("ok\n");
+                });
+        // theirs 里没有 README.md（底座快照不再交付它）而项目改过：删掉项目里有人读的文件
+        // 不是升级该顺手做的事，列出来让人决定
+        assertThat(merged).filteredOn(file -> file.path().equals("README.md")).singleElement()
+                .satisfies(file -> assertThat(file.outcome()).isEqualTo(MergeOutcome.DROPPED_BY_PLATFORM));
+    }
+
+    @Test
+    void 项目删过的文件按平台是否改过分两种处理() {
+        Fixture fixture = baseFixture();
+        fixture.deleteOn("platform", "notes.md");
+        String theirs = gateway.localBranchSha(fixture.workspace, "platform");
+        fixture.checkoutTo("project");
+        delete(fixture.workspace, "notes.md");
+        String ours = gateway.commitAll(fixture.workspace, "chore: 项目侧删掉 notes.md");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("notes.md"));
+
+        // 两侧都删了 → 没事可做；而「平台改了、项目删了」才是真需要人表态的那一格
+        assertThat(merged).singleElement().satisfies(file ->
+                assertThat(file.outcome()).isEqualTo(MergeOutcome.UNCHANGED));
+    }
+
+    @Test
+    void 非文本内容不参与自动合并() throws IOException {
+        Fixture fixture = baseFixture();
+        Path png = fixture.workspace.resolve("assets.png");
+        Files.createDirectories(png.getParent());
+
+        gateway.checkoutBranch(fixture.workspace, "platform", fixture.base);
+        Files.write(png, new byte[]{(byte) 0xFF, (byte) 0xFE, 1});
+        String theirs = gateway.commitAll(fixture.workspace, "feat: 平台侧带了一个二进制");
+        gateway.checkoutBranch(fixture.workspace, "project", fixture.base);
+        Files.write(png, new byte[]{(byte) 0xFF, (byte) 0xFE, 2});
+        String ours = gateway.commitAll(fixture.workspace, "chore: 项目侧也改了它");
+
+        List<MergedFile> merged = gateway.threeWayMerge(fixture.workspace, fixture.base, ours, theirs,
+                List.of("assets.png"));
+
+        assertThat(merged).singleElement().satisfies(file -> {
+            assertThat(file.outcome()).isEqualTo(MergeOutcome.BINARY);
+            assertThat(file.content()).isNull();
+        });
+    }
+
+    /** 三方合并夹具：一个 base 提交（pom.xml + README.md + notes.md + Dockerfile），平台侧与项目侧各自从它分叉 */
+    private final class Fixture {
+        private final Path workspace;
+        private final String base;
+
+        private Fixture() {
+            workspace = tempDir.resolve("upgrade-" + System.nanoTime());
+            gateway.initEmpty(workspace, remoteUrl, "base");
+            write(workspace, "pom.xml", POM_BASE);
+            write(workspace, "README.md", "# scaffold\n");
+            write(workspace, "notes.md", "原始说明\n");
+            write(workspace, "Dockerfile", "FROM temurin:17\nCOPY a b\n");
+            base = gateway.commitAll(workspace, "chore: 交付时的底座快照");
+            gateway.pushBranch(workspace, "base");
+        }
+
+        /** 在指定分支上改一个文件并提交，返回那个提交号 */
+        private String commitOn(String branch, String path, String content) {
+            gateway.checkoutBranch(workspace, branch, base);
+            write(workspace, path, content);
+            String sha = gateway.commitAll(workspace, "chore: " + branch + " 改 " + path);
+            gateway.pushBranch(workspace, branch);
+            return sha;
+        }
+
+        /** 同一分支上「加一个、删一个」：底座快照收紧裁剪清单时的真实形状 */
+        private String commitAddDropOn(String branch, String add, String content, String drop) {
+            gateway.checkoutBranch(workspace, branch, base);
+            write(workspace, add, content);
+            delete(workspace, drop);
+            String sha = gateway.commitAll(workspace, "chore: " + branch + " 加 " + add + " 撤 " + drop);
+            gateway.pushBranch(workspace, branch);
+            return sha;
+        }
+
+        private void deleteOn(String branch, String path) {
+            gateway.checkoutBranch(workspace, branch, base);
+            delete(workspace, path);
+            gateway.commitAll(workspace, "chore: " + branch + " 删 " + path);
+            gateway.pushBranch(workspace, branch);
+        }
+
+        private void checkoutTo(String branch) {
+            gateway.checkoutBranch(workspace, branch, base);
+        }
+    }
+
+    private Fixture baseFixture() {
+        return new Fixture();
     }
 
     private static Change changeOf(List<ChangedFile> files, String path) {

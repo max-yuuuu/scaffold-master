@@ -202,4 +202,19 @@ public interface LcProjectMapper {
             WHERE id = #{id} AND deleted = 0
             """)
     int markPublished(@Param("id") Long id, @Param("commitSha") String commitSha, @Param("operator") String operator);
+
+    /**
+     * 推进「这个项目当初交付在哪个底座上」（方案 §5.2）：升级合进主干后必须跟着走，
+     * 否则下一次三方合并的 base 侧还是上一轮那一版，会把已经下发过的内容再下发一遍。
+     *
+     * <p>单独一条而不复用 {@link #markPublished}：那个记的是「最后一次推送的提交」，
+     * 这里记的是「底座版本」，两个事实各有读者。
+     */
+    @Update("""
+            UPDATE lc_project
+            SET base_scaffold_sha = #{baseScaffoldSha}, update_by = #{operator}
+            WHERE id = #{id} AND deleted = 0
+            """)
+    int updateBaseScaffold(@Param("id") Long id, @Param("baseScaffoldSha") String baseScaffoldSha,
+                           @Param("operator") String operator);
 }

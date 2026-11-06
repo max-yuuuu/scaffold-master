@@ -310,6 +310,62 @@ class MergeRequestApiTest {
     /** admin 的用户 ID（种子数据）；负责人必须是本租户启用中的账号 */
     private static final long ADMIN_USER = 1L;
 
+    /**
+     * 10F：升级分支合进主干后，base 侧必须跟着搬。
+     *
+     * <p>不搬的话下一次三方合并的 base 还是上一轮那一版，会把已经下发过的内容再下发一遍 ——
+     * 而这在界面上看起来完全正常（清单照样算得出来，只是内容早就是那样了）。
+     *
+     * <p>这里手工造升级分支而不是真发一次升级：单机一份底座 checkout，base 侧与 theirs 侧永远是
+     * 同一份内容，造不出「平台改了什么」（同一条理由见 ProjectWorkspaceApiTest 的注释）。
+     * 本例要验的是「合完之后 base 搬不搬」，分支怎么来的不影响这件事。
+     */
+    @Test
+    void 升级分支合进主干后把底座标记搬到这一版() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        String upgradeBranch = "platform-upgrade/abcdef1";
+        String targetScaffold = "a".repeat(39) + "b";
+        String genBefore = gateway.branchSha(fx.repoUrl, GEN);
+
+        // 从发布分支切一条升级分支推上去，内容改一笔（pom.xml 是 A 档，真实升级改的就是这类文件）
+        Path scratch = tempDir.resolve("upgrade-" + System.nanoTime());
+        gateway.cloneBranch(scratch, fx.repoUrl, GEN);
+        gateway.checkoutBranch(scratch, upgradeBranch, null);
+        write(scratch.resolve("pom.xml"), "<project>\n  <version>2.0</version>\n</project>\n");
+        String upgradeSha = gateway.commitAll(scratch, "chore(底座): 升级固定代码到 " + targetScaffold);
+        gateway.pushBranch(scratch, upgradeBranch);
+        deleteRecursively(scratch);
+
+        jdbcTemplate.update("""
+                INSERT INTO lc_base_upgrade (project_id, base_scaffold_sha, target_scaffold_sha,
+                                             upgrade_branch, files_detail, status, message, create_by)
+                VALUES (?, ?, ?, ?, '{"pom.xml":"CLEAN"}', 0, '升级分支已推出', 'admin')
+                """, fx.projectId, String.valueOf(projectRow(fx.projectId).get("base_scaffold_sha")),
+                targetScaffold, upgradeBranch);
+
+        long id = number(dataOf(post("/api/lowcode/merge-requests/refresh",
+                Map.of("projectId", fx.projectId, "sourceBranch", upgradeBranch))).get("id"));
+        setOwner(fx, ADMIN_USER);
+        assertThat(post("/api/lowcode/merge-requests/" + id + "/merge", Map.of()).getBody())
+                .as("升级分支走的正是那条现成的确认合并的路").containsEntry("code", 200);
+
+        String merged = gateway.branchSha(fx.repoUrl, MAIN);
+        // base 侧搬到这一版：项目记的号变了，而 tag 打在主干当前那笔（也就是这笔合并提交）上
+        assertThat(String.valueOf(projectRow(fx.projectId).get("base_scaffold_sha"))).isEqualTo(targetScaffold);
+        assertThat(gateway.tagSha(fx.repoUrl, "yuanda/platform-base/" + targetScaffold)).isEqualTo(merged);
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM lc_base_upgrade WHERE project_id = ? AND upgrade_branch = ?",
+                Integer.class, fx.projectId, upgradeBranch)).isEqualTo(1);
+        // 升级只往主干搬：发布分支原地不动，升级分支也没被这次合并改写或删除，事后还能对着它复查
+        assertThat(gateway.branchSha(fx.repoUrl, GEN)).as("发布分支不受这次合并影响").isEqualTo(genBefore);
+        assertThat(gateway.branchSha(fx.repoUrl, upgradeBranch)).isEqualTo(upgradeSha);
+    }
+
+    /** 项目行上那个「当初交付在哪个底座上」的号，10F 前后各读一次 */
+    private Map<String, Object> projectRow(long projectId) {
+        return jdbcTemplate.queryForMap("SELECT base_scaffold_sha FROM lc_project WHERE id = ?", projectId);
+    }
+
     /** 同租户的另一个启用账号，用来验证「待我审核」真的按人过滤 */
     private static final long OTHER_USER = 2L;
 
@@ -367,6 +423,7 @@ class MergeRequestApiTest {
                       (SELECT id FROM lc_merge_request WHERE project_id = ?)
                     """, projectId);
             jdbcTemplate.update("DELETE FROM lc_merge_request WHERE project_id = ?", projectId);
+            jdbcTemplate.update("DELETE FROM lc_base_upgrade WHERE project_id = ?", projectId);
             jdbcTemplate.update("DELETE FROM lc_project WHERE id = ?", projectId);
             deleteRecursively(workspace());
             deleteRecursively(gateway.remoteDirOf(repoUrl));

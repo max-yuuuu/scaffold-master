@@ -56,7 +56,7 @@ public class LcMergeRequestController {
     @RequiresPermission("lowcode:merge-request:sync")
     @OperLog(module = "合并请求", action = "重新计算合并请求")
     public R<Map<String, Object>> refresh(@Valid @RequestBody MergeRequestRefreshRequest request) {
-        return R.success(service.refresh(request.getProjectId()));
+        return R.success(service.refresh(request.getProjectId(), request.getSourceBranch()));
     }
 
     /** 单个文件的行内差异：抽屉里点开一行才拉一次，不一次把整份补丁搬回浏览器 */

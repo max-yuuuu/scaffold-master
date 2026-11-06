@@ -153,4 +153,91 @@ public interface GitGateway {
      * @return 路径 → 文本内容，只含取到的那些；二进制与查不到的提交当场拒绝，不返回乱码
      */
     Map<String, String> fileContents(Path dir, String commitRev, List<String> paths);
+
+    /**
+     * 逐文件三方合并（底座升级用，方案 §5.2）。
+     *
+     * <p>三个来源分别是：{@code baseSha} = 当初交付那份 A 档快照的提交（项目仓库里的
+     * {@code yuanda/platform-base/*} tag 指向它）、{@code oursSha} = 项目主干当前提交、
+     * {@code theirsSha} = 按当前底座 checkout 现生成的 A 档快照提交。
+     *
+     * <p><b>只读</b>：三棵树都从对象库取，合并本身在内存里做（JGit {@code MergeAlgorithm}），
+     * 不 checkout、不写索引、不动 HEAD —— 与 {@link #fileContents} 同一个理由：一次「看看差多少」
+     * 不该改动任何现场。写不写由调用方按 {@link MergedFile#writable()} 决定，
+     * 而只有 {@link MergeOutcome#CLEAN} 可写：平台不静默删项目里有的东西，
+     * 也不把带冲突标记、没编译过的内容推使用者的仓库。
+     *
+     * @param dir 项目工作区，只用来打开仓库
+     * @param baseSha 交付时那份 A 档快照的提交号
+     * @param oursSha 项目主干当前提交号
+     * @param theirsSha 新的 A 档快照提交号
+     * @param paths 要合并的路径（调用方给两侧路径的并集，不在任何一侧的按未变更处理）
+     */
+    List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha, List<String> paths);
+
+    /**
+     * 把一份「路径 → 内容」的清单在这份仓库的对象库里做成一个提交并返回它的提交号 ——
+     * 底座升级的 theirs 侧就是这么来的（方案 §5.2：theirs = 按当前底座 checkout 现生成的 A 档快照）。
+     *
+     * <p>三方合并的算法按提交号取树，所以快照必须成为一个提交；但它<b>不挂在任何分支上、也没有父亲</b>：
+     * 升级分支要从项目主干长出来，不能从这份快照长出来 —— 那样项目历史里会凭空多出一段没人认领的提交。
+     *
+     * <p>空清单直接拒绝：一旦做成提交，合并会把项目里每一个文件都报成「平台不再交付」，
+     * 那不是一份升级，那是一份删除清单。底座 checkout 读不到、裁剪清单为空都属于这一类现场错误。
+     *
+     * @param dir 仓库目录（升级流程里是一份临时 clone，平台工作区不被这一步改动）
+     * @param files 相对仓库根的路径 → 文件内容
+     * @param message 提交说明：会出现在人拿 {@code git cat-file} 查这个对象的时候
+     * @return 那个提交号
+     */
+    String snapshotCommit(Path dir, Map<String, byte[]> files, String message);
+
+    /**
+     * 在目标分支的当前提交上打底座标记 tag 并推到远端（升级合进主干之后要做的第一件事）。
+     *
+     * <p>为什么不能拿平台工作区去打：合并是在一份临时 clone 里做的，那笔合并提交只活在临时 clone
+     * 与远端，工作区连这个对象都没有，本地建出来的 tag 指向一个不存在的提交，推都推不上去。
+     * 所以这里重新 clone 目标分支（它现在包含那笔合并），在正确的对象图上打 tag。
+     *
+     * <p>只创建不移动：同名 tag 已存在时返回 {@code false} 并且不动它 —— 移动它等于改掉某一轮升级的
+     * base 侧，三方合并会算出错的结果。
+     *
+     * @return tag 是这次新打的（{@code true}）还是本来就在（{@code false}，原样留着）
+     */
+    boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message);
+
+    /**
+     * 完整一趟底座升级的 git 编排（方案 §5.2）：临时 clone 里算三方合并，把可自动合的文件写进
+     * 从主干切出的升级分支并推上去。
+     *
+     * <p><b>平台工作区一条引用都不动</b>，与 {@link #mergeIntoTarget} 同一口径：工作区的 HEAD 属于发布分支，
+     * 拿它去长升级分支会把两条链路的现场搅在一起。
+     *
+     * <p>三道拒绝都在动手之前：远端没有主干（升级分支无处可切）、远端已经有同名升级分支（同名再推只能靠
+     * force，而平台永不强推 —— 那一条可能是别人正在审的）、底座标记 tag 取不到（三方合并缺 base 侧，
+     * 算出来的「谁改了什么」全是猜的）。
+     *
+     * <p>可自动合的文件一个都没有时<b>不建分支也不推</b>：空升级分支会在合并请求里以「零变更」出现，
+     * 浪费的是审的人的注意力。
+     *
+     * @param workspace 项目工作区，只用来取远端与凭据，不会被改动
+     * @param repoUrl 仓库地址
+     * @param mainBranch 项目主干分支名（升级分支的起点，也是唯一能被合进去的目标）
+     * @param baseTag 交付时打的底座标记 tag 名（{@code yuanda/platform-base/{sha}}），三方合并的 base 侧
+     * @param snapshotFiles 当前底座该交付的 A 档快照：路径 → 内容
+     * @param upgradeBranch 升级分支名（不带 refs/heads/）
+     * @param message 升级提交说明
+     */
+    BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                            Map<String, byte[]> snapshotFiles, String upgradeBranch, String message);
+
+    /**
+     * 底座 checkout 从 {@code fromSha} 到 {@code toSha} 走了几个提交 —— 项目列表那个「落后 N 个底座提交」
+     * 的读数就靠它（方案 §10.4：平台镜像与底座 checkout 必须成对更新，读数就是这条不变式有没有被打破的表针）。
+     *
+     * <p><b>数不出来返回 {@code null}，不是 0。</b>「0」在界面上读起来是「已是最新」，那是把「我不知道」
+     * 报成「没问题」，比不报更坏：底座 checkout 不是 git 仓库、那一笔不在历史里（项目是在记不到 sha
+     * 的版本上初始化的）、或者只是读仓库时出了 IO 错误，这三种都要走退化分支去给文件级差异清单。
+     */
+    Integer commitCountBetween(Path repoDir, String fromSha, String toSha);
 }

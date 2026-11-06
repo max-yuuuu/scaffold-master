@@ -444,6 +444,66 @@ class ProjectWorkspaceApiTest {
         return row;
     }
 
+    /**
+     * 底座升级的接口接线与三道拒绝（PR 9 的 10D）。
+     *
+     * <p>happy path 不在这里：单机一份底座 checkout，base 侧与 theirs 侧永远是同一份内容，
+     * 三方合并算不出「平台改了什么」。那一条走真机 —— 项目 23 的 base sha 是 11-04 的，
+     * 而 dev 已经走到 PR 20，那是真的落后，测出来的 CLEAN / 冲突 / 撤掉都是真的。
+     * 这里测的是接线、权限与「不该做的有没有真拦住」，这些不需要两份底座。
+     */
+    @Test
+    void 底座升级的读数与三道拒绝() {
+        String admin = platformToken();
+        String code = newCode("itupg");
+        long id = createProject(admin, code, REPO);
+        try {
+            gateway.remoteRefs = List.of();
+            assertThat(post("/api/lowcode/projects/" + id + "/initialize", Map.of(), admin).getStatusCode())
+                    .isEqualTo(HttpStatus.OK);
+            String baseSha = String.valueOf(projectRow(id).get("base_scaffold_sha"));
+
+            // ① 读数：刚初始化完就是「已最新」。behindCommits 在这里是 null —— 桩没有底座历史，
+            // 而 null 正是这条读数的退化分支（界面显示「未知」）；能数出 0 与 N 的那条由
+            // JGitGatewayTest 的 commitCountBetween 两例与真机负责，不在桩上假称数得出
+            Map<String, Object> status = dataOf(get("/api/lowcode/projects/" + id + "/base-status", admin));
+            assertThat(status).containsEntry("upToDate", true);
+            assertThat(unknown(status)).as("桩没有底座历史，必须如实是 null").isNull();
+            assertThat(String.valueOf(status.get("scaffoldSha"))).hasSize(40);
+            assertThat(status.get("latest")).isNull();
+
+            // ② 已经在当前底座上：不建分支、不记一条「升级成功」
+            assertThat(messageOf(post("/api/lowcode/projects/" + id + "/base-upgrade", Map.of(), admin)))
+                    .contains("已经在当前底座");
+
+            // ③ 记不到底座提交号的老项目：三方合并没有 base 侧，硬算出来的「谁改了什么」全是猜的
+            jdbcTemplate.update("UPDATE lc_project SET base_scaffold_sha = NULL WHERE id = ?", id);
+            assertThat(messageOf(post("/api/lowcode/projects/" + id + "/base-upgrade", Map.of(), admin)))
+                    .contains("记不到底座提交号");
+            Map<String, Object> lost = dataOf(get("/api/lowcode/projects/" + id + "/base-status", admin));
+            // 底座提交号都没了，「是否最新」这个问题就没有答案 —— 不能报 true 让人以为不用升级
+            assertThat(lost).containsEntry("upToDate", false);
+            assertThat(unknown(lost)).isNull();
+
+            // ④ 来源分支白名单：借合并请求把任意分支合进人工主干，是这条边界要拦的事
+            jdbcTemplate.update("UPDATE lc_project SET base_scaffold_sha = ? WHERE id = ?", baseSha, id);
+            assertThat(messageOf(post("/api/lowcode/merge-requests/refresh",
+                    Map.of("projectId", id, "sourceBranch", "my-private-branch"), admin)))
+                    .contains("platform-upgrade/").contains("my-private-branch");
+            // 放开升级分支前缀（远端没有这条分支时说的是「没有内容推到这条分支上」，不是「分支不许」）
+            String upgraded = messageOf(post("/api/lowcode/merge-requests/refresh",
+                    Map.of("projectId", id, "sourceBranch", "platform-upgrade/abcdef1"), admin));
+            assertThat(upgraded).doesNotContain("只交付这两条链路");
+        } finally {
+            cleanup(code, id);
+        }
+    }
+
+    /** 读数里那一格「数不出来」的取值：单独包一层是为了让断言消息说得出是哪一格 */
+    private static Object unknown(Map<String, Object> status) {
+        return status.get("behindCommits");
+    }
+
     private Map<String, Object> findProject(String token, String projectCode) {
         return rowsOf(dataOf(get("/api/lowcode/projects?pageNum=1&pageSize=100&keyword=" + projectCode, token))).stream()
                 .filter(row -> projectCode.equals(String.valueOf(row.get("projectCode"))))

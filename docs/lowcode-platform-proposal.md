@@ -1250,9 +1250,9 @@ C 档后端的骨架是一份 `{Cls}Extension`，七个钩子：`afterRows(List<
 
 A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平台再也产不出这些文件」—— 真按后者理解，底座修个 bug、加个通用能力，存量项目就永远拿不到。所以下发的通道单独设计：
 
-1. **动作与页面发布分开**：页面发布只碰 B/C 档；A 档变更走人工发起的「**底座升级**」动作（PR 7/8 落地，与合并请求同一套界面）。
+1. **动作与页面发布分开**：页面发布只碰 B/C 档；A 档变更走人工发起的「**底座升级**」动作（已落地，PR 10：三方合并 + `platform-upgrade/*` 升级分支，界面沿用合并请求那一套）。
 2. **产物落独立分支**：平台按当前裁剪清单重新生成 A 档，推到 `platform-upgrade/{base_scaffold_sha}` 分支，不碰主干、不碰发布分支。
-3. **三方合并而不是覆盖**：绝不静默覆盖项目私有值（数据库连接、`artifactId`、品牌文案、`.env`），也不把平台的新东西漏掉 —— 三方合并能把「人改的那几行」和「平台改的那几行」分开，真冲突交人解。复用 PR 8 已经要做的 `MergeStrategy.RECURSIVE` 不落盘预演，不新造机制。
+3. **三方合并而不是覆盖**：绝不静默覆盖项目私有值（数据库连接、`artifactId`、品牌文案、`.env`），也不把平台的新东西漏掉 —— 三方合并能把「人改的那几行」和「平台改的那几行」分开，真冲突交人解。已落地（PR 10）：`GitGateway.threeWayMerge(dir, base, ours, theirs, paths)` 走 JGit 的 in-core `MergeAlgorithm`，与合并请求的预检 `checkMerge` 同一套底座原语、不落盘也不碰 `.git/index`，**不新造机制**；一个文件一个结论（`MergeOutcome` 五档），只有 `CLEAN` 会被写进升级分支。一条要知道的差别：**JGit 把相邻行的两处修改也算冲突**（git 命令行会把它们和掉）—— 多报的冲突只是把「平台不替你决定」的范围放宽，方向是安全的。
 4. **人审才合**：合并请求里看 diff、确认、合并；平台不自动合并、不 force-push、不批量下发（一次一个项目，由项目侧的人决定）。
 5. **先看见差距再决定升不升**：`base_scaffold_sha` 与平台 HEAD 之间的提交数 + A 档文件级差异清单，做成项目详情的只读「落后多少」读数。
 
@@ -1362,10 +1362,14 @@ A 档的「固定」指的是**不随页面发布自动覆盖**，不是「平�
 
 C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚它。
 
-> **实现状态（2026-11-05）**：三级回滚本身属 PR 9，还没实现；PR 7 已经把回滚要用的**锚点**备齐 ——
-> 版本 tag 推到远端且指得到那个提交（`v{projectCode}-{pageCode}-{version}`）、`lc_page_version`
-> 固化了每一版的设计原文与「路径 → 内容哈希」、`lc_publish_log` 记下每次动作的提交号。
-> `lc_page_version.publish_type` 目前只会写 `CREATE` / `UPDATE`，`ROLLBACK` 那一支等 PR 9。
+> **实现状态（2026-11-06，PR 9 / PR #20）**：**文件级与页面级已落地** ——
+> `GET /api/lowcode/pages/{id}/versions[/v]` 是版本历史的唯一读路径，`POST /pages/{id}/rollback`
+> 取的是**仓库里那一笔的内容**而不是按今天的模板重跑（重跑拿到的是「那一版今天应该长什么样」），
+> 落盘前先拿快照哈希与仓库内容对账；产出的是**一笔新提交、新版本号 `current+1`、照样打 tag**，
+> 于是回滚出来的那一版本身也能再被回滚回去；`lc_page_version.publish_type` 从此有第三种 `ROLLBACK`。
+> 只写发布分支，进主干仍走合并请求。**发布级（revert 某次发布或合并提交）没做**：现在一版只记一个页面
+> 的产物，"一次动作牵动多个页面"这个粒度还没有落点，要做就得先决定它记在哪张表上。
+> C 档不参与回滚这条口径没变，判据由 `GeneratedPaths.tier` 现场反推，不靠调用方自觉。
 
 ---
 
@@ -1498,7 +1502,7 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | **P1.5：组件抽包 `@yuanda-lowcode-ai/scaffold-ui`** | 2.5 周 | `packages/scaffold-ui` + npm workspaces；组件与 composable 迁入；**解 app 层耦合**（注入点 `installScaffoldUi`）；`theme.css` 合并 7 个 css；平台专属组件划出包外；发布为 npm 包并让生成项目按版本号依赖 | **抽包与注入点已完成**（2026-11-04，PR 4B），包名 `@yuanda-lowcode-ai/scaffold-ui`，`files` 白名单已收；剩正式 `npm publish --access public` 与 demo app 消费验证，**P2/P3 的硬前置** |
 | **P2：可视化设计器** | 5 周 | 三栏骨架 + 流式拖拽 + 容器嵌套 + 属性面板；**第一期只覆盖列表页 + 表单弹窗两类模板**，看板/详情/流程后置 | 待做 |
 | **P3：代码生成升级** | 3 周 | FreeMarker 模板替换 `StringBuilder`、完整 CRUD 生成、A/B/C 文件分档与 C 档扩展点骨架、`renderFiles` 出参提为公共类型；**模板产物的 import 走 `@yuanda-lowcode-ai/scaffold-ui`**；自定义接口只生成 `custom:{name}` 的 TODO handler 桩（§4.5） | 待做 |
-| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 7 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化与真机推送）✅、PR 7（页面发布链路：提交 → 推送 → tag → `lc_publish_log`、no-op 幂等、发布前引用体检）✅ 已完成；只剩合并请求与底座升级（PR 8）、三级回滚与端到端联调（PR 9） |
+| **P4：发布 + 仓库 + 合并请求** | 4 周 | Git sink（JGit：clone/commit/push/tag）、空仓库初始化、工作区卷与构建缓存、`lc_publish_log`、合并请求（diff 列表 + unified diff + 可合并性预检 + 合并执行）、三级回滚 | 拆成 PR 4 / PR 7 / PR 8：PR 4（JGit、连通性、工作区卷、裁剪清单、空仓库初始化与真机推送）✅、PR 7（页面发布链路：提交 → 推送 → tag → `lc_publish_log`、no-op 幂等、发布前引用体检）✅ 已完成；合并请求（PR 8，PR #19）与页面回滚（PR 9，PR #20）已合入 dev，底座升级与落后读数、合并后搬 base 侧为 PR 10（分支 `feat/lowcode-pr10-base-upgrade`，向 dev 开 PR）。这一格剩下的是真机那两趟：PR 10 的「升级 → 审 → 合 → 重打 tag → 读数归零」与 §5.4 的发布级回滚 |
 | **P5：联调测试** | 2 周 | 端到端（建项目 → 建模 → 设计 → 发布 → 合并 → clone 起来跑通）、租户隔离回归 | 待做 |
 
 **总计约 21.5 周（一人约 5 个月）**
@@ -1582,7 +1586,8 @@ C 档扩展点文件不参与回滚——平台不生成它，也就无权回滚
 | ↳ 5G | ✅ 已完成（2026-11-04）。**发布与合并属 PR 7 / PR 8，还没实现，所以这一趟是「已有各段全用真东西，人肉补上发布那一跳」**：真实交付快照 + 真实模型接口 + 真实工作区提交 + 空目录 clone 真实 GitHub 仓库 + `docker compose --profile mysql up -d --build` 四个服务全 healthy，生成的两份 SQL 手工执行两遍验幂等，浏览器里走完登录 → 菜单 → 页面 → 新增（弹窗无主键格）→ 列表 → 修改 → 唯一查重 → 必填校验 → 导出 → 逻辑删除。§4.1 的模板清单与 §4.2 的示例改成实际产物原文（示例那个模型就是演练用的「销售订单」）。顺带把两件事收进本 PR：交付品牌按 `project_name` 改写（登录页 / 侧栏 / 浏览器标签，见 §6.4 第 6 条）与生成物话术去平台名。新增常驻端到端 `DeliveryGenerationApiTest`（交付快照 + 生成落盘 + 前端实物引用 + 菜单/权限点一致 + 二次发布 B 覆盖 C 跳过，5 例） | **一趟撞出六处「编得过、单测绿、真机才炸」的接缝缺陷**：① `NumberInput` 不带 `precision` → 金额 1234.5 被静默抹成 1235（数据错且不报错）；② 自增主键进表单 + 页面类型里 `id` 声明两遍 → 交付项目 `vue-tsc` 报错，前端镜像构建不出来；③ `@Options(keyProperty = "id")` 在多参数方法上回写不了自增号 → 第一次「新增」500；④ 列表与导出不带审计列 → 页面「创建时间」一列恒空；⑤ CSV 里时间是 ISO 带 `T` 的写法，与页面两种口径；⑥ 页面 `@/api` 引用用驼峰而文件落点是蛇形（单字词夹具看不出）。顺带定死两条边界：只支持数字主键、`lc_field.column_type` 已是完整写法不再二次拼长度。另发现交付链两处 A 档要改（Dockerfile 缺 Maven 依赖缓存挂载：第一次构建 14 分钟、加挂载后 4.7 秒；`CsvUtils` 时间口径），存量项目要等 PR 8 的底座升级下发 | 5F |
 | **PR 6**<br>P2 | ✅ 已完成 6A / 6B / 6C（2026-11-05，PR 11 与 PR 12 已合入 dev）：`lc_page` / `design_json` 入库 + 保存时与模型逐格校验 + `ref_fields` 反查拦截（6A）；生成期合流 `GenerationInput.of(model, fields, PageTarget)`（6B，页面是形、模型是料）；设计器第一期三栏工作台 + 流式拖拽 + 容器嵌套 + 属性面板（6C，只支持列表页 + 表单弹窗，定死一个模型只有一个列表页） | 用设计器搭出一个订单列表页，产出的 JSON 能喂给 PR 5 模板生成可运行页面 —— **JSON→生成→可编译这一段已随 PR 7 的 IT 验掉**（`PagePublishApiTest` 首次发布后对落盘产物真起 `javac`）；**「在设计器里点出来」这一半等设计器重构定稿后复跑**（设计稿未出，UI 正在返工） | PR 4、PR 4B、PR 5 |
 | **PR 7**<br>P4 上 | ✅ 已完成（2026-11-05）：`PagePublishService` 发布链路 —— 读设计并重校验 → `renderFiles` → 落进工作区（B 覆盖 / C 存在即跳过）→ 提交 `gen_branch` → 推送 → 回读远端 → 打 tag `v{projectCode}-{pageCode}-{version}` → 写 `lc_page_version` + `lc_publish_log` → 推进 `lc_page` 发布四列与 `lc_project.last_publish_time`。no-op 幂等；四条现场守卫（未初始化 / 工作区脏 / 分支缺失 / 远端已前进）都在动手前拒绝；发布前 C 档引用体检默认阻断、`force` 显式放行并把命中留在结果里。顺带三处：`ls-remote` 解引用附注 tag、重铺固定代码放过 B/C 档形状、工作区定位规则收成 `WorkspacePaths` | 重复点同一份设计发布不产生空 commit、不涨版本、不打第二个 tag ✅；推送失败不留下半成品（远端拿不到半个提交、库里不记成功版本，重试把那个提交补推上去）✅；tag 与 `lc_page_version.commit_sha` 对得上 ✅；主干全程未被写 ✅；删掉字段后带着旧引用的扩展代码发布不出去（单测 10 例 + IT 一条 force 放行）✅。用例走真 JGit + 本机裸仓库（`PagePublishApiTest` 9 例），另对着真实 GitHub 仓库跑了一趟真机（连发三次：首发 / no-op / 修缺陷后重发），后端 314 例全绿。**真机那趟抓到 §1.5 合流层两处缺陷并修掉**：菜单漏种行操作的 `:edit` / `:remove`（页面按钮看得见、点了 403），以及画布没填标题时页面大标题兜到英文模型编码 | PR 6 |
-| **PR 8**<br>P4 下 | 合并请求：`lc_merge_request` / `lc_merge_request_file`、变更文件列表、unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测；同一套界面承载**底座升级**（A 档三方合并下发：ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成、base = 项目仓库的 `yuanda/platform-base/*` tag，PR 4 已留痕）与**落后读数**（`base_scaffold_sha` vs 平台 HEAD，拿不到底座 git 历史时退化为只给文件级差异清单）；合并成功后重新打底座标记 tag | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；底座升级能把平台改的那几行与项目改的那几行分开、真冲突交人解；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；全程无 force-push | PR 7 |
-| **PR 9**<br>P5 | 三级回滚（`revert` 新提交）；端到端联调；租户隔离回归 | 建项目 → 建模 → 设计 → 发布 → 合并 → 在干净机器 clone 该仓库 `docker compose up` 跑通并可用 | PR 8 |
+| **PR 8**<br>P4 下 | ✅ 已完成（2026-11-06，PR #19 已合入 dev）：合并请求 —— `lc_merge_request` / `lc_merge_request_file`、变更文件列表、行内 unified diff、可合并性 dry-run 预检、确认合并与推送、状态机与陈旧检测、项目负责人作为「谁能合」的判据。同一格原计划承载的**底座升级**、**落后读数**与**合并成功后重打底座标记 tag** 三件按实际进度拆到 PR 10（见下表最后一行），因为它们各自的接口与表都超出了合并请求那一刀 | 从 `gen_branch` 到 `main` 走通一次带 diff 审查的合并；目标分支前进后旧请求自动转"陈旧"；冲突场景只列文件不自动取舍；全程无 force-push | PR 7 |
+| **PR 9**<br>P5 | ✅ 已完成（2026-11-06，PR #20 已合入 dev）：版本历史读路径（`GET /pages/{id}/versions[/v]`）+ §5.4 那三级里的**文件级与页面级**回滚（`POST /pages/{id}/rollback`，`revert` 语义产出一笔新提交、照样打 tag，所以它自己也能被回滚过去；只写发布分支，进主干仍走合并请求）。**发布级（revert 某次发布或合并提交）没做** —— 它要的是「一次动作牵动多个页面」的粒度，而现在每一版只记一个页面的产物；C 档照旧不参与回滚。真机回滚与干净机器 `docker compose up` 的交付演练见 `changelog.md` 同日 9F 一条 | 建项目 → 建模 → 设计 → 发布 → 合并 → 在干净机器 clone 该仓库 `docker compose up` 跑通并可用 | PR 8 |
+| **PR 10**<br>P4 下 | ✅ 已完成（2026-11-06，分支 `feat/lowcode-pr10-base-upgrade` 向 dev 开 PR）：**底座升级** —— A 档三方合并下发（ours = 项目 `main`、theirs = 按底座 checkout 当前 HEAD 现生成的快照提交、base = 项目仓库的 `yuanda/platform-base/*` tag）、逐文件五档结论（只有可自动合的写进升级分支）、`platform-upgrade/{底座短sha}` 分支走 PR 8 那套审查与确认合并、**落后读数**（`commitCountBetween`，数不出来说「数不出来」而不是 0）、合并成功后打新 tag 并推进 `base_scaffold_sha`；结论表 `lc_base_upgrade`（V13）与新权限点 `lowcode:project:upgrade` | 升级能把平台改的那几行与项目改的那几行分开、真冲突与「平台撤掉」只列文件不代取舍；缺 `yuanda/platform-base/*` tag 的项目被挡住并说明原因；同名升级分支已存在时不重推；合进主干后 base 侧搬到这一版（旧 tag 不动）、读数归零；全程无 force-push、不写主干除了合并请求那一道门 | PR 8 |
 
 **PR 4 与 PR 8 是本期两处新增技术风险点**（JGit 行为差异、主机凭据与 `known_hosts`），各自都要留一次真机验证，不要只在单元测试里过。

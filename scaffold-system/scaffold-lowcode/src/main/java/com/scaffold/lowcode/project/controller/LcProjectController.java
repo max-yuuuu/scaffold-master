@@ -9,6 +9,7 @@ import com.scaffold.framework.web.CsvResponse;
 import com.scaffold.lowcode.project.domain.ProjectStatusRequest;
 import com.scaffold.lowcode.project.domain.ProjectWriteRequest;
 import com.scaffold.lowcode.project.service.LcProjectService;
+import com.scaffold.lowcode.workspace.BaseUpgradeService;
 import com.scaffold.lowcode.workspace.ProjectRepositoryService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -34,10 +35,13 @@ public class LcProjectController {
 
     private final LcProjectService service;
     private final ProjectRepositoryService repositoryService;
+    private final BaseUpgradeService baseUpgradeService;
 
-    public LcProjectController(LcProjectService service, ProjectRepositoryService repositoryService) {
+    public LcProjectController(LcProjectService service, ProjectRepositoryService repositoryService,
+                               BaseUpgradeService baseUpgradeService) {
         this.service = service;
         this.repositoryService = repositoryService;
+        this.baseUpgradeService = baseUpgradeService;
     }
 
     @GetMapping
@@ -106,6 +110,33 @@ public class LcProjectController {
     }
 
     /** 首次初始化：clone（空仓库走未出生 HEAD）→ 写固定代码 → 提交 → 推发布分支 → 回读校验 */
+    /**
+     * 底座落后读数（§10.4）。只读：它回答的是「这个项目当初交付在哪个底座上、现在底座走到哪了」，
+     * 一步都不碰仓库，所以权限沿用 {@code lowcode:project:list}。
+     *
+     * <p>{@code behindCommits} 为 {@code null} 是「数不出来」而不是 0 —— 界面要显示「未知」，
+     * 把不知道说成没问题比不报更坏。
+     */
+    @GetMapping("/{id}/base-status")
+    @RequiresPermission("lowcode:project:list")
+    public R<Map<String, Object>> baseStatus(@PathVariable Long id) {
+        return R.success(baseUpgradeService.status(id));
+    }
+
+    /**
+     * 发起底座升级：按当前底座重新生成 A 档、与项目主干三方合并，把可自动合的内容推到一条
+     * {@code platform-upgrade/*} 分支上。权限单独一个 {@code lowcode:project:upgrade}：
+     * 这一笔会往租户自己的仓库推分支，与 V7 把「同步仓库」从「编辑项目」分出来同一个理由。
+     *
+     * <p>这里<b>不碰主干</b>：升级分支之后走合并请求，由人审、由人确认合入 —— 与页面发布同一道门。
+     */
+    @PostMapping("/{id}/base-upgrade")
+    @RequiresPermission("lowcode:project:upgrade")
+    @OperLog(module = "项目管理", action = "底座升级")
+    public R<Map<String, Object>> baseUpgrade(@PathVariable Long id) {
+        return R.success(baseUpgradeService.upgrade(id));
+    }
+
     @PostMapping("/{id}/initialize")
     @RequiresPermission("lowcode:project:sync")
     @OperLog(module = "项目管理", action = "初始化固定代码")

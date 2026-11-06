@@ -2,6 +2,8 @@ package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.workspace.ChangedFile;
+import com.scaffold.lowcode.workspace.BaseUpgrade;
+import com.scaffold.lowcode.workspace.MergedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.MergeCheck;
 import com.scaffold.lowcode.workspace.RemoteRef;
@@ -186,6 +188,41 @@ public class StubGitGateway implements GitGateway {
     public String mergeIntoTarget(Path workspace, String repoUrl, String targetBranch, String expectedTargetSha,
                                   String sourceSha, String message) {
         throw new UnsupportedOperationException("StubGitGateway 不真合并也不推主干：合并执行要用真 JGit，见 LocalBareGitGateway");
+    }
+
+    /**
+     * 桩没有底座历史，如实返回「数不出来」而不是抛异常。
+     *
+     * <p>与其它几个方法不一样：那些返回假值会让断言看起来过了，而 null 是这条读数的**退化分支本身**，
+     * 界面与调用方本来就要处理它。抛异常只会让每个用桩的 IT 在读数这一步 500 ——
+     * 真能数出步数的那条路径由 JGitGatewayTest 与真机负责。
+     */
+    @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        return null;
+    }
+
+    @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        pushedTags.add(tagName);
+        return true;
+    }
+
+    @Override
+    public BaseUpgrade baseUpgrade(java.nio.file.Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   java.util.Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        throw new UnsupportedOperationException("StubGitGateway 不做底座升级：三方合并与升级分支要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        throw new UnsupportedOperationException("StubGitGateway 不做快照提交：底座升级要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
+    public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
+                                          List<String> paths) {
+        throw new UnsupportedOperationException("StubGitGateway 不模拟三方合并：底座升级要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
     }
 
     @Override

@@ -2,6 +2,8 @@ package com.scaffold.admin;
 
 import com.scaffold.common.exception.BusinessException;
 import com.scaffold.lowcode.workspace.ChangedFile;
+import com.scaffold.lowcode.workspace.BaseUpgrade;
+import com.scaffold.lowcode.workspace.MergedFile;
 import com.scaffold.lowcode.workspace.GitGateway;
 import com.scaffold.lowcode.workspace.JGitGateway;
 import com.scaffold.lowcode.workspace.MergeCheck;
@@ -135,6 +137,36 @@ public class LocalBareGitGateway implements GitGateway {
     @Override
     public String fileDiff(Path dir, String baseSha, String headSha, String path) {
         return jgit.fileDiff(dir, baseSha, headSha, path);
+    }
+
+    @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        return jgit.commitCountBetween(repoDir, fromSha, toSha);
+    }
+
+    @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        return jgit.stampBaseTag(workspace, bareUrl(repoUrl), targetBranch, tagName, message);
+    }
+
+    /** 升级同样照真 JGit 走，远端地址映射到本机裸仓库 —— 否则用例会去推真 GitHub */
+    @Override
+    public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        return jgit.baseUpgrade(workspace, bareUrl(repoUrl), mainBranch, baseTag, snapshotFiles, upgradeBranch,
+                message);
+    }
+
+    @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        return jgit.snapshotCommit(dir, files, message);
+    }
+
+    /** 三方合并也照真 JGit 走：底座升级验的就是「平台改的那几行与项目改的那几行能不能分开」，桩给不出这个答案 */
+    @Override
+    public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
+                                          List<String> paths) {
+        return jgit.threeWayMerge(dir, baseSha, oursSha, theirsSha, paths);
     }
 
     /** 取历史内容也照真 JGit 走：回滚用例验的就是「那一版里这个文件到底是什么」，桩给不出这个答案 */

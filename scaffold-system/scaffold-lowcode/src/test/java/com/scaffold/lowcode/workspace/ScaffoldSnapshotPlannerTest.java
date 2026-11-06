@@ -72,6 +72,22 @@ class ScaffoldSnapshotPlannerTest {
     }
 
     @Test
+    void 底座机器上的本机文件不进A档清单() {
+        // 10G 真机抓的：裁剪走的是文件系统遍历，.gitignore 对它不起作用。
+        // scaffold-admin/.env.local 里就是开发用的 JWT_SECRET，__pycache__ 里是编译过的字节码，
+        // 两者都落在白名单根路径下面，于是被当成「平台要下发的固定代码」列进了清单，
+        // 还计入「可自动合 N 个文件」报给审的人。这次没推到租户仓库纯属运气：交付仓库自己的
+        // .gitignore 让 git add 跳过了它们 —— 闸门不能靠运气
+        assertThat(ScaffoldTrimPolicy.accepts("scaffold-system/scaffold-admin/.env.local")).isFalse();
+        assertThat(ScaffoldTrimPolicy.accepts("scaffold-vue/scripts/__pycache__/session-regression.cpython-314.pyc")).isFalse();
+        // 真跑一遍：清单里一个这样的路径都不该有（上面两条是规则，这一条是结果）
+        assertThat(SNAPSHOT.files()).extracting(SnapshotFile::path)
+                .noneMatch(path -> path.endsWith(".env.local") || path.contains("__pycache__/") || path.endsWith(".pyc"));
+        // 邻居不能顺手一起砍：交付要带的样例配置就叫 .env.example
+        assertThat(ScaffoldTrimPolicy.accepts(".env.example")).isTrue();
+    }
+
+    @Test
     void 底座能力必须整体进交付项目() {
         assertThat(ScaffoldTrimPolicy.accepts("scaffold-system/scaffold-business/pom.xml")).isTrue();
         assertThat(ScaffoldTrimPolicy.accepts("scaffold-system/scaffold-admin/src/main/resources/application.yml")).isTrue();

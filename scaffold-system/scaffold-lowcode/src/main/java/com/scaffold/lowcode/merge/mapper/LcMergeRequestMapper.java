@@ -139,4 +139,15 @@ public interface LcMergeRequestMapper {
             WHERE id = #{id} AND status = 0
             """)
     int markStale(@Param("id") Long id, @Param("message") String message, @Param("operator") String operator);
+
+    /**
+     * 只改那句人话，不动状态：合并已经收口之后才发现 base 侧搬不动（查不到对应的升级记录），
+     * 这条事实要让人看得见，但不能把「已合入」改回「陈旧」。
+     */
+    @Update("""
+            UPDATE lc_merge_request
+            SET check_message = #{message}, update_by = #{operator}
+            WHERE id = #{id}
+            """)
+    int noteResult(@Param("id") Long id, @Param("message") String message, @Param("operator") String operator);
 }

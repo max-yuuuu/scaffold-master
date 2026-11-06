@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
-import { platformApi, type InitializeResult, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
+import { platformApi, type BaseUpgradeResult, type InitializeResult, type ProjectBaseStatus, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
@@ -151,16 +151,58 @@ const repo = ref<ProjectRow | null>(null)
 const checking = ref(false)
 const initializing = ref(false)
 const resetting = ref(false)
+const workspaceLoading = ref(false)
 const check = ref<RepoCheck | null>(null)
 const workspace = ref<WorkspaceStatus | null>(null)
 
+/** 每一块转自己那一块的圈：还没读到时说「读取中…」，不摆 '—'。
+    '—' 在台账里读起来是「这里没有值」，而事实是「我还没拿到」，两者差得很远 */
+const pending = (loading: boolean, text: string) => (loading ? '读取中…' : text)
+
 async function loadWorkspace() {
   if (!repo.value) return
+  workspaceLoading.value = true
   try {
     workspace.value = await platformApi.projects.workspace(repo.value.id) as WorkspaceStatus
   } catch (error) {
     workspace.value = null
     toastError(error, '工作区状态读取失败')
+  } finally {
+    workspaceLoading.value = false
+  }
+}
+
+/* ── 底座升级（PR 10）──────────────────────────────────────────
+   读数放在抽屉里而不是列表那一列：列表每行算一次就是「看一眼列表变成 N 次仓库动作」那条老坑，
+   哪怕这一步只读本地底座 checkout、一次都不碰远端，口径也不为它破例。
+   升级只推 platform-upgrade/* 分支，合不合由人在合并请求里定 —— 这里不放「顺手帮你合进主干」。 */
+const base = ref<ProjectBaseStatus | null>(null)
+const baseLoading = ref(false)
+const upgrading = ref(false)
+const upgradeResult = ref<BaseUpgradeResult | null>(null)
+
+const UPGRADE_STATUS_TEXT: Record<number, string> = {
+  0: '待合并', 1: '已合入主干', 2: '主干又前进了（陈旧）', 3: '没产生升级分支',
+}
+
+const baseBehindText = computed(() => {
+  if (!base.value) return '—'
+  if (base.value.upToDate) return '已在当前底座'
+  // 数不出来必须显示「未知」：报 0 就是「把不知道说成没问题」，比不报更坏
+  if (base.value.behindCommits === null) return '未知（读不到底座 git 历史，只能按文件比对）'
+  return `落后 ${base.value.behindCommits} 个底座提交`
+})
+
+async function loadBase() {
+  if (!repo.value) return
+  baseLoading.value = true
+  try {
+    base.value = await platformApi.projects.baseStatus(repo.value.id) as ProjectBaseStatus
+  } catch (error) {
+    base.value = null
+    toastError(error, '底座读数读取失败')
+  } finally {
+    baseLoading.value = false
   }
 }
 
@@ -168,7 +210,31 @@ async function openRepo(row: ProjectRow) {
   repo.value = row
   check.value = null
   workspace.value = null
-  await loadWorkspace()
+  upgradeResult.value = null
+  // 两个读数互不依赖，一起发：等工作区读完再读底座，抽屉首屏就慢一截
+  await Promise.all([loadWorkspace(), loadBase()])
+}
+
+async function runBaseUpgrade() {
+  if (!repo.value) return
+  const go = await confirm({
+    title: '发起底座升级',
+    message: '平台按当前底座重新生成固定代码（A 档），与项目主干做三方合并，'
+      + '只把能自动合的内容推到一条 platform-upgrade/* 分支上。不碰主干、不改历史：'
+      + '冲突的文件一个都不写，列出来由人回本地解；合不合进主干仍由人在合并请求里确认。',
+    confirmText: '发起升级',
+  })
+  if (!go) return
+  upgrading.value = true
+  try {
+    upgradeResult.value = await platformApi.projects.baseUpgrade(repo.value.id) as BaseUpgradeResult
+    pushToast(upgradeResult.value.message || '升级分支已推出', upgradeResult.value.commitSha ? 'ok' : 'info')
+    await loadBase()
+  } catch (error) {
+    toastError(error, '底座升级失败')
+  } finally {
+    upgrading.value = false
+  }
 }
 
 async function runCheck() {
@@ -269,14 +335,22 @@ function shortSha(sha?: string | null) {
 }
 
 /** 底座标记 tag 是后续「底座升级」三方合并的 base 侧，缺了就升不了级，所以三态都要说清楚：
-    远端已有 / 远端缺 / 工作区不在时没去核对（后端返回 null） */
+    远端已有 / 远端缺 / 没核对过（后端返回 null）。
+    两个来源不能混用：「有没有记底座号」看项目行（同一屏上面那行「底座提交」就是它），
+    「远端有没有这个 tag」才看工作区读数。10G 真机上看到过自相矛盾的一屏 —— 上面写着
+    effbcfe867，下面写着「未记录底座提交号」，因为工作区那次请求没回来，baseTag 是空的，
+    而旧逻辑把「我没读到」说成了「这个项目没记号」。 */
 const baseTagText = computed(() => {
   const tag = workspace.value?.baseTag
-  if (!tag) return '未记录底座提交号，该项目做不了三方底座升级（底座 checkout 需要带 .git）'
-  const exists = workspace.value?.baseTagExists
-  if (exists === true) return `${tag}（已在远端）`
-  if (exists === false) return `${tag}（远端缺失，补上之前做不了三方底座升级）`
-  return `${tag}（工作区不在，未核对远端）`
+  if (tag) {
+    if (workspace.value?.baseTagExists === true) return `${tag}（已在远端）`
+    if (workspace.value?.baseTagExists === false) return `${tag}（远端缺失，补上之前做不了三方底座升级）`
+    return `${tag}（未核对远端）`
+  }
+  if (!repo.value?.baseScaffoldSha) {
+    return '未记录底座提交号，该项目做不了三方底座升级（底座 checkout 需要带 .git）'
+  }
+  return '远端是否有底座标记 tag 未核对（工作区读数没回来）'
 })
 
 async function remove(row: ProjectRow) {
@@ -365,39 +439,13 @@ async function remove(row: ProjectRow) {
       :width="760"
       @close="repo = null"
     >
+      <!-- 顶部只留状态与那句解释；三个动作各自搬到自己影响的那一组标题行右侧（见下面各 Descriptions
+           的 title + extra）：一排三颗按钮看不出哪颗管什么，而「检查连通性」管的是远端引用、
+           「初始化固定代码」写的是发布分支、「清空工作区」删的是本机副本 —— 三者后果差一个量级 -->
       <div class="drawer-toolbar">
         <span class="repo-state">
           <Tag :tone="syncTone(syncState)">{{ repo?.syncStatusText }}</Tag>
           <span class="soft repo-hint">{{ statusHint }}</span>
-        </span>
-        <span class="drawer-toolbar-actions">
-          <PermissionButton
-            perm="lowcode:project:sync"
-            size="sm"
-            icon="refresh"
-            :loading="checking"
-            :disabled="initializing"
-            @click="runCheck"
-          >检查连通性</PermissionButton>
-          <PermissionButton
-            v-if="canInitialize"
-            perm="lowcode:project:sync"
-            variant="primary"
-            size="sm"
-            icon="upload"
-            :loading="initializing"
-            :disabled="checking"
-            @click="runInitialize"
-          >初始化固定代码</PermissionButton>
-          <PermissionButton
-            v-if="canResetWorkspace"
-            perm="lowcode:project:sync"
-            size="sm"
-            icon="trash"
-            :loading="resetting"
-            danger
-            @click="runReset"
-          >清空工作区</PermissionButton>
         </span>
       </div>
       <p v-if="repo?.syncMessage" class="repo-action" :class="{ 'is-error': syncState === 4 || syncState === 5 }">
@@ -405,7 +453,19 @@ async function remove(row: ProjectRow) {
         <span>{{ repo.syncMessage }}</span>
       </p>
 
-      <Descriptions :column="2">
+      <Descriptions title="仓库与发布分支" :column="2">
+        <template v-if="canInitialize" #extra>
+          <PermissionButton
+            perm="lowcode:project:sync"
+            variant="primary"
+            size="sm"
+            icon="upload"
+            :loading="initializing"
+            :disabled="checking"
+            title="按裁剪清单把底座固定代码提交到发布分支，主干分支不动"
+            @click="runInitialize"
+          >初始化固定代码</PermissionButton>
+        </template>
         <DescriptionsItem label="仓库地址" :span="2">{{ repo?.repoUrl }}</DescriptionsItem>
         <DescriptionsItem label="主干分支">{{ repo?.mainBranch }}</DescriptionsItem>
         <DescriptionsItem label="发布分支">{{ repo?.genBranch }}</DescriptionsItem>
@@ -414,23 +474,87 @@ async function remove(row: ProjectRow) {
         <DescriptionsItem label="最后推送提交">{{ shortSha(repo?.lastCommitSha) }}</DescriptionsItem>
       </Descriptions>
 
-      <Descriptions :column="2">
-        <DescriptionsItem label="工作区路径" :span="2">{{ workspace?.path || '—' }}</DescriptionsItem>
-        <DescriptionsItem label="是否已建">{{ workspace?.exists ? '已建立' : '未建立' }}</DescriptionsItem>
-        <DescriptionsItem label="未提交改动">{{ workspace?.exists ? (workspace.dirty ? '有' : '无') : '—' }}</DescriptionsItem>
-        <DescriptionsItem label="本地提交">{{ shortSha(workspace?.localSha) }}</DescriptionsItem>
-        <DescriptionsItem label="远端提交">{{ shortSha(workspace?.remoteSha) }}</DescriptionsItem>
-        <DescriptionsItem label="未推送提交">{{ workspace?.exists ? (workspace.unpushed ? '有，禁止清空工作区' : '无') : '—' }}</DescriptionsItem>
-        <DescriptionsItem label="底座标记 tag" :span="2">{{ baseTagText }}</DescriptionsItem>
+      <Descriptions title="工作区（平台本机的那份副本）" :column="2">
+        <template v-if="canResetWorkspace" #extra>
+          <PermissionButton
+            perm="lowcode:project:sync"
+            size="sm"
+            icon="trash"
+            :loading="resetting"
+            :disabled="workspaceLoading"
+            danger
+            title="只删平台本机的工作区副本，仓库里的内容不受影响；本地有未提交改动或未推送提交时后端会拒绝"
+            @click="runReset"
+          >清空工作区</PermissionButton>
+        </template>
+        <DescriptionsItem label="工作区路径" :span="2">{{ pending(workspaceLoading, workspace?.path || '—') }}</DescriptionsItem>
+        <DescriptionsItem label="是否已建">{{ pending(workspaceLoading, workspace?.exists ? '已建立' : '未建立') }}</DescriptionsItem>
+        <DescriptionsItem label="未提交改动">{{ pending(workspaceLoading, workspace?.exists ? (workspace.dirty ? '有' : '无') : '—') }}</DescriptionsItem>
+        <DescriptionsItem label="本地提交">{{ pending(workspaceLoading, shortSha(workspace?.localSha)) }}</DescriptionsItem>
+        <DescriptionsItem label="远端提交">{{ pending(workspaceLoading, shortSha(workspace?.remoteSha)) }}</DescriptionsItem>
+        <DescriptionsItem label="未推送提交">{{ pending(workspaceLoading, workspace?.exists ? (workspace.unpushed ? '有，禁止清空工作区' : '无') : '—') }}</DescriptionsItem>
+        <DescriptionsItem label="底座标记 tag" :span="2">{{ pending(workspaceLoading, baseTagText) }}</DescriptionsItem>
       </Descriptions>
       <p v-if="workspace?.message" class="muted drawer-note">{{ workspace.message }}</p>
 
-      <p v-if="!check" class="hint">还没检查过：检查连通性只读远端引用，不改动项目状态，也不推任何东西。</p>
-      <Descriptions v-else :column="2">
-        <DescriptionsItem label="能否访问">{{ check.reachable ? '可访问' : '不可访问' }}</DescriptionsItem>
-        <DescriptionsItem label="仓库是否为空">{{ check.empty === undefined ? '—' : (check.empty ? '空仓库' : '已有内容') }}</DescriptionsItem>
-        <DescriptionsItem label="远端分支" :span="2">{{ check.branches?.length ? check.branches.join('、') : '—' }}</DescriptionsItem>
-        <DescriptionsItem label="下一步">{{ check.message || check.action || '—' }}</DescriptionsItem>
+      <!-- 动作跟着它依据的读数走：升不升是从「落后 N 个底座提交」这一格决定的，按钮摆在整段
+           历史下面，读者的眼睛已经离开依据了。已在当前底座时不摆一个注定被后端拒掉的按钮，
+           与页面回滚「当前版自己不给回滚到这一版」同一口径 -->
+      <Descriptions title="底座与升级" :column="2">
+        <template #extra>
+          <PermissionButton perm="lowcode:project:upgrade" variant="primary" icon="branch"
+                            :loading="upgrading" :disabled="baseLoading || base?.upToDate === true"
+                            :title="base?.upToDate ? '已在当前底座，没有要下发的固定代码改动' : '按当前底座重新生成 A 档，推到一条升级分支，之后由人在合并请求里确认合入主干'"
+                            @click="runBaseUpgrade">
+            发起底座升级
+          </PermissionButton>
+        </template>
+        <DescriptionsItem label="底座落后">{{ pending(baseLoading, baseBehindText) }}</DescriptionsItem>
+        <DescriptionsItem label="底座当前提交">{{ pending(baseLoading, shortSha(base?.scaffoldSha)) }}</DescriptionsItem>
+        <DescriptionsItem label="最近一次升级" :span="2">{{ pending(baseLoading, base?.latest?.message || '还没发起过升级') }}</DescriptionsItem>
+        <DescriptionsItem v-if="base?.latest" label="升级状态">{{ UPGRADE_STATUS_TEXT[base.latest.status] ?? base.latest.status }}</DescriptionsItem>
+        <DescriptionsItem v-if="base?.latest" label="升级分支">{{ base.latest.upgradeBranch || '—' }}</DescriptionsItem>
+      </Descriptions>
+
+      <!-- 升级结果：三档计数 + 要人解的清单。冲突的文件没写进分支，所以这里必须把名字列出来，
+           否则「这三格要人解」这句话在升级之后就没地方说了 -->
+      <template v-if="upgradeResult">
+        <Descriptions title="本次升级结果" :column="2">
+          <DescriptionsItem label="可自动合">{{ upgradeResult.clean }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="要人解">{{ upgradeResult.conflict }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="平台撤掉">{{ upgradeResult.dropped }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="无需改动">{{ upgradeResult.unchanged }} 个文件</DescriptionsItem>
+          <DescriptionsItem label="升级分支" :span="2">{{ upgradeResult.upgradeBranch || '未创建（没有可自动下发的内容）' }}</DescriptionsItem>
+        </Descriptions>
+        <ul v-if="upgradeResult.conflictPaths.length || upgradeResult.droppedPaths.length" class="upgrade-paths">
+          <li v-for="path in upgradeResult.conflictPaths" :key="'c' + path"><Tag tone="danger" dot>要人解</Tag><span class="mono">{{ path }}</span></li>
+          <li v-for="path in upgradeResult.droppedPaths" :key="'d' + path"><Tag tone="neutral" dot>平台撤掉</Tag><span class="mono">{{ path }}</span></li>
+        </ul>
+        <p v-if="upgradeResult.commitSha" class="hint">
+          下一步：在「合并请求」里选 {{ upgradeResult.upgradeBranch }} → {{ repo?.mainBranch }} 审这份差异，确认后才进主干。
+        </p>
+      </template>
+
+      <!-- 这一组常驻：动作要有家，「还没检查过」是它的一种正常状态而不是没有内容 -->
+      <Descriptions title="连通性检查" :column="2">
+        <template #extra>
+          <PermissionButton
+            perm="lowcode:project:sync"
+            size="sm"
+            icon="refresh"
+            :loading="checking"
+            :disabled="initializing"
+            title="只读远端引用（ls-remote），不改动项目状态，也不推任何东西"
+            @click="runCheck"
+          >检查连通性</PermissionButton>
+        </template>
+        <template v-if="check">
+          <DescriptionsItem label="能否访问">{{ pending(checking, check.reachable ? '可访问' : '不可访问') }}</DescriptionsItem>
+          <DescriptionsItem label="仓库是否为空">{{ pending(checking, check.empty === undefined ? '—' : (check.empty ? '空仓库' : '已有内容')) }}</DescriptionsItem>
+          <DescriptionsItem label="远端分支" :span="2">{{ pending(checking, check.branches?.length ? check.branches.join('、') : '—') }}</DescriptionsItem>
+          <DescriptionsItem label="下一步">{{ pending(checking, check.message || check.action || '—') }}</DescriptionsItem>
+        </template>
+        <DescriptionsItem v-else label="检查结果" :span="2">{{ checking ? '读取中…' : '还没检查过' }}</DescriptionsItem>
       </Descriptions>
     </Drawer>
 
@@ -466,6 +590,29 @@ async function remove(row: ProjectRow) {
     </FormDialog>
   </ListPage>
 </template>
+
+.upgrade-paths {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upgrade-paths li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 路径可能很长：让它自己截断，别把抽屉撑出横向滚动条 */
+.upgrade-paths .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 <style scoped>
 .sync-cell {

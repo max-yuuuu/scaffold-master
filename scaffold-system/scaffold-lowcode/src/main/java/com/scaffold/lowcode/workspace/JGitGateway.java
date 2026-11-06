@@ -1,9 +1,11 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.generate.GeneratedPaths;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.jgit.api.CreateBranchCommand;
+import org.eclipse.jgit.transport.TagOpt;
 import org.eclipse.jgit.api.CheckoutCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.MergeCommand;
@@ -11,13 +13,22 @@ import org.eclipse.jgit.api.MergeResult;
 import org.eclipse.jgit.api.TransportConfigCallback;
 import org.eclipse.jgit.api.errors.GitAPIException;
 import org.eclipse.jgit.dircache.DirCache;
+import org.eclipse.jgit.dircache.DirCacheBuilder;
+import org.eclipse.jgit.dircache.DirCacheEntry;
 import org.eclipse.jgit.diff.DiffEntry;
+import org.eclipse.jgit.diff.RawText;
+import org.eclipse.jgit.diff.RawTextComparator;
 import org.eclipse.jgit.diff.DiffFormatter;
+import org.eclipse.jgit.lib.CommitBuilder;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.FileMode;
+import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectReader;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.Ref;
+import org.eclipse.jgit.merge.MergeAlgorithm;
+import org.eclipse.jgit.merge.MergeChunk;
 import org.eclipse.jgit.merge.MergeStrategy;
 import org.eclipse.jgit.merge.Merger;
 import org.eclipse.jgit.merge.ResolveMerger;
@@ -51,6 +62,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -567,6 +579,379 @@ public class JGitGateway implements GitGateway {
                     .decode(ByteBuffer.wrap(raw)).toString();
         } catch (CharacterCodingException e) {
             throw new BusinessException(path + " 在那个提交里不是 UTF-8 文本，平台不把它当生成物回滚");
+        }
+    }
+
+
+
+
+
+    @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        if (repoDir == null || fromSha == null || toSha == null || !Files.isDirectory(repoDir)) {
+            return null;
+        }
+        try (Git git = open(repoDir); RevWalk walk = new RevWalk(git.getRepository())) {
+            ObjectId from = git.getRepository().resolve(fromSha + "^{commit}");
+            ObjectId to = git.getRepository().resolve(toSha + "^{commit}");
+            if (from == null || to == null) {
+                return null;
+            }
+            if (from.equals(to)) {
+                return 0;
+            }
+            walk.markStart(walk.parseCommit(to));
+            walk.markUninteresting(walk.parseCommit(from));
+            int count = 0;
+            for (RevCommit ignored : walk) {
+                count++;
+            }
+            return count;
+        } catch (IOException e) {
+            // 读不出就报读不出：把 IO 错误换算成 0 会让「底座 checkout 坏了」看起来像「项目已是最新」
+            return null;
+        }
+    }
+    @Override
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+        Path temp;
+        try {
+            temp = Files.createTempDirectory("scaffold-basetag-");
+        } catch (IOException e) {
+            throw new BusinessException("创建打底座标记用的临时目录失败：" + e.getMessage());
+        }
+        try {
+            cloneBranch(temp, repoUrl, targetBranch);
+            String head = localBranchSha(temp, targetBranch);
+            if (head == null) {
+                throw new BusinessException("远端分支 " + targetBranch + " clone 下来是空的，打不了底座标记");
+            }
+            // tag 打在这条分支当前那一笔上：合并刚做完时它就是那笔合并提交，
+            // 隔了一轮再补打则打在最新一笔上 —— 语义都是「这个仓库现在的 A 档来自哪个底座」
+            boolean created = tagCommit(temp, tagName, head, message);
+            pushTag(temp, tagName);
+            return created;
+        } finally {
+            deleteRecursively(temp);
+        }
+    }
+
+    @Override
+    public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
+                                   Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
+        if (snapshotFiles.isEmpty()) {
+            throw new BusinessException("底座快照里没有一份文件：底座 checkout 读不到或裁剪清单为空，"
+                    + "这种快照做不出升级 —— 它只会把项目里每一个文件都报成「平台不再交付」");
+        }
+        List<RemoteRef> refs = lsRemote(repoUrl);
+        String oursSha = branchSha(refs, mainBranch);
+        if (oursSha == null) {
+            throw new BusinessException("远端没有主干 " + mainBranch + "：底座升级要从主干切分支，"
+                    + "先确认这个仓库的起点还在");
+        }
+        if (branchSha(refs, upgradeBranch) != null) {
+            throw new BusinessException("远端已经有升级分支 " + upgradeBranch + "：上一次推的那一份还在，"
+                    + "多半是有人正在合并请求里审它。平台不强推覆盖 —— 请先把它合掉或关掉再重新发起");
+        }
+        Path temp;
+        try {
+            temp = Files.createTempDirectory("scaffold-upgrade-");
+        } catch (IOException e) {
+            throw new BusinessException("创建升级用的临时目录失败：" + e.getMessage());
+        }
+        try {
+            cloneBranch(temp, repoUrl, mainBranch);
+            String theirsSha = snapshotCommit(temp, snapshotFiles, "底座快照：" + message);
+            List<String> paths;
+            String baseCommit;
+            try (Git git = open(temp)) {
+                Repository repo = git.getRepository();
+                // 交付时那个 tag 指向的提交是三方合并的 base 侧：clone 默认会带上指向已取历史里的 tag，
+                // 但不保证（比如 tag 后来才补打）。补 fetch 一次，取不到就是仓库里真没有
+                ObjectId base = repo.resolve(TAGS_PREFIX + baseTag + "^{commit}");
+                if (base == null) {
+                    fetchTags(git);
+                    base = repo.resolve(TAGS_PREFIX + baseTag + "^{commit}");
+                }
+                if (base == null) {
+                    throw new BusinessException("项目仓库里找不到底座标记 tag " + baseTag
+                            + "：三方合并没有 base 侧，算出来的「谁改了什么」全是猜的。"
+                            + "这个项目是在记不到底座提交号的版本上初始化的，请先补打底座标记 tag");
+                }
+                baseCommit = base.getName();
+                paths = mergePaths(repo, baseCommit, oursSha, theirsSha);
+            }
+            List<MergedFile> merged = threeWayMerge(temp, baseCommit, oursSha, theirsSha, paths);
+            List<MergedFile> writable = merged.stream().filter(MergedFile::writable).toList();
+            if (writable.isEmpty()) {
+                // 一格可写的都没有：不建分支，免得合并请求里多出一条「零变更」让人点开看
+                return new BaseUpgrade(oursSha, theirsSha, null, upgradeBranch, merged);
+            }
+            checkoutBranch(temp, upgradeBranch, oursSha);
+            writeAll(temp, writable);
+            String commitSha = commitAll(temp, message);
+            if (commitSha == null) {
+                return new BaseUpgrade(oursSha, theirsSha, null, upgradeBranch, merged);
+            }
+            pushBranch(temp, upgradeBranch);
+            return new BaseUpgrade(oursSha, theirsSha, commitSha, upgradeBranch, merged);
+        } catch (IOException e) {
+            throw new BusinessException("底座升级失败：" + e.getMessage());
+        } finally {
+            deleteRecursively(temp);
+        }
+    }
+
+    private void fetchTags(Git git) throws IOException {
+        try {
+            git.fetch().setRemote("origin").setTagOpt(TagOpt.FETCH_TAGS)
+                    .setTimeout(timeoutSeconds)
+                    // 联网的命令一条都不能漏这一道：不挂就用 JGit 默认的代理工厂，它会读本机 HTTP 代理，
+                    // 把 github.com:22 指到代理端口上，报回来的只有一句没头没尾的 "Session is being closed"
+                    //（真机踩过：那次把「缺底座标记 tag」这条正当拒绝盖成了一句网络错）
+                    .setTransportConfigCallback(transportConfig())
+                    .call();
+        } catch (GitAPIException e) {
+            throw new BusinessException("补取远端 tag 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 三棵树里出现过的路径取并集：漏了任何一侧，那一格就永远算不出来（升级里「平台撤掉的文件」就在 theirs 之外）。
+     *
+     * <p>并集只收平台管得着的路径。base 与 ours 是<b>整个项目提交</b>，里面本来就有 B/C 档的生成物与人工资产，
+     * 照单全收就会把它们报成「平台不再交付，删不删由人定」—— 那是在诱导审的人删掉自己的业务代码
+     * （10G 真机跑出来过这一条）。B 档下一次页面发布自己会覆盖，C 档是人工写的资产、平台永不碰；
+     * 项目标记文件由初始化写、底座号由 {@code lc_project.base_scaffold_sha} 那一路跟着升级前进，
+     * 都不该在这份名单里说话。
+     */
+    private static List<String> mergePaths(Repository repo, String baseSha, String oursSha, String theirsSha)
+            throws IOException {
+        java.util.TreeSet<String> paths = new java.util.TreeSet<>();
+        for (String rev : new String[]{baseSha, oursSha, theirsSha}) {
+            ObjectId tree = repo.resolve(rev + "^{tree}");
+            if (tree == null) {
+                continue;
+            }
+            try (ObjectReader reader = repo.newObjectReader(); TreeWalk walk = new TreeWalk(reader)) {
+                walk.addTree(tree);
+                walk.setRecursive(true);
+                while (walk.next()) {
+                    String path = walk.getPathString();
+                    if (upgradeIgnores(path)) {
+                        continue;
+                    }
+                    paths.add(path);
+                }
+            }
+        }
+        return List.copyOf(paths);
+    }
+
+    /** 底座升级只比 A 档：页面发布可写的形状（B/C 档）与项目标记文件一律不进这份名单 */
+    private static boolean upgradeIgnores(String path) {
+        return path.equals(ScaffoldTrimPolicy.MARKER_FILE) || GeneratedPaths.isPagePublishOwned(path);
+    }
+
+    private static void writeAll(Path dir, List<MergedFile> files) throws IOException {
+        for (MergedFile file : files) {
+            Path target = dir.resolve(file.path()).normalize();
+            if (!target.startsWith(dir)) {
+                throw new BusinessException("升级要写的路径越出仓库根：" + file.path());
+            }
+            Files.createDirectories(target.getParent());
+            Files.writeString(target, file.content(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static String branchSha(List<RemoteRef> refs, String branch) {
+        return refs.stream().filter(ref -> branch.equals(ref.branchName())).map(RemoteRef::sha).findFirst().orElse(null);
+    }
+
+    @Override
+    public String snapshotCommit(Path dir, Map<String, byte[]> files, String message) {
+        if (files.isEmpty()) {
+            throw new BusinessException("底座快照里没有一份文件：底座 checkout 读不到或裁剪清单为空。"
+                    + "这种快照做成提交会把项目里每一个文件都报成「平台不再交付」，那是删除清单不是升级");
+        }
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            // DirCacheBuilder 要求按 canonical 顺序加入，所以先排序再喂
+            Map<String, byte[]> sorted = new java.util.TreeMap<>(files);
+            DirCache cache = DirCache.newInCore();
+            DirCacheBuilder builder = cache.builder();
+            try (ObjectInserter inserter = repo.newObjectInserter()) {
+                for (Map.Entry<String, byte[]> file : sorted.entrySet()) {
+                    String path = file.getKey();
+                    if (path.isBlank() || path.startsWith("/") || path.contains("../") || path.contains("/./")) {
+                        throw new BusinessException("底座快照里的路径越出仓库根：" + path);
+                    }
+                    ObjectId blob = inserter.insert(Constants.OBJ_BLOB, file.getValue());
+                    DirCacheEntry entry = new DirCacheEntry(path);
+                    entry.setObjectId(blob);
+                    entry.setFileMode(FileMode.REGULAR_FILE);
+                    entry.setLength(file.getValue().length);
+                    builder.add(entry);
+                }
+                builder.finish();
+                inserter.flush();
+                ObjectId tree = cache.writeTree(inserter);
+                CommitBuilder commit = new CommitBuilder();
+                commit.setTreeId(tree);
+                commit.setAuthor(committer);
+                commit.setCommitter(committer);
+                commit.setMessage(message);
+                // 不设父提交：这是一份凭空长出来的内容，不是历史的一段
+                ObjectId sha = inserter.insert(commit);
+                inserter.flush();
+                return sha.getName();
+            }
+        } catch (IOException e) {
+            throw new BusinessException("把底座快照做成提交失败：" + e.getMessage());
+        }
+    }
+
+    @Override
+    public List<MergedFile> threeWayMerge(Path dir, String baseSha, String oursSha, String theirsSha,
+                                          List<String> paths) {
+        List<MergedFile> results = new ArrayList<>();
+        try (Git git = open(dir)) {
+            Repository repo = git.getRepository();
+            ObjectId baseTree = rootTree(repo, baseSha, "交付时的底座快照");
+            ObjectId oursTree = rootTree(repo, oursSha, "项目主干");
+            ObjectId theirsTree = rootTree(repo, theirsSha, "新的底座快照");
+            try (ObjectReader reader = repo.newObjectReader()) {
+                for (String path : paths) {
+                    results.add(mergeOne(path, blobAt(reader, baseTree, path),
+                            blobAt(reader, oursTree, path), blobAt(reader, theirsTree, path)));
+                }
+            }
+            return results;
+        } catch (IOException e) {
+            throw new BusinessException("三方合并失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 合并矩阵。判据只有一条：平台不静默删项目里有的东西，也不把没编译过的内容写进别人的仓库，
+     * 所以除 {@link MergeOutcome#CLEAN} 外都不给内容，由服务列成清单交人。
+     */
+    private static MergedFile mergeOne(String path, byte[] base, byte[] ours, byte[] theirs) {
+        if (ours == null && theirs == null) {
+            // 两侧都不要它了（项目删过，底座快照也不再交付）：没有可写的，也不用找人
+            return new MergedFile(path, MergeOutcome.UNCHANGED, null);
+        }
+        if (theirs == null) {
+            // 新快照里没有它而项目里有：可能是平台这版不再交付（改名、拆分、裁剪清单收紧）。
+            // 项目里那份可能被人读过、也可能被项目自己改过，删不删是人的决定
+            return new MergedFile(path, MergeOutcome.DROPPED_BY_PLATFORM, null);
+        }
+        if (ours == null) {
+            if (base == null) {
+                // 平台新增、项目里没有：纯粹的新文件，文本就直接写入
+                String added = decodeOrNull(theirs);
+                return added == null ? new MergedFile(path, MergeOutcome.BINARY, null)
+                        : new MergedFile(path, MergeOutcome.CLEAN, added);
+            }
+            // 项目删了：平台没改过就作罢（两边都不要），平台改过就说不清 —— 谁对机器判不了
+            return Arrays.equals(base, theirs)
+                    ? new MergedFile(path, MergeOutcome.UNCHANGED, null)
+                    : new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        if (Arrays.equals(ours, theirs)) {
+            return new MergedFile(path, MergeOutcome.UNCHANGED, null);
+        }
+        String baseText = base == null ? "" : decodeOrNull(base);
+        String oursText = decodeOrNull(ours), theirsText = decodeOrNull(theirs);
+        if (baseText == null || oursText == null || theirsText == null) {
+            return new MergedFile(path, MergeOutcome.BINARY, null);
+        }
+        if (base == null) {
+            // 两侧各自新增且内容不同：没有共同祖先可退让
+            return new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        MergeResult0 merged = mergeText(path, baseText, oursText, theirsText);
+        if (merged == null) {
+            return new MergedFile(path, MergeOutcome.CONFLICT, null);
+        }
+        // 合完仍等于项目那份，就是「平台这次没动它」：不写，免得升级分支里全是零差异的提交
+        return merged.content().equals(oursText)
+                ? new MergedFile(path, MergeOutcome.UNCHANGED, null)
+                : new MergedFile(path, MergeOutcome.CLEAN, merged.content());
+    }
+
+    /** 合并后的文本；冲突时返回 null。冲突标记不往外给，所以这里连拼都不拼 */
+    private record MergeResult0(String content) {
+    }
+
+    private static MergeResult0 mergeText(String path, String baseText, String oursText, String theirsText) {
+        org.eclipse.jgit.merge.MergeResult<RawText> result = new MergeAlgorithm().merge(RawTextComparator.DEFAULT,
+                new RawText(baseText.getBytes(StandardCharsets.UTF_8)),
+                new RawText(oursText.getBytes(StandardCharsets.UTF_8)),
+                new RawText(theirsText.getBytes(StandardCharsets.UTF_8)));
+        if (result.containsConflicts()) {
+            return null;
+        }
+        List<RawText> sources = result.getSequences();
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        StringBuilder text = new StringBuilder();
+        boolean endsWithNewline = true;
+        try {
+            for (MergeChunk chunk : result) {
+                RawText source = sources.get(chunk.getSequenceIndex());
+                for (int index = chunk.getBegin(); index < chunk.getEnd(); index++) {
+                    line.reset();
+                    // RawText.writeLine 只写这一行的内容、不含行尾换行（JGit 让调用方补），
+                    // 忘了补就得到「FROM xCOPY y」这种拼起来的东西 —— 每一格都会被误判成有改动
+                    source.writeLine(line, index);
+                    text.append(line.toString(StandardCharsets.UTF_8)).append('\n');
+                    endsWithNewline = !(index == source.size() - 1 && source.isMissingNewlineAtEnd());
+                }
+            }
+        } catch (IOException e) {
+            throw new BusinessException("拼不出 " + path + " 的合并结果：" + e.getMessage());
+        }
+        if (!endsWithNewline) {
+            text.setLength(text.length() - 1);
+        }
+        return new MergeResult0(text.toString());
+    }
+
+    /** 提交号 → 那棵根树；查不到时说清是哪一侧查不到（三方合并有三侧，光说「提交不存在」没人能定位） */
+    private static ObjectId rootTree(Repository repo, String rev, String role) {
+        try {
+            ObjectId commit = repo.resolve(rev + "^{commit}");
+            if (commit == null) {
+                throw new BusinessException(role + "对应的提交 " + rev + " 不在这份仓库里");
+            }
+            try (RevWalk revWalk = new RevWalk(repo)) {
+                return revWalk.parseCommit(commit).getTree();
+            }
+        } catch (IOException e) {
+            throw new BusinessException("读不出" + role + " " + rev + "：" + e.getMessage());
+        }
+    }
+
+    private static byte[] blobAt(ObjectReader reader, ObjectId tree, String path) throws IOException {
+        try (TreeWalk walk = TreeWalk.forPath(reader, path, tree)) {
+            return walk == null ? null : reader.open(walk.getObjectId(0), Constants.OBJ_BLOB).getBytes();
+        }
+    }
+
+    /** 与 decodeText 同一套判据，但不抛 —— 三方合并要把「读不出文本」当成一种结果而不是一种错误 */
+    private static String decodeOrNull(byte[] raw) {
+        for (byte b : raw) {
+            if (b == 0) {
+                return null;
+            }
+        }
+        try {
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(raw)).toString();
+        } catch (CharacterCodingException e) {
+            return null;
         }
     }
 
