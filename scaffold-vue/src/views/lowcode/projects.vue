@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
-import { platformApi, type BaseUpgradeResult, type InitializeResult, type ProjectBaseStatus, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
+import { platformApi, type BaseTagResult, type BaseUpgradeResult, type InitializeResult, type ProjectBaseStatus, type ProjectRow, type RepoCheck, type WorkspaceStatus } from '@/api'
 import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
@@ -179,6 +179,7 @@ async function loadWorkspace() {
 const base = ref<ProjectBaseStatus | null>(null)
 const baseLoading = ref(false)
 const upgrading = ref(false)
+const stampingTag = ref(false)
 const upgradeResult = ref<BaseUpgradeResult | null>(null)
 
 const UPGRADE_STATUS_TEXT: Record<number, string> = {
@@ -234,6 +235,37 @@ async function runBaseUpgrade() {
     toastError(error, '底座升级失败')
   } finally {
     upgrading.value = false
+  }
+}
+
+/**
+ * 人工补打底座标记 tag。存量项目（初始化早于「初始化打 tag」那段代码）远端没有这个 tag，
+ * 三方合并就没有 base 侧、底座升级永久做不了，而 initialize 在已就绪的项目上又拒绝重来 ——
+ * 界面里原本没有任何一步能补上它（10G 演练时只能在命令行手工 push）。
+ *
+ * <p>提交号不由人猜：平台按发布分支上的 .scaffold-project.json 认那一笔交付，认不出会拒绝并让人指定。
+ */
+async function runStampBaseTag() {
+  if (!repo.value) return
+  const go = await confirm({
+    title: '补打底座标记 tag',
+    message: '平台会在发布分支的历史里找出「当初交付那一版固定代码」的那一笔 —— 判据是那笔上的 '
+      + '.scaffold-project.json 记着同一个底座提交号，取这一版里最早的那一笔。'
+      + '找到才打 yuanda/platform-base/{底座号}，同名 tag 已存在就拒绝（移动它等于改掉那一轮的 base 侧）。'
+      + '只新增一个 tag，不改任何分支、不动历史。认不出那一笔时不会瞎打，会让你指定提交号。',
+    confirmText: '补打 tag',
+  })
+  if (!go) return
+  stampingTag.value = true
+  try {
+    const result = await platformApi.projects.stampBaseTag(repo.value.id) as BaseTagResult
+    pushToast(result.message || '底座标记 tag 已补上')
+    // 两个读数都要重取：tag 那一行归工作区读数管，升级能不能发起归底座读数管
+    await Promise.all([loadWorkspace(), loadBase()])
+  } catch (error) {
+    toastError(error, '补打底座标记 tag 失败')
+  } finally {
+    stampingTag.value = false
   }
 }
 
@@ -352,6 +384,11 @@ const baseTagText = computed(() => {
   }
   return '远端是否有底座标记 tag 未核对（工作区读数没回来）'
 })
+
+/** 缺 tag 才给「补打」这一颗：底座号记不到就拼不出 tag 名（补打也会拒），远端已在就更不该出现。
+    判据只在「工作区读数回来了且明确说远端没有」时为真 —— 没读到时不假装有结论 */
+const baseTagMissing = computed(() => Boolean(repo.value?.baseScaffoldSha)
+  && workspace.value?.baseTagExists === false)
 
 async function remove(row: ProjectRow) {
   const ok = await confirm({
@@ -499,12 +536,21 @@ async function remove(row: ProjectRow) {
 
       <!-- 动作跟着它依据的读数走：升不升是从「落后 N 个底座提交」这一格决定的，按钮摆在整段
            历史下面，读者的眼睛已经离开依据了。已在当前底座时不摆一个注定被后端拒掉的按钮，
-           与页面回滚「当前版自己不给回滚到这一版」同一口径 -->
+           与页面回滚「当前版自己不给回滚到这一版」同一口径。
+           远端缺底座标记 tag 时（存量项目的常态：初始化早于打 tag 那段代码）升级必然被「没有 base 侧」
+           拒掉，所以这里先给「补打底座标记 tag」，并把发起升级禁用住指过去 —— 不让人撞一句注定失败的 400 -->
       <Descriptions title="底座与升级" :column="2">
         <template #extra>
+          <PermissionButton v-if="baseTagMissing" perm="lowcode:project:sync" icon="shield" size="sm"
+                            :loading="stampingTag" :disabled="workspaceLoading"
+                            title="按发布分支上的 .scaffold-project.json 认出当初交付那一笔，把 yuanda/platform-base/{底座号} 补上；只新增 tag，不改分支不动历史"
+                            @click="runStampBaseTag">
+            补打底座标记 tag
+          </PermissionButton>
           <PermissionButton perm="lowcode:project:upgrade" variant="primary" icon="branch"
-                            :loading="upgrading" :disabled="baseLoading || base?.upToDate === true"
-                            :title="base?.upToDate ? '已在当前底座，没有要下发的固定代码改动' : '按当前底座重新生成 A 档，推到一条升级分支，之后由人在合并请求里确认合入主干'"
+                            :loading="upgrading" :disabled="baseLoading || base?.upToDate === true || baseTagMissing"
+                            :title="baseTagMissing ? '远端还缺底座标记 tag，三方合并没有 base 侧：先补打'
+                              : (base?.upToDate ? '已在当前底座，没有要下发的固定代码改动' : '按当前底座重新生成 A 档，推到一条升级分支，之后由人在合并请求里确认合入主干')"
                             @click="runBaseUpgrade">
             发起底座升级
           </PermissionButton>

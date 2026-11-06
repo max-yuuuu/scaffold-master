@@ -144,6 +144,32 @@ class DesignGenerationTest {
         assertThat(menu).doesNotContain("order:order:remove");
     }
 
+    /**
+     * 11A 交付演练抓的：模板无条件出「操作」这一列，而列里的按钮来自设计的 {@code RowActions}。
+     *
+     * <p>设计没放行操作时，产物就是 112px 宽的表头加每行一格空白 —— 界面上既改不了也删不了，
+     * 却占着一个位置让人以为有入口。所以「没有行操作」要连列带插槽一起不出，而不是出一个空壳。
+     * 正反两半写在同一条用例里：只断言「不出现」的话，模板整个删掉操作列也能骗过去。
+     */
+    @Test
+    void 设计没放行操作时整个操作列都不出现() {
+        String withActions = renderer.render("frontend/ListView.vue.ftl",
+                GenerationInput.of(model(true, true), richFields(), target())).replace("\r", "");
+        String designWithoutActions = DESIGN.replaceAll("(?s)\\{\\s*\"type\": \"RowActions\".*?]\\s*},\\s*", "");
+        assertThat(designWithoutActions).as("夹具要真的把 RowActions 摘掉，否则这条用例是在自证不存在").doesNotContain("RowActions");
+
+        PageTarget bare = new PageTarget("订单列表", "/trade/orders", "cart", 3,
+                PageDesign.parse(designWithoutActions, DesignContext.of("order", richFields())));
+        String page = renderer.render("frontend/ListView.vue.ftl", GenerationInput.of(model(true, true), richFields(), bare))
+                .replace("\r", "");
+
+        assertThat(withActions).as("有行操作时列与插槽都要在").contains("{ key: 'actions', title: '操作'")
+                .contains("#cell-actions");
+        assertThat(page).doesNotContain("{ key: 'actions', title: '操作'").doesNotContain("#cell-actions");
+        // 列本身不能跟着少：只去掉那一列，设计里给的三列还在
+        assertThat(page).contains("{ key: 'amount', title: '金额'").contains("{ key: 'remark', title: '备注'");
+    }
+
     @Test
     void 没有设计时形状与PR5一致() {
         Map<String, Object> root = GenerationInput.of(model(true, true), richFields());

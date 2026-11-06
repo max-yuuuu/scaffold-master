@@ -355,6 +355,28 @@ public class JGitGateway implements GitGateway {
     }
 
     @Override
+    public List<String> revList(Path dir, String branch, int limit) {
+        try (Git git = open(dir); RevWalk walk = new RevWalk(git.getRepository())) {
+            ObjectId start = git.getRepository().resolve(branch);
+            if (start == null) {
+                return List.of();
+            }
+            walk.markStart(walk.parseCommit(start));
+            // 不显式设排序就是提交时间倒序：从新往旧走，「第一笔带着这个底座号」才能一命中就停
+            List<String> shas = new ArrayList<>();
+            for (RevCommit commit : walk) {
+                shas.add(commit.getName());
+                if (limit > 0 && shas.size() >= limit) {
+                    break;
+                }
+            }
+            return shas;
+        } catch (IOException e) {
+            throw new BusinessException("读取分支 " + branch + " 的历史失败：" + e.getMessage());
+        }
+    }
+
+    @Override
     public String mergeBase(Path dir, String oneRev, String otherRev) {
         try (Git git = open(dir); RevWalk walk = new RevWalk(git.getRepository())) {
             Repository repo = git.getRepository();
@@ -613,7 +635,8 @@ public class JGitGateway implements GitGateway {
         }
     }
     @Override
-    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName, String message) {
+    public boolean stampBaseTag(Path workspace, String repoUrl, String targetBranch, String tagName,
+                                String commitSha, String message) {
         Path temp;
         try {
             temp = Files.createTempDirectory("scaffold-basetag-");
@@ -622,17 +645,45 @@ public class JGitGateway implements GitGateway {
         }
         try {
             cloneBranch(temp, repoUrl, targetBranch);
-            String head = localBranchSha(temp, targetBranch);
-            if (head == null) {
+            // 指定了提交号就要在那笔上打：先确认这个对象真的在这条分支的历史里，
+            // 打到一个游离提交上，tag 会在下一次 fetch 时被当成不可达对象丢掉
+            String target = commitSha == null || commitSha.isBlank()
+                    ? localBranchSha(temp, targetBranch)
+                    : requireCommitOnBranch(temp, targetBranch, commitSha);
+            if (target == null) {
                 throw new BusinessException("远端分支 " + targetBranch + " clone 下来是空的，打不了底座标记");
             }
             // tag 打在这条分支当前那一笔上：合并刚做完时它就是那笔合并提交，
             // 隔了一轮再补打则打在最新一笔上 —— 语义都是「这个仓库现在的 A 档来自哪个底座」
-            boolean created = tagCommit(temp, tagName, head, message);
+            boolean created = tagCommit(temp, tagName, target, message);
             pushTag(temp, tagName);
             return created;
         } finally {
             deleteRecursively(temp);
+        }
+    }
+
+    /** 提交号必须在这条分支够得着的地方：游离对象推不上去，指错了 base 侧整份三方合并都是假的 */
+    private String requireCommitOnBranch(Path dir, String branch, String commitSha) {
+        try (Git git = open(dir); RevWalk walk = new RevWalk(git.getRepository())) {
+            ObjectId head = git.getRepository().resolve("refs/heads/" + branch);
+            if (head == null) {
+                throw new BusinessException("远端没有分支 " + branch + "，补打底座标记要落在它的历史里");
+            }
+            ObjectId wanted = git.getRepository().resolve(commitSha);
+            if (wanted == null) {
+                throw new BusinessException("那笔提交不在分支 " + branch + " 的历史里：" + commitSha
+                        + "（tag 要打的提交必须是这条分支够得着的，否则推上去是个不可达的游离对象）");
+            }
+            walk.markStart(walk.parseCommit(head));
+            for (RevCommit commit : walk) {
+                if (commit.getId().equals(wanted)) {
+                    return wanted.getName();
+                }
+            }
+            throw new BusinessException("那笔提交不在分支 " + branch + " 的历史里：" + commitSha);
+        } catch (IOException e) {
+            throw new BusinessException("核对要打的提交失败：" + e.getMessage());
         }
     }
 
@@ -988,8 +1039,12 @@ public class JGitGateway implements GitGateway {
             }
             MergeResult.MergeStatus status = result.getMergeStatus();
             if (status == MergeResult.MergeStatus.ALREADY_UP_TO_DATE) {
-                // 主干已经含着这些内容：没什么可推的，但这条请求确实是了结了
-                return now;
+                // 主干已经含着这些内容 —— 这不是「合完了」，是「没什么可合」。如实返回目标 sha 的话，
+                // 调用方会把这条记成已合并、merged_by 落一个人名，而主干一个字节没动（11A 真机就是这样：
+                // 台账写着「已合入 main（上一次那个提交号）」）。升级分支走这里更危险：10F 会照这笔
+                // 「合并」去搬 base_scaffold_sha，等于凭空把底座号推到没下发过的位置。所以拒。
+                throw new BusinessException("主干 " + targetBranch + " 已经包含 " + abbrev(sourceSha)
+                        + " 的全部内容，没有要合进主干的内容：这条请求无需合并（先重算一次看它是不是已经合过了）");
             }
             if (status == MergeResult.MergeStatus.CONFLICTING) {
                 List<String> conflicts = result.getConflicts() == null

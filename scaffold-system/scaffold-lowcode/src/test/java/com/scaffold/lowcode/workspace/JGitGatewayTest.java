@@ -826,7 +826,7 @@ class JGitGatewayTest {
         gateway.pushBranch(workspace, "main");
 
         String tag = PlatformBaseTag.name(first);
-        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isTrue();
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, null, "底座快照")).isTrue();
         assertThat(gateway.lsRemote(remoteUrl)).anySatisfy(ref -> {
             assertThat(ref.tagName()).isEqualTo(tag);
             assertThat(ref.commitSha()).isEqualTo(first);
@@ -837,9 +837,9 @@ class JGitGatewayTest {
         write(workspace, "b.txt", "2\n");
         String second = gateway.commitAll(workspace, "chore: 主干第二笔");
         gateway.pushBranch(workspace, "main");
-        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, "底座快照")).isFalse();
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", tag, null, "底座快照")).isFalse();
         String newTag = PlatformBaseTag.name(second);
-        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", newTag, "底座快照")).isTrue();
+        assertThat(gateway.stampBaseTag(workspace, remoteUrl, "main", newTag, null, "底座快照")).isTrue();
 
         List<RemoteRef> refs = gateway.lsRemote(remoteUrl);
         assertThat(refs).anySatisfy(ref -> {
@@ -850,6 +850,31 @@ class JGitGatewayTest {
             assertThat(ref.tagName()).isEqualTo(newTag);
             assertThat(ref.commitSha()).isEqualTo(second);
         });
+    }
+
+    /**
+     * 「人工补打底座标记 tag」要先能在历史里认出当初交付那一笔，所以网关得能按分支给出提交号序列。
+     *
+     * <p>顺序与上限是这件判据的两半：必须<b>从新到旧</b>（要的是「第一笔带着这个底座号的提交」，
+     * 反过来遍历就得走完全程），而 {@code limit} 是护栏 —— 一个跑了几年主干的仓库有几万笔，
+     * 逐笔读文件不能没有上界，撞到上界要说「请指定提交号」而不是悄悄给一个错的答案。
+     */
+    @Test
+    void 分支历史按从新到旧给出提交号且到上限就停() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String first = gateway.commitAll(workspace, "chore: 第一笔");
+        write(workspace, "b.txt", "2\n");
+        String second = gateway.commitAll(workspace, "chore: 第二笔");
+        write(workspace, "c.txt", "3\n");
+        String third = gateway.commitAll(workspace, "chore: 第三笔");
+        gateway.pushBranch(workspace, "main");
+
+        assertThat(gateway.revList(workspace, "main", 0)).containsExactly(third, second, first);
+        assertThat(gateway.revList(workspace, "main", 2)).containsExactly(third, second);
+        // 分支不存在给空列表而不是抛：调用方要说的是「远端没有这条分支」，不是 JGit 的错
+        assertThat(gateway.revList(workspace, "没有这条分支", 10)).isEmpty();
     }
 
     private String branchSha(String repoUrl, String branch) {

@@ -362,7 +362,12 @@ export function initFromModel(fields: ModelField[]): DesignJson {
     const control = node(controlFor(field, true), { label: field.fieldName, field: field.fieldCode, queryType: field.queryType || '=' })
     block('SearchForm').children.push(control)
   })
-  block('Toolbar').children.push(node('Button', { label: '新增', action: 'create', variant: 'primary' }))
+  block('Toolbar').children.push(
+    node('Button', { label: '新增', action: 'create', variant: 'primary' }),
+    // 导出与行操作一样是列表页的默认能力（老链路没有设计时本来就有），初始化就摆进设计里，
+    // 而不是等生成时凭空补 —— 画布上看不见的东西不该出现在产物里
+    node('Button', { label: '导出', action: 'export' }),
+  )
   block('DataTable').columns = fields
     .filter(field => field.isList === 1 && !autoKey(field))
     .map(field => ({ key: nextKey('col'), field: field.fieldCode, title: field.fieldName, ...(isNumber(field) ? { align: 'right', render: 'money' } : {}), ...(field.dictType ? { render: 'tag' } : {}) }))

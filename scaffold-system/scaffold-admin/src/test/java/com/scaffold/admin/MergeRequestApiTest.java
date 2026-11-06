@@ -1,5 +1,6 @@
 package com.scaffold.admin;
 
+import com.scaffold.lowcode.workspace.ScaffoldTrimPolicy;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -362,6 +363,126 @@ class MergeRequestApiTest {
     }
 
     /** 项目行上那个「当初交付在哪个底座上」的号，10F 前后各读一次 */
+    /**
+     * 11A 真机抓的第一格：主干已经把发布分支的内容全包含了，就不该再生成一条请求。
+     *
+     * <p>界面上那条点下去只能对着空清单发呆；更糟的是它还能被「合并」成功，台账写「已合入 main（上一次
+     * 那个提交号）」而主干一个字节没动 —— 记了一次根本没发生的放行。与底座升级「一格可自动合的都没有
+     * 就不建分支」同一口径：噪音不该进队列。
+     */
+    @Test
+    void 主干已包含发布分支全部内容时不生成请求() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);   // 主干 == 快照 == 发布分支 tip：两边零差异
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/refresh", Map.of("projectId", fx.projectId)).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).as(String.valueOf(body)).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("没有要合进主干的内容");
+        assertThat(requestRows(fx.projectId)).as("一条都不建，别在待审队列里留噪音").isZero();
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(fx.snapshotSha);
+    }
+
+    /**
+     * 11A 的第二格：这道闸上线前库里已经躺着的那种零变更请求，点合并也必须被拒。
+     *
+     * <p>只堵生成侧不够 —— 存量条目还在，而它一旦合下去，`merged_by` 与「已合入 main（…）」就都是假的。
+     * 拒绝之后状态必须仍是待审：不能因为「没什么可合」就替人把这条收口。
+     */
+    @Test
+    void 零变更的请求点合并被拒且不记成已合并() {
+        Harness fx = new Harness(true);
+        rebaseMainOntoSnapshot(fx);
+        String sha = fx.snapshotSha;
+        jdbcTemplate.update("""
+                INSERT INTO lc_merge_request (tenant_id, project_id, title, source_branch, target_branch,
+                    source_sha, target_sha, merge_base_sha, status, check_status, check_message, create_by)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, 0, 1, '可自动合并：两边改动不重叠', 'admin')
+                """, fx.projectId, GEN + " → main：主干已包含来源分支的全部内容",
+                GEN, MAIN, sha, sha, sha);
+        long id = jdbcTemplate.queryForObject("SELECT MAX(id) FROM lc_merge_request WHERE project_id = ?",
+                Long.class, fx.projectId);
+
+        Map<String, Object> body = post("/api/lowcode/merge-requests/" + id + "/merge", Map.of()).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).as(String.valueOf(body)).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("没有要合进主干的内容");
+        assertThat(jdbcTemplate.queryForObject("SELECT status FROM lc_merge_request WHERE id = ?", Integer.class, id))
+                .as("不能替人把这条收口").isEqualTo(0);
+        assertThat(jdbcTemplate.queryForObject("SELECT merged_by FROM lc_merge_request WHERE id = ?", String.class, id))
+                .isNull();
+        assertThat(gateway.branchSha(fx.repoUrl, MAIN)).isEqualTo(sha);
+    }
+
+    /**
+     * 12A：存量项目远端缺底座标记 tag 时，界面要能补打 —— 而 tag 该指向哪一笔不能靠人猜。
+     *
+     * <p>判据出自交付物本身：那一笔提交上的 {@code .scaffold-project.json} 记着 baseScaffoldSha，
+     * 与库里那个号一致的就是「当初交付那一版 A 档」。这里造两笔同底座号的提交（真实场景就是初始化
+     * 交付一次、后来又同步过一次），要的是<b>最早那一笔</b>：从新往旧走，但不停在第一个命中，
+     * 撞到别的底座号才收 —— base 侧要的就是「那次交付给出去的那份」。
+     */
+    @Test
+    void 补打底座标记tag时按项目标记文件认最早那笔交付() {
+        Harness fx = new Harness(true);
+        String legacy = "e".repeat(40);   // 一个从没当过当前底座的号，模拟老项目交付时记下的那个
+        Path scratch = tempDir.resolve("legacy-" + System.nanoTime());
+        gateway.cloneBranch(scratch, fx.repoUrl, GEN);
+        write(scratch.resolve(ScaffoldTrimPolicy.MARKER_FILE),
+                "{\"projectCode\":\"" + fx.projectCode + "\",\"baseScaffoldSha\":\"" + legacy + "\"}\n");
+        String firstDelivery = gateway.commitAll(scratch, "chore(底座): 同步固定代码（老底座那版）");
+        write(scratch.resolve("占位.txt"), "交付之后项目里又动了一笔\n");
+        String later = gateway.commitAll(scratch, "chore: 交付之后的另一笔");
+        gateway.pushBranch(scratch, GEN);
+        deleteRecursively(scratch);
+        jdbcTemplate.update("UPDATE lc_project SET base_scaffold_sha = ? WHERE id = ?", legacy, fx.projectId);
+
+        Map<String, Object> body = post("/api/lowcode/projects/" + fx.projectId + "/base-tag", Map.of()).getBody();
+
+        assertThat(body).as(String.valueOf(body)).containsEntry("code", 200);
+        assertThat(gateway.tagSha(fx.repoUrl, "yuanda/platform-base/" + legacy))
+                .as("tag 要指最早那笔交付，不是发布分支当前 tip").isEqualTo(firstDelivery);
+        assertThat(gateway.branchSha(fx.repoUrl, GEN)).as("补打 tag 不改任何分支").isEqualTo(later);
+    }
+
+    /**
+     * 认不出就明说认不出：宁可让人指定提交号，也不要拿一个「大概是交付那笔」的提交当 base ——
+     * base 错了，下一次三方合并算出来的「平台改了什么」整份都是假的，而界面上一切正常。
+     */
+    @Test
+    void 历史里认不出这个底座号时补打拒绝并让人指定提交号() {
+        Harness fx = new Harness(true);
+        String unknown = "d".repeat(40);
+        jdbcTemplate.update("UPDATE lc_project SET base_scaffold_sha = ? WHERE id = ?", unknown, fx.projectId);
+
+        Map<String, Object> body = post("/api/lowcode/projects/" + fx.projectId + "/base-tag", Map.of()).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("指定提交号");
+        assertThat(gateway.tagSha(fx.repoUrl, "yuanda/platform-base/" + unknown))
+                .as("拒绝之后不能留下半个 tag").isNull();
+    }
+
+    /** 同名 tag 只创建不移动：移动它等于改掉那一轮升级的 base 侧，三方合并会算出错的结果 */
+    @Test
+    void 远端已有同名底座标记时补打不移动它() {
+        Harness fx = new Harness(true);
+        String legacy = "c".repeat(40);
+        String tag = "yuanda/platform-base/" + legacy;
+        Path scratch = tempDir.resolve("pretag-" + System.nanoTime());
+        gateway.cloneBranch(scratch, fx.repoUrl, GEN);
+        assertThat(gateway.tagCommit(scratch, tag, fx.snapshotSha, "人先打的那一笔")).isTrue();
+        gateway.pushTag(scratch, tag);
+        deleteRecursively(scratch);
+        jdbcTemplate.update("UPDATE lc_project SET base_scaffold_sha = ? WHERE id = ?", legacy, fx.projectId);
+
+        Map<String, Object> body = post("/api/lowcode/projects/" + fx.projectId + "/base-tag", Map.of()).getBody();
+
+        assertThat(String.valueOf(body.get("code"))).isEqualTo("400");
+        assertThat(String.valueOf(body.get("message"))).contains("已经有底座标记 tag").contains("不移动它");
+        assertThat(gateway.tagSha(fx.repoUrl, tag)).as("原样留着，没被移动").isEqualTo(fx.snapshotSha);
+    }
+
     private Map<String, Object> projectRow(long projectId) {
         return jdbcTemplate.queryForMap("SELECT base_scaffold_sha FROM lc_project WHERE id = ?", projectId);
     }

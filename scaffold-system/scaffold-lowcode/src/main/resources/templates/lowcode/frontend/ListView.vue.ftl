@@ -41,7 +41,11 @@ const columns: Column[] = [
 <#if audit>
   { key: 'createTime', title: '创建时间', width: 160 },
 </#if>
+<#-- 设计没放行任何行操作时，连「操作」这一列一起不出：出一个 112px 的表头加每行一格空白，
+     读起来像「这里有入口但坏了」，而事实是「这个页面不提供行内动作」 -->
+<#if rowButtons?size gt 0>
   { key: 'actions', title: '操作', width: 112, className: 'col-actions' },
+</#if>
 ]
 
 /* ── 新增 / 编辑 ── */
@@ -188,6 +192,7 @@ async function remove(row: ${className}Row) {
     <template #cell-createTime="{ row }"><span class="tnum soft">{{ row.createTime ?? '—' }}</span></template>
 </#if>
 
+<#if rowButtons?size gt 0>
     <template #cell-actions="{ row }">
       <div class="row-actions">
 <#list rowButtons as b>
@@ -195,6 +200,7 @@ async function remove(row: ${className}Row) {
 </#list>
       </div>
     </template>
+</#if>
   </ListPage>
 
   <FormDialog :open="dialog" :title="editing !== null ? '编辑${modelName}' : '新增${modelName}'" :saving="saving" @close="dialog = false" @submit="submit">

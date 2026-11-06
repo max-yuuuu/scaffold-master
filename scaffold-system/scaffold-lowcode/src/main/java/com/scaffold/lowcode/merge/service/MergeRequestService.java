@@ -111,11 +111,16 @@ public class MergeRequestService {
         }
 
         List<ChangedFile> files = gateway.diffFiles(workspace, baseSha, sourceSha);
+        if (files.isEmpty()) {
+            // 零变更不进队列：那种条目点下去只能对着空清单发呆，而且还能被「合并」成功，台账记一次
+            // 根本没发生的放行（11A 真机抓的）。与底座升级「一格可自动合的都没有就不建分支」同一口径 ——
+            // 噪音的成本是审的人来付
+            throw new BusinessException(sourceLabel + " " + sourceBranch + " 的内容主干 " + targetBranch
+                    + " 已经全有了，没有要合进主干的内容：这次不用生成请求");
+        }
         MergeCheck check = gateway.checkMerge(workspace, targetSha, sourceSha);
         int checkStatus = check.clean() ? MergeRequestState.CHECK_CLEAN : MergeRequestState.CHECK_CONFLICT;
-        String title = files.isEmpty()
-                ? sourceBranch + " → " + targetBranch + "：主干已包含来源分支的全部内容"
-                : sourceBranch + " → " + targetBranch + "：" + files.size() + " 个文件待合并";
+        String title = sourceBranch + " → " + targetBranch + "：" + files.size() + " 个文件待合并";
 
         Map<String, Object> existing = requestMapper.selectOpenRequest(projectId, sourceBranch, targetBranch);
         long requestId = ledger.record(projectId, existing, title, sourceBranch, targetBranch,
@@ -242,7 +247,7 @@ public class MergeRequestService {
         String tagName = PlatformBaseTag.name(targetScaffold);
         String warning = null;
         try {
-            gateway.stampBaseTag(workspace, repoUrl, targetBranch, tagName,
+            gateway.stampBaseTag(workspace, repoUrl, targetBranch, tagName, null,
                     PlatformBaseTag.message(targetScaffold) + "\n\n由合并请求 #" + requestId + " 在合入主干后打上。");
         } catch (RuntimeException e) {
             warning = "；底座标记 tag " + tagName + " 没打上：" + e.getMessage()
