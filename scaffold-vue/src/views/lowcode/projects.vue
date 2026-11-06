@@ -327,14 +327,22 @@ function shortSha(sha?: string | null) {
 }
 
 /** 底座标记 tag 是后续「底座升级」三方合并的 base 侧，缺了就升不了级，所以三态都要说清楚：
-    远端已有 / 远端缺 / 工作区不在时没去核对（后端返回 null） */
+    远端已有 / 远端缺 / 没核对过（后端返回 null）。
+    两个来源不能混用：「有没有记底座号」看项目行（同一屏上面那行「底座提交」就是它），
+    「远端有没有这个 tag」才看工作区读数。10G 真机上看到过自相矛盾的一屏 —— 上面写着
+    effbcfe867，下面写着「未记录底座提交号」，因为工作区那次请求没回来，baseTag 是空的，
+    而旧逻辑把「我没读到」说成了「这个项目没记号」。 */
 const baseTagText = computed(() => {
   const tag = workspace.value?.baseTag
-  if (!tag) return '未记录底座提交号，该项目做不了三方底座升级（底座 checkout 需要带 .git）'
-  const exists = workspace.value?.baseTagExists
-  if (exists === true) return `${tag}（已在远端）`
-  if (exists === false) return `${tag}（远端缺失，补上之前做不了三方底座升级）`
-  return `${tag}（工作区不在，未核对远端）`
+  if (tag) {
+    if (workspace.value?.baseTagExists === true) return `${tag}（已在远端）`
+    if (workspace.value?.baseTagExists === false) return `${tag}（远端缺失，补上之前做不了三方底座升级）`
+    return `${tag}（未核对远端）`
+  }
+  if (!repo.value?.baseScaffoldSha) {
+    return '未记录底座提交号，该项目做不了三方底座升级（底座 checkout 需要带 .git）'
+  }
+  return '远端是否有底座标记 tag 未核对（工作区读数没回来）'
 })
 
 async function remove(row: ProjectRow) {
