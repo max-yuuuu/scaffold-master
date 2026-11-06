@@ -14,6 +14,15 @@
 
 **过程中两件环境事实**（都记进记忆了）：① **本地 `dev` 这个 ref 落后三个 PR**（停在 57a169f），IDE 切过去时 Qoder 自动 stash 再 pop 我的未提交改动，pop 到旧代码上撞出 `<<<<<<< Updated upstream` 冲突标记，Java 当场编不过 —— 我从 `stash@{0}` 取回干净版本、切回模块分支、把漏掉的那个补丁重打，并把本地 `dev` 快进到 `lowcode-ai/dev`（纯快进，没丢提交）。② **dev 后端与 IT 用例共用 3316 那个库同一个 schema**（`.env.local` 里 `DB_PORT=3316`），所以我今天做真机验证写下的合并请求 id=26 直接把一条按全局 `total` 断言的用例污染成 2 —— 那条断言现在按项目过滤，这类断言以后都按夹具过滤。另外 9A 那条提交单独 checkout 时 `scaffold-admin` 的测试编译不过（接口加了方法而两个测试替身没跟上，它们在另一个模块），按独立一步补回并写明 —— 单元边界我切错了。
 
+## 2026-11-06（PR 9 收尾：真机回滚与交付 compose 演练，§10.3 那一行验收）
+
+9F 按用户选的三档授权跑完：我重启本机后端、只写发布分支（不碰主干）、docker 演练现在做。
+
+- **真机回滚（`test-lowcode-push`，项目 23 / 页面 59）**：原本 v1 CREATE、v2 UPDATE，回滚到 v1 得到 **v3 ROLLBACK**，提交 `c205f515`，附注 tag `vorder-serive-sales_order_page-3` 推到远端且**剥开后正指向这笔提交**（第一版自检脚本拿 `refs/tags/xxx` 直接比提交号，报了个假红 —— 附注 tag 那一层是 tag 对象，peeled ref 才是提交；这正好是 PR 7 那条「tag 与 commit_sha 对不对得上」验收在真机上的用法）。`git diff v1 v3 -- SalesOrder.vue` 为 0 行、`v2 v3` 有差异；v3 的父提交就是回滚前的 gen tip（**历史是追加的，没有倒带**）；**`main` 仍在 `36fff869` 没被动过**；还原 10 个文件、C 档 `SalesOrderExtension.java` 被排除，而新版本快照仍是 11 份 —— 以当前版为底、只换被还原的路径，所以「这一版整页有什么」依然完整。
+- **交付 compose 演练**：干净 clone `platform-generated` 到 `/tmp/pr9-delivery`，`.env` 用 `WEB_PORT=8099` / `MYSQL_HOST_PORT=3317` 避开本机 80 与 3306（80 那侧另有一套 `delivery-gh-*` 栈已起 26 小时，像是别的会话的演练现场，我没碰；3306 是业务工程的库），`docker compose --profile mysql up -d --build` 四个服务全 healthy。clone 出来的 `SalesOrder.vue` 里那一列就是 `title: '订单金额'`（v1 的内容，v2 是「含税金额」）—— **平台上的回滚在干净机器的交付物里看得见**，这一刀要的因果链就落在这里。
+- **交付侧「人工执行 SQL」那一步照做**：生成物 SQL 是给人执行的产物、不是迁移记录，所以手工跑 `sql/pages/sales_order_table.sql` 与 `_menu.sql`（客户端必须带 `--default-character-set=utf8mb4`，否则容器 locale 为 `C` 时中文二次编码），执行后菜单名读回是正常中文。随后真接口跑通：新增 / 分页查询（`orderNo` 走 LIKE 条件）/ 详情 / **重复订单号被拒「订单编号已存在」** / 删除 / 导出 200。第一次做负向对照时我把 `status` 漏了，400 报的是「状态不能为空」—— 那打不到唯一约束，补齐字段才是真的负向对照。
+- **没做**：合并那一步（写 `main`）用户选了不跑，所以「发布 → 合并 → 回滚」里只有合并这一段仍是 IT 覆盖（`MergeRequestApiTest` 11 例）而非真机；抽屉与回滚按钮也没在浏览器里点过（浏览器停在登录页，没有用户密码）。演练用的 `pr9-delivery-*` 容器与 `/tmp/pr9-delivery` 先留着，要看页面开 `http://127.0.0.1:8099`，收掉用 `docker compose down -v`。
+
 ## 2026-11-06（PR 8 第二刀：开发提交 PR → 负责人审核 → 确认合并，文件对比做到行内）
 
 
