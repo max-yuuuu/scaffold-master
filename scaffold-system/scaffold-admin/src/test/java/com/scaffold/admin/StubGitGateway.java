@@ -190,9 +190,16 @@ public class StubGitGateway implements GitGateway {
         throw new UnsupportedOperationException("StubGitGateway 不真合并也不推主干：合并执行要用真 JGit，见 LocalBareGitGateway");
     }
 
+    /**
+     * 桩没有底座历史，如实返回「数不出来」而不是抛异常。
+     *
+     * <p>与其它几个方法不一样：那些返回假值会让断言看起来过了，而 null 是这条读数的**退化分支本身**，
+     * 界面与调用方本来就要处理它。抛异常只会让每个用桩的 IT 在读数这一步 500 ——
+     * 真能数出步数的那条路径由 JGitGatewayTest 与真机负责。
+     */
     @Override
     public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
-        throw new UnsupportedOperationException("StubGitGateway 没有提交历史可数：落后读数要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+        return null;
     }
 
     @Override

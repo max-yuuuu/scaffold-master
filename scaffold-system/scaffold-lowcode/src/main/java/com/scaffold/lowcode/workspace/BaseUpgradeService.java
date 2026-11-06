@@ -30,9 +30,6 @@ import java.util.Map;
 @Service
 public class BaseUpgradeService {
 
-    /** 升级分支名里的底座短号：7 位是 git 自己的缩写习惯，够人认，也不会撞到分支名长度 */
-    private static final int SHORT_SHA = 7;
-
     /** 待合并：升级分支已经推出去，等人从合并请求里合进主干 */
     private static final int STATUS_PENDING = 0;
 
@@ -89,7 +86,7 @@ public class BaseUpgradeService {
 
         String projectCode = text(project.get("projectCode"));
         String mainBranch = text(project.get("mainBranch"));
-        String upgradeBranch = "platform-upgrade/" + scaffoldSha.substring(0, SHORT_SHA);
+        String upgradeBranch = BaseUpgrade.branchName(scaffoldSha);
         String message = "chore(底座): 升级固定代码到 " + abbreviate(scaffoldSha) + "（元搭低代码平台，项目 "
                 + projectCode + "）";
         BaseUpgrade result = gateway.baseUpgrade(paths.of(projectCode),
@@ -207,7 +204,7 @@ public class BaseUpgradeService {
     }
 
     private static String abbreviate(String sha) {
-        return sha == null ? null : sha.substring(0, Math.min(SHORT_SHA, sha.length()));
+        return sha == null ? null : sha.substring(0, Math.min(7, sha.length()));
     }
 
     private static String text(Object value) {
