@@ -1,6 +1,7 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.generate.GeneratedPaths;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import jakarta.annotation.PreDestroy;
 import org.eclipse.jgit.api.CreateBranchCommand;
@@ -701,15 +702,29 @@ public class JGitGateway implements GitGateway {
         }
     }
 
-    private static void fetchTags(Git git) throws IOException {
+    private void fetchTags(Git git) throws IOException {
         try {
-            git.fetch().setRemote("origin").setTagOpt(TagOpt.FETCH_TAGS).call();
+            git.fetch().setRemote("origin").setTagOpt(TagOpt.FETCH_TAGS)
+                    .setTimeout(timeoutSeconds)
+                    // 联网的命令一条都不能漏这一道：不挂就用 JGit 默认的代理工厂，它会读本机 HTTP 代理，
+                    // 把 github.com:22 指到代理端口上，报回来的只有一句没头没尾的 "Session is being closed"
+                    //（真机踩过：那次把「缺底座标记 tag」这条正当拒绝盖成了一句网络错）
+                    .setTransportConfigCallback(transportConfig())
+                    .call();
         } catch (GitAPIException e) {
             throw new BusinessException("补取远端 tag 失败：" + e.getMessage());
         }
     }
 
-    /** 三棵树里出现过的路径取并集：漏了任何一侧，那一格就永远算不出来（升级里「平台撤掉的文件」就在 theirs 之外） */
+    /**
+     * 三棵树里出现过的路径取并集：漏了任何一侧，那一格就永远算不出来（升级里「平台撤掉的文件」就在 theirs 之外）。
+     *
+     * <p>并集只收平台管得着的路径。base 与 ours 是<b>整个项目提交</b>，里面本来就有 B/C 档的生成物与人工资产，
+     * 照单全收就会把它们报成「平台不再交付，删不删由人定」—— 那是在诱导审的人删掉自己的业务代码
+     * （10G 真机跑出来过这一条）。B 档下一次页面发布自己会覆盖，C 档是人工写的资产、平台永不碰；
+     * 项目标记文件由初始化写、底座号由 {@code lc_project.base_scaffold_sha} 那一路跟着升级前进，
+     * 都不该在这份名单里说话。
+     */
     private static List<String> mergePaths(Repository repo, String baseSha, String oursSha, String theirsSha)
             throws IOException {
         java.util.TreeSet<String> paths = new java.util.TreeSet<>();
@@ -722,11 +737,20 @@ public class JGitGateway implements GitGateway {
                 walk.addTree(tree);
                 walk.setRecursive(true);
                 while (walk.next()) {
-                    paths.add(walk.getPathString());
+                    String path = walk.getPathString();
+                    if (upgradeIgnores(path)) {
+                        continue;
+                    }
+                    paths.add(path);
                 }
             }
         }
         return List.copyOf(paths);
+    }
+
+    /** 底座升级只比 A 档：页面发布可写的形状（B/C 档）与项目标记文件一律不进这份名单 */
+    private static boolean upgradeIgnores(String path) {
+        return path.equals(ScaffoldTrimPolicy.MARKER_FILE) || GeneratedPaths.isPagePublishOwned(path);
     }
 
     private static void writeAll(Path dir, List<MergedFile> files) throws IOException {

@@ -1,6 +1,7 @@
 package com.scaffold.lowcode.workspace;
 
 import com.scaffold.common.exception.BusinessException;
+import com.scaffold.lowcode.generate.GeneratedPaths;
 import com.scaffold.lowcode.project.domain.ProjectSyncStatus;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.revwalk.RevWalk;
@@ -708,6 +709,74 @@ class JGitGatewayTest {
                 "platform-upgrade/taken", "底座升级"))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("platform-upgrade/taken");
+    }
+
+    /**
+     * 缺 base 侧那道拒绝必须说清「先去补打 tag」，不能只丢一句网络错。
+     *
+     * <p>真机踩过：补 fetch 远端 tag 的那条命令漏挂了 SSH 传输配置，本机 HTTP 代理把 github.com:22
+     * 劫持了，接口回的是「补取远端 tag 失败：Session is being closed」—— 现场什么都没改、拒绝本身是对的，
+     * 人看到的却是一句看不懂也接不下去的错。本例走本机裸仓库，代理那条坑它挡不住（那要靠代码里统一挂
+     * transportConfig），它钉的是 §10.3 那条验收：缺底座标记 tag 的项目要被挡住，并且说得出下一步。
+     */
+    @Test
+    void 远端没有底座标记tag时升级拒绝并指出生路() throws IOException {
+        UpgradeFixture fx = upgradeFixture();
+        String missing = PlatformBaseTag.PREFIX + "0123456789abcdef0123456789abcdef01234567";
+
+        assertThatThrownBy(() -> gateway.baseUpgrade(fx.workspace, fx.repoUrl, "main", missing,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/missingtag", "底座升级"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("找不到底座标记 tag").hasMessageContaining(missing)
+                .hasMessageContaining("补打底座标记 tag");
+
+        // 拒绝在动手之前：既没建升级分支，也不该留下半条升级链
+        assertThat(gateway.lsRemote(fx.repoUrl))
+                .filteredOn(ref -> ref.branchName() != null && ref.branchName().startsWith("platform-upgrade/"))
+                .isEmpty();
+    }
+
+    /**
+     * 「平台撤掉」这份名单只该说 A 档（10G 真机抓的）。
+     *
+     * <p>真机上那一次把 {@code SalesOrderService.java}、{@code SalesOrder.vue}、建表 SQL 连同
+     * {@code .scaffold-project.json} 一起报成了「平台不再交付，删不删由人定」—— 因为路径并集是按
+     * 「三棵树里出现过」算的，而 base 与 ours 是**整个项目提交**，里面本来就有 B/C 档。
+     * 这份名单就这么给审的人看，就是在诱导他删掉自己的业务代码：B 档下次发布自己会覆盖，
+     * C 档是人工写的资产，平台连提意见的资格都没有。
+     */
+    @Test
+    void 升级结论里不许出现B档与C档路径() throws IOException {
+        String service = "scaffold-system/scaffold-business/src/main/java/com/scaffold/business/sales_order/service/SalesOrderService.java";
+        String view = "scaffold-vue/src/views/sales_order/SalesOrder.vue";
+        // 先自证夹具：这两条确实是页面发布可写的形状，否则下面的断言就是在比一个不存在的前提
+        assertThat(GeneratedPaths.isPagePublishOwned(service)).isTrue();
+        assertThat(GeneratedPaths.isPagePublishOwned(view)).isTrue();
+
+        Path workspace = tempDir.resolve("upgrade-tier");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "pom.xml", POM_BASE);
+        write(workspace, service, "class SalesOrderService { }\n");
+        write(workspace, view, "<template>项目自己的页面</template>\n");
+        write(workspace, ScaffoldTrimPolicy.MARKER_FILE, "{\"baseScaffoldSha\":\"x\"}\n");
+        String delivered = gateway.commitAll(workspace, "chore: 交付固定代码");
+        String baseTag = PlatformBaseTag.PREFIX + delivered;
+        gateway.tagCommit(workspace, baseTag, delivered, "底座快照");
+        gateway.pushTag(workspace, baseTag);
+        gateway.pushBranch(workspace, "main");
+
+        // 这一轮底座只改了 pom 的版本号那一行，快照里没有别的文件
+        BaseUpgrade upgrade = gateway.baseUpgrade(workspace, remoteUrl, "main", baseTag,
+                Map.of("pom.xml", POM_THEIRS.getBytes(StandardCharsets.UTF_8)),
+                "platform-upgrade/tier", "底座升级");
+
+        assertThat(upgrade.files()).extracting(MergedFile::path)
+                .noneMatch(path -> path.equals(service) || path.equals(view)
+                        || path.equals(ScaffoldTrimPolicy.MARKER_FILE));
+        assertThat(upgrade.count(MergeOutcome.DROPPED_BY_PLATFORM)).isZero();
+        assertThat(upgrade.count(MergeOutcome.CLEAN)).isEqualTo(1);
+        assertThat(upgrade.commitSha()).isNotNull();
     }
 
     /**

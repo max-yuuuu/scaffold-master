@@ -106,7 +106,12 @@ public final class ScaffoldTrimPolicy {
             // 平台本地工作区根（默认 ./lowcode-workspace，容器里是卷）：里面是各项目 clone 出来的交付物，
             // 不排除的话交付快照会把上一版交付整个套进新一版里
             "lowcode-workspace",
-            ".DS_Store");
+            ".DS_Store",
+            // 本机口令与解释器字节码：裁剪走文件系统遍历，.gitignore 拦不住它。
+            // scaffold-admin/.env.local 里就是开发用的 JWT_SECRET，把它列进 A 档清单等于打算把口令下发给
+            // 每一个租户（10G 真机跑出来过一次，那趟靠交付仓库自己的 .gitignore 才没被 git add 收进去）
+            ".env.local",
+            "__pycache__");
 
     /** 快照里不允许出现的平台代码引用（Java/TS/JSON），残留即说明裁剪清单漏项 */
     private static final List<String> FORBIDDEN_CODE_REFERENCES = List.of(
