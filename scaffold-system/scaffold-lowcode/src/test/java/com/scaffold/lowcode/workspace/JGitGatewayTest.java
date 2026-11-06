@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -453,6 +454,83 @@ class JGitGatewayTest {
                 .hasMessageContaining("shared.txt");
         // 拒绝得干干净净：远端主干还停在原来那个提交
         assertThat(remoteShaOf(gateway.lsRemote(remoteUrl), "main")).isEqualTo(mainSha);
+    }
+
+    @Test
+    void 能按提交号取回指定文件的历史内容而不改工作区() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "platform-generated");
+        write(workspace, "scaffold-business/src/main/java/x/OrderRow.java", "class OrderRow { }\n");
+        write(workspace, "scaffold-vue/src/views/order/Orders.vue", "<template>a</template>\n");
+        String v1 = gateway.commitAll(workspace, "feat: 发布 v1");
+        gateway.pushBranch(workspace, "platform-generated");
+
+        // 同一个文件在下一版里变了：回滚取的就是「那一版里它长什么样」，不是工作区当前内容
+        write(workspace, "scaffold-business/src/main/java/x/OrderRow.java", "class OrderRow { int id; }\n");
+        String v2 = gateway.commitAll(workspace, "feat: 发布 v2");
+        gateway.pushBranch(workspace, "platform-generated");
+        write(workspace, "uncommitted.txt", "工作区里有人写了没提交的东西\n");
+
+        Map<String, String> contents = gateway.fileContents(workspace, v1, List.of(
+                "scaffold-business/src/main/java/x/OrderRow.java",
+                "scaffold-vue/src/views/order/Orders.vue"));
+
+        assertThat(contents).containsOnlyKeys(
+                "scaffold-business/src/main/java/x/OrderRow.java", "scaffold-vue/src/views/order/Orders.vue");
+        assertThat(contents.get("scaffold-business/src/main/java/x/OrderRow.java"))
+                .isEqualTo("class OrderRow { }\n");
+        assertThat(contents.get("scaffold-vue/src/views/order/Orders.vue")).isEqualTo("<template>a</template>\n");
+
+        // 取历史是只读动作：HEAD 还在那条分支的最新提交上，工作区也没被这次读取「弄脏」
+        assertThat(gateway.headSha(workspace)).isEqualTo(v2);
+        assertThat(gateway.isDirty(workspace)).isTrue();   // 脏是上面那个人写的文件脏的，不是读取造成的
+        assertThat(Files.readString(workspace.resolve("scaffold-business/src/main/java/x/OrderRow.java")))
+                .isEqualTo("class OrderRow { int id; }\n");
+    }
+
+    @Test
+    void 那个提交里没有的文件如实报缺而不是返回空内容() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "platform-generated");
+        write(workspace, "kept.txt", "有\n");
+        String sha = gateway.commitAll(workspace, "feat: 第一版");
+
+        // 回滚按「请求的路径 − 取回来的键」算缺了哪些，所以缺的那条宁可不出现在结果里，
+        // 也不能给一个空字符串 —— 空内容是合法内容，写回去就是把一个文件清空
+        assertThat(gateway.fileContents(workspace, sha, List.of("kept.txt", "gone.txt")))
+                .containsOnlyKeys("kept.txt");
+    }
+
+    @Test
+    void 二进制内容不当作文本取回() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "platform-generated");
+        Path png = workspace.resolve("assets.png");
+        Files.createDirectories(png.getParent());
+        Files.write(png, new byte[]{(byte) 0x89, 'P', 'N', 'G', 0, (byte) 0xFF, (byte) 0xFE, 'x'});
+        String sha = gateway.commitAll(workspace, "feat: 带了一个二进制");
+
+        // B 档产物全是文本；历史里出现二进制只有两种可能 —— 有人在发布分支上塞了东西，
+        // 或版本快照的路径记错了。两种都要停手，而不是把乱码写回工作区
+        assertThatThrownBy(() -> gateway.fileContents(workspace, sha, List.of("assets.png")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("assets.png")
+                .hasMessageContaining("二进制");
+    }
+
+    @Test
+    void 提交号查不到时说清是哪一个查不到() {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "platform-generated");
+        write(workspace, "a.txt", "1\n");
+        String sha = gateway.commitAll(workspace, "feat: 起点");
+
+        assertThatThrownBy(() -> gateway.fileContents(workspace, "0123456789abcdef0123456789abcdef01234567",
+                List.of("a.txt")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("0123456789");
+        // 反过来确认正常号是能走的：排除「永远抛错」这种假绿
+        assertThat(gateway.fileContents(workspace, sha, List.of("a.txt"))).containsOnlyKeys("a.txt");
     }
 
     private static Change changeOf(List<ChangedFile> files, String path) {
