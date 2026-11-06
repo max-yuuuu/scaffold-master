@@ -330,6 +330,60 @@ export interface PagePublishResult {
   message: string
 }
 
+/** 版本历史一行：lc_page_version 配上台账里那次成功动作的 tag 与类型，回滚就按这一列点 */
+export interface PageVersionRow {
+  id: number
+  version: number
+  commitSha: string
+  tagName: string | null
+  /** CREATE 首次发布 / UPDATE 再次发布 / ROLLBACK 回滚产出的那一版 */
+  publishType: string | null
+  changeDesc: string | null
+  createBy: string | null
+  createTime: string | null
+  /** 产物份数：SQL 里 JSON_LENGTH 现算，库里不存计数列 */
+  fileCount: number | null
+}
+
+/** 单版的产物一行。档位由路径反推，C 档不参与回滚 —— 平台不生成它，也就无权还原人写在里面的代码 */
+export interface PageVersionFileRow {
+  path: string
+  sha256: string
+  tier: 'GENERATED' | 'EXTENSION'
+  rollbackable: boolean
+}
+
+export interface PageVersionDetail {
+  pageId: number
+  version: number
+  commitSha: string
+  tagName: string | null
+  publishType: string | null
+  changeDesc: string | null
+  files: PageVersionFileRow[]
+}
+
+/** 回滚请求：version 必填（退回哪一版），files 为空就是整页回滚，给了就是只还原这几个 B 档文件 */
+export interface PageRollbackRequest {
+  version: number
+  files?: string[]
+}
+
+export interface PageRollbackResult {
+  pageId: number
+  pageCode: string
+  /** 回滚产出的是「新的一版」，不是把 current_version 改回旧号 */
+  version: number
+  rolledBackTo: number
+  publishType: string
+  status: number
+  commitSha: string
+  tagName: string | null
+  branch: string
+  files: { path: string, tier: string, action: string, sha256: string }[]
+  message: string
+}
+
 /** 页面新增与编辑请求（lc_page）：design 送对象而不是字符串，后端 PageWriteRequest 收 JsonNode */
 export interface PageWriteRequest {
   projectId?: number
@@ -444,6 +498,12 @@ export function createPlatformApi(client: HttpClient) {
       updateStatus: (id: number, status: number) => client.put<void>(`/lowcode/pages/${id}/status`, { status }),
       /** 发布是独立权限点（lowcode:page:publish）：能编辑设计不等于能往租户仓库推代码 */
       publish: (id: number, body: PagePublishRequest) => client.post<PagePublishResult>(`/lowcode/pages/${id}/publish`, body),
+      /** 版本历史读的是库里的账，不碰仓库，所以权限沿用 lowcode:page:list */
+      versions: (id: number, query?: QueryParams) => client.get<PageResult<PageVersionRow>>(`/lowcode/pages/${id}/versions`, query),
+      /** 单版详情带产物清单：文件级回滚就是在这份清单里挑 B 档那几个 */
+      version: (id: number, version: number) => client.get<PageVersionDetail>(`/lowcode/pages/${id}/versions/${version}`),
+      /** 回滚（lowcode:page:rollback）：以一笔新提交把那一版的内容推回发布分支，不碰主干、不倒带历史 */
+      rollback: (id: number, body: PageRollbackRequest) => client.post<PageRollbackResult>(`/lowcode/pages/${id}/rollback`, body),
     },
     mergeRequests: {
       /** 列表是一次读库：不重读远端，一屏几十条各打一次 ls-remote 会把「看一眼列表」变成网络风暴 */
