@@ -350,7 +350,9 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--r-xs);
-  overflow: hidden;
+  /* clip 不是 hidden：hidden 会把自己变成一层滚动容器，行头的 sticky 就以它为参照，
+     而它自己不滚动，于是行头根本钉不起来。clip 只裁圆角，滚动参照仍是抽屉体。 */
+  overflow: clip;
 }
 
 .mr-files > .mr-note {
@@ -367,10 +369,13 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
 }
 
 /* 行头 sticky：滚动读差异时当前文件的标题钉在抽屉体顶部，下一个文件的行头滑上来把它顶掉。
-   这是 sticky 相对各自父块的自然行为，与 GitHub 的文件区同一套，不需要 JS 算位置。 */
+   这是 sticky 相对各自父块的自然行为，与 GitHub 的文件区同一套，不需要 JS 算位置。
+   top 取负是因为 sticky 钉的是滚动容器的内边距下沿：.drawer-body 有 14px 上内边距，
+   top:0 会让行头停在下面 14px，差异行从这条缝里穿过看着就像被上面那块内容遮住了。
+   阴影落在紧邻的那条 1px 分隔线上，钉住时把从下面滑过去的差异行切开，平时看不出来。 */
 .mr-file-head {
   position: sticky;
-  top: 0;
+  top: -14px;
   z-index: 2;
   display: flex;
   align-items: center;
@@ -380,14 +385,17 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
   padding: 6px 10px;
   border: 0;
   background: var(--surface-solid);
+  box-shadow: 0 1px 0 var(--line);
   color: var(--ink);
   cursor: pointer;
   font: inherit;
   text-align: left;
 }
 
+/* hover 只能加一层背景图：--hover-bg 是半透明的，直接换成它会击穿这层不透明底，
+   钉住时下面滑过的差异行会透上来 */
 .mr-file-head:hover {
-  background: var(--hover-bg);
+  background-image: linear-gradient(var(--hover-bg), var(--hover-bg));
 }
 
 .mr-file-head .nm {
