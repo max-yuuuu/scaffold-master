@@ -1,0 +1,294 @@
+[
+  {
+    "number": 0,
+    "category": "阶段 0：升级后半截的界面入口（并入自原第一份提案，最先合）",
+    "task": "让 platform-upgrade 分支在界面上能变成待审合并请求",
+    "steps": [
+      {
+        "step": "读 MergeRequestApiTest 里 platform-upgrade 那条主路用例，确认后端口径（来源分支、零差异拒、远端已无分支的文案），前端只写契约不重写语义",
+        "completed": false
+      },
+      {
+        "step": "写红用例：升级成功后点「生成合并请求」，断言发出的请求体带 sourceBranch 且与「下一步」文案里的分支名完全一致；确认失败原因正是 payload 少这个字段",
+        "completed": true
+      },
+      {
+        "step": "写红用例：底座读数里状态为「待合并」的历史行同样触发该动作，参数取自该条记录",
+        "completed": true
+      },
+      {
+        "step": "projects.vue 结果屏与读数行各加一颗动作，复用 PermissionButton、既有 loading/toast 与合并请求详情（风琴 + 行内 diff），不新搓布局",
+        "completed": true
+      },
+      {
+        "step": "后端两类既有拒绝原样显示（远端已无该升级分支、主干已包含全部内容）；同一来源分支已有开放请求时措辞跟随「重算」",
+        "completed": false
+      },
+      {
+        "step": "项目 syncStatus 非就绪时不渲染该动作（与初始化按钮按状态隐藏同一口径）",
+        "completed": false
+      },
+      {
+        "step": "跑前端三件套（vue-tsc + vite build + 单测）转绿，并在真浏览器从发起升级到合入主干走一遍；拿不到可见浏览器就如实记未验证",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 1,
+    "category": "阶段 1：壳包化（不动目录位置）",
+    "task": "前端壳成为 workspace 包并暴露三个贡献点",
+    "steps": [
+      {
+        "step": "先写红用例：断言宿主能在不改壳源码的前提下注册一条自己的路由（RouteContribution），且菜单解析认得宿主贡献的 component 路径",
+        "completed": false
+      },
+      {
+        "step": "再写红用例：断言底座目录内不出现 api/platform 与 views/lowcode 字符串、@/ 只解析到壳自身目录（这一条在旧结构上允许暂时红，作为阶段 3 的守卫提前立好）",
+        "completed": false
+      },
+      {
+        "step": "给 scaffold-vue/package.json 加 exports 与包名 @yuanda-lowcode-ai/scaffold-base-app，并确认根 package.json 的 workspaces 已覆盖它",
+        "completed": false
+      },
+      {
+        "step": "新建 src/shell/index.ts：createScaffoldApp({ routes, menuSource, permission, slots })，沿用 installScaffoldUi 的注入形状，不另造第二套契约",
+        "completed": false
+      },
+      {
+        "step": "router/index.ts 改为按贡献表建路由：壳自己的 views 用 glob，宿主页面走显式申报；保留 sys_menu.component 到模块路径的既有解析约定",
+        "completed": false
+      },
+      {
+        "step": "AppShell.vue / Topbar.vue / Sidebar.vue 开具名插槽，把平台专属那几处（已切换租户指示、低代码入口）从改源码变成填插槽；顺手收掉 AppShell.vue:34 那条手写 820 断点副本，改读包内 narrow.ts",
+        "completed": false
+      },
+      {
+        "step": "把平台专属页面与 api/platform.ts、components/platform/** 从 scaffold-vue 移到宿主侧新位置，scaffold-vue 里只留底座内容",
+        "completed": false
+      },
+      {
+        "step": "跑 vue-tsc + vite build + 前端单测全绿，并在真浏览器点一次登录、菜单跳转、窄屏抽屉，确认 glob 改动没有静默丢页面",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 2,
+    "category": "阶段 1：壳包化（不动目录位置）",
+    "task": "后端装配下沉为 scaffold-admin-core",
+    "steps": [
+      {
+        "step": "写红用例：断言平台启动模块能依赖底座的装配（SecurityConfig、过滤器顺序、PlatformBoundary）而无需复制一份；并断言两个启动模块的 @MapperScan 清单各自独立、无包根写法",
+        "completed": false
+      },
+      {
+        "step": "新建 scaffold-admin-core 库模块，把装配类与 application.yml 里的公共段搬进去；确认底座 admin 与平台 admin 都只依赖 core、不互相依赖",
+        "completed": false
+      },
+      {
+        "step": "处理 fat jar 事实：底座 admin 的 spring-boot-maven-plugin 保留可执行产物，同时确认被依赖的是普通 classes 产物（classifier 或直接依赖 core），不许出现「依赖一个 repackage 过的 fat jar」",
+        "completed": false
+      },
+      {
+        "step": "跑后端全量套件，重点 ProjectWorkspaceApiTest / MergeRequestApiTest / TenantIsolationApiTest 三类不能因装配搬迁而漂",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 3,
+    "category": "阶段 2：搬迁与交付形状",
+    "task": "目录搬迁 + 交付路径映射表 + 清单退化（同一刀）",
+    "steps": [
+      {
+        "step": "先对当前底座跑一次 ScaffoldSnapshotPlanner.plan 并把结果落盘留存，作为搬迁后的逐文件比对基线",
+        "completed": false
+      },
+      {
+        "step": "git mv：scaffold-system/ 与 scaffold-vue/ 及其 sql/、deploy/、两份 Dockerfile、docker-compose.yml、README.md、DESIGN.md、AGENTS.md 进 packages/scaffold-app/{backend,vue,sql,deploy,…}",
+        "completed": false
+      },
+      {
+        "step": "平台侧集中到 scaffold-platform/{lowcode,admin,vue,sql}：scaffold-lowcode 模块、平台启动壳、薄宿主前端、V4~V13 与 verify/ 与 13 个平台 IT",
+        "completed": false
+      },
+      {
+        "step": "新增 DeliveryPaths 映射表（backend/** → scaffold-system/**、vue/** → scaffold-vue/**、sql/** → scaffold-system/sql/**），planner 与快照写入器都改用它出路径",
+        "completed": false
+      },
+      {
+        "step": "ScaffoldSourceLocator 判据改成底座新根（backend 的 pom.xml + vue 的 package.json），容器默认挂载路径与 docs/docker-deployment.md 一起改",
+        "completed": false
+      },
+      {
+        "step": "删 EXCLUDED_PATHS 里 V4~V13 十行与 13 行平台 IT/夹具点名、删 deliverySubstitutions 整块；保留 IGNORED_NAMES 与三份残留扫描；SQL 里两对标记块改为把 gen_table DDL 与系统工具菜单种子移入平台 SQL",
+        "completed": false
+      },
+      {
+        "step": "把 lc_tenant 建表明确留在底座 SQL 并在文件头注释原因（登录链每次查租户是否停用）；lc_tenant_config 与其余 lc_* 归平台；菜单 id 段位约定写进两份文件头",
+        "completed": false
+      },
+      {
+        "step": "逐文件字节比对搬迁前后的交付快照，差异必须能逐条解释；解释不了的差异就是缺陷，不许放宽清单抹平",
+        "completed": false
+      },
+      {
+        "step": "改 Dockerfile 与 compose 的构建上下文/挂载路径，docker compose --profile mysql up --build 起得来、四个服务 healthy",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 4,
+    "category": "阶段 2：搬迁与交付形状",
+    "task": "底座身份换成内容指纹 digest",
+    "steps": [
+      {
+        "step": "写红用例：同一 checkout 连续两次 plan 得到同一 digest；改一个文件的字节则 digest 必变；只改平台侧代码则 digest 不变（这条直接治好「落后 109 笔」的噪音）",
+        "completed": false
+      },
+      {
+        "step": "实现规范化哈希（路径排序 + UTF-8 + 统一换行 + 末尾换行规则），规范化细节单列单元用例",
+        "completed": false
+      },
+      {
+        "step": "PlatformBaseTag 与 BaseUpgrade.branchName 的键换成 digest；lc_project / lc_base_upgrade 字段改名 base_scaffold_digest，接口与前端类型同步；新增 packages/scaffold-app/VERSION 与只读的 baseVersion",
+        "completed": false
+      },
+      {
+        "step": "BaseUpgradeService.status() 的落后量从 commitCountBetween 改成「差异文件数」，取不到仍返回 null 而不是 0；删掉不再需要的 headSha 语义依赖",
+        "completed": false
+      },
+      {
+        "step": "base-status 同时回 baseVersion + digest + 后端清单版本三者，任一不一致就在界面上说出来（守住「镜像与 checkout 成对」这条不变式的新表现形式）",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 5,
+    "category": "阶段 2：搬迁与交付形状",
+    "task": "单向依赖机械检查与租户拦截器扫描补全",
+    "steps": [
+      {
+        "step": "后端用例：遍历 packages/scaffold-app 的 src/main/java，断言 import com.scaffold.lowcode. 出现次数为零",
+        "completed": false
+      },
+      {
+        "step": "前端用例：底座目录内不得出现 api/platform、views/lowcode；@/ 别名解析目标必须落在壳自身目录；复用 ScaffoldSnapshotPlanner 那批 token 清单，不另建一份",
+        "completed": false
+      },
+      {
+        "step": "把并入自原第一份的那三条平台专属指纹（平台租户码字面量、lowcode:* 权限码、菜单 id 命中平台保留号段）落成这一刀的 token 来源，每条配一条命中用例与一条不误伤用例（交付项目自身的超管理员 id=1、role 1 授权不得被误判）",
+        "completed": false
+      },
+      {
+        "step": "加一条自监管用例：指纹清单每一项至少被一条用例引用，只加指纹不加用例就失败；删指纹必须同时删其引用，不留空用例",
+        "completed": false
+      },
+      {
+        "step": "负向对照：故意在底座塞一条 com.scaffold.lowcode import 与一条 @/api/platform 引用，确认两条检查当场红",
+        "completed": false
+      },
+      {
+        "step": "改 ScaffoldTenantLineHandlerTest 让它同时解析底座与平台两处 SQL 目录 —— 只扫一处会让平台新表漏登记，等于跨租户泄露而测试看不见",
+        "completed": false
+      },
+      {
+        "step": "负向对照：在平台 SQL 造一张带 tenant_id 的新表且不登记白名单，确认这条用例红",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 6,
+    "category": "阶段 3：交付链验证",
+    "task": "物化演练与整链重建（删仓库重建，按最优验收）",
+    "steps": [
+      {
+        "step": "删掉自测项目的远端仓库与平台工作区，按新结构从零建项目：连通性检查 → 初始化 → 核对交付文件数与 digest",
+        "completed": false
+      },
+      {
+        "step": "建模配字段 → 设计页面 → 发布 v1 → 改一处再发布 v2，确认「B 覆盖 / C 存在即跳过」在新路径下不变（C 档那格必须仍跳过）",
+        "completed": false
+      },
+      {
+        "step": "生成合并请求 → 审清单与行内 diff → 由负责人确认合入主干 → 干净 clone 主干后真跑 npm install + vite build + javac → docker compose up 起来点一次增删改查与导出",
+        "completed": false
+      },
+      {
+        "step": "底座升级闭环重跑一遍：改一处底座代码 → 发起升级 → 界面上生成合并请求（靠第 0 刀那颗按钮）→ 审 → 合入 → 核对新 tag 指向那笔合并提交、digest 推进、读数归零",
+        "completed": false
+      },
+      {
+        "step": "跑后端全量套件与前端三件套，判成败看 Tests run 行数与失败数，不用 | tail 吞退出码；如实记录没验到的部分",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 7,
+    "category": "阶段 3：交付链验证",
+    "task": "项目列表落后列与批量提醒",
+    "steps": [
+      {
+        "step": "写红用例：列表接口能带出每个项目的 baseVersion/digest 与落后状态，且「只改平台代码」的项目状态是不落后",
+        "completed": false
+      },
+      {
+        "step": "列表加「底座」列（x.x.x → y.y.y 可升级的提示形态），沿用 ListPage + useListPage 既有版式，不手搓布局",
+        "completed": false
+      },
+      {
+        "step": "批量入口只做提醒与筛选（列出所有可升级项目并逐个跳转），下发仍逐项目发起 —— 界面文案不许读成「一键全部升级」",
+        "completed": false
+      },
+      {
+        "step": "补一条后端用例：digest 相同但 git sha 不同时，升级请求被「已在当前底座」拒 —— 这正是新身份要买的行为",
+        "completed": false
+      }
+    ],
+    "passes": false
+  },
+  {
+    "number": 8,
+    "category": "阶段 4：文档与规范基线",
+    "task": "口径回写与 spec 基线落地",
+    "steps": [
+      {
+        "step": "AGENTS.md：把 packages/scaffold-ui 那条包内纪律升级为整个 packages/scaffold-app 的纪律（单向依赖 + 机械检查 + 误标当场拒），并写明「交付形状由映射表决定，改底座内部不必改交付」",
+        "completed": false
+      },
+      {
+        "step": "PROJECT_MAP.md：第三/四节模块地图按新目录重画；§九 裁剪条目改写为「目录级隔离 + 映射表 + digest」；第十一节删掉已被本刀消灭的条目（含「排除表要同刀补」那条坑）",
+        "completed": false
+      },
+      {
+        "step": "docs/lowcode-platform-proposal.md：§5.2（digest 身份）、§6.4（映射表与清单退化）、§10.4（落后口径）改写；§10.2 开放项里被本刀关闭的项标掉，「packages/scaffold 搬迁」那条记为已落地",
+        "completed": false
+      },
+      {
+        "step": "docs/docker-deployment.md：新挂载路径、LOWCODE_SCAFFOLD_SOURCE_ROOT 默认值、Dockerfile 上下文变化",
+        "completed": false
+      },
+      {
+        "step": "changelog.md 记这一刀：结构变化、digest 换身份的动机（格一噪音）、清单删了什么、以及整链重建的实际结果",
+        "completed": false
+      },
+      {
+        "step": "建立 spec/specs/{app-shell,delivery-shape,base-identity}/spec.md 基线并把三份 delta 落进去；验收通过后把本变更目录移入 spec/changes/archive/",
+        "completed": false
+      }
+    ],
+    "passes": false
+  }
+]

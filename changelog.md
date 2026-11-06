@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-06（低代码 · 第 0 刀：让升级分支在界面上变成待审合并请求）
+
+`refactor-scaffold-base-package` 提案并入的第一刀，也是最小的一刀。现象是：平台推出 `platform-upgrade/*` 分支后，人没法在界面上把它变成一条待审的合并请求 —— 合并请求页那颗「生成」只传 `projectId`，后端按口径回落**发布分支**；于是点下去得到的是「发布分支 → 主干」的请求，而人以为自己在审升级内容。少带一个字段不会报错，只会让人审错东西。10G 那趟真机闭环因此是从接口侧跑通的，而升级结果屏那句「下一步：在「合并请求」里选 platform-upgrade/xxx → main」指的是件界面上做不到的事。
+
+- **动作逻辑抽成纯函数**（`scaffold-vue/src/views/lowcode/base-upgrade-flow.ts`）：`generateUpgradeMergeRequest(refresh, projectId, record)` 带出 `sourceBranch`；`upgradeMrBlockReason(record)` 是「能不能生成、不能的话为什么」的唯一出处 —— 那颗按钮的禁用 title 和动作的拒绝理由必须同一句话，写在两处就会分叉。状态文案 `UPGRADE_STATUS_TEXT` 从 `projects.vue` 里搬进这个模块，同一理由。
+- **两处入口**：升级结果屏那句「下一步」旁、以及底座读数里那条最近升级记录所在那组的动作区，各一颗 `PermissionButton`（权限沿用既有的 `lowcode:merge-request:sync`，不新增按钮号）。非待合并时按钮禁用并说明原因（已合入 / 陈旧 / 没产生分支），不给一颗点了只会拿报错的按钮；后端两类既有拒绝（远端已无该分支、零差异）原样透出，不改写成「生成失败」。
+- **成功就跳过去**：`router.push('/lowcode/merge-request?projectId=…')`，合并请求页新增读 `route.query.projectId` 作筛选初值（选项值本来就是 `String(id)`，对得上）。跳一页再让人自己挑项目，等于把刚建立的上下文丢掉。
+- **测试**：8 条 `node:test` 用例（`src/views/lowcode/__tests__/base-upgrade-flow.test.ts`），先跑出红 —— 第一次失败原因是 `ERR_MODULE_NOT_FOUND: base-upgrade-flow.ts`，正是待实现的那件事；其中一条断言「文案里的分支名 = 实际送出的来源分支」，就是这条刀要买的那个性质。`scaffold-vue/package.json` 的 `test:unit` glob 补上 `src/views/lowcode/__tests__/*.test.ts`（原来只跑 api 与 designer 两个目录，新目录不补进去会得到一次假绿）。
+- **实际跑过**：前端 55 例全绿（含并入后新加的 8 例）；`vue-tsc --noEmit` 通过；`vite build` 通过。
+- **如实记一条没做的**：**没在浏览器里点过一次**。本机 :8080 那套后端的 `admin` 口令在当前库上不通过（`账号或密码错误`，PR 12 记的是 5174 那套 stack 的口令），而 :5173 与另一套 stack 正被并行会话用着，我不去动共享库里的口令或抢别人的端口。所以「按钮真的能点、跳过去真的筛对项目、后端那句拒绝真的原样显示」这三件事还没被验证过 —— 单测钉住的是 payload 形状与拒绝理由，不是界面。
+
+
 ## 2026-11-06（修复：刷新后左侧导航没定位到当前页面对应的菜单）
 
 - **根因不是竞态**：超管 18 项菜单在 1440×900 下 `.rail-nav` 内容高 945 > 可视带 756，落在 `/lowcode/merge-request` 这类靠后的页面上刷新时，选中玻璃块按内容坐标对位是对的（实测差 1px），但导航仍停在 `scrollTop=0`，那一项连同玻璃块一起停在可视带外 —— 看着就是「导航没有高亮」。顺带排掉一条猜测：外壳入场动画的 `tl.set(..., { y: 8 })` 挂在 paused timeline 上，首帧不生效，`sync()` 量到的就是终位。

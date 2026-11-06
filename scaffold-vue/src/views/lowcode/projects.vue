@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { Descriptions, DescriptionsItem, Drawer, Field, StatusTag, Switch, Tag, Textarea, TextInput, type Column } from '@yuanda-lowcode-ai/scaffold-ui/components/ui'
 import { DictSelect, FormDialog, ListPage, PermissionButton, UserSelect } from '@yuanda-lowcode-ai/scaffold-ui/components/business'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
@@ -8,6 +9,13 @@ import { useListPage } from '@yuanda-lowcode-ai/scaffold-ui/composables/list'
 import { confirm } from '@yuanda-lowcode-ai/scaffold-ui/composables/confirm'
 import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
 import { maxLength, pattern, required, validate } from '@yuanda-lowcode-ai/scaffold-ui/utils/validate'
+import {
+  UPGRADE_STATUS_TEXT,
+  generateUpgradeMergeRequest,
+  upgradeMrBlockReason,
+  upgradeNextStep,
+  type UpgradeRecordLike,
+} from './base-upgrade-flow'
 
 /* ============================================================
    项目管理。项目 = 租户名下的一个 Git 仓库，模型与页面都挂在项目下。
@@ -181,10 +189,15 @@ const baseLoading = ref(false)
 const upgrading = ref(false)
 const stampingTag = ref(false)
 const upgradeResult = ref<BaseUpgradeResult | null>(null)
+const generatingMr = ref(false)
+const router = useRouter()
 
-const UPGRADE_STATUS_TEXT: Record<number, string> = {
-  0: '待合并', 1: '已合入主干', 2: '主干又前进了（陈旧）', 3: '没产生升级分支',
-}
+/* 升级状态文案与拒绝理由住在 base-upgrade-flow.ts：那颗按钮的禁用说明和动作的拒绝理由
+   必须是同一句话，写在两处就会分叉。 */
+const latestUpgrade = computed<UpgradeRecordLike | null>(() => base.value?.latest ?? null)
+const latestMrHint = computed(() => upgradeMrBlockReason(latestUpgrade.value))
+const upgradeResultHint = computed(() => upgradeMrBlockReason(upgradeResult.value))
+const upgradeResultStep = computed(() => upgradeNextStep(upgradeResult.value?.upgradeBranch ?? null, repo.value?.mainBranch))
 
 const baseBehindText = computed(() => {
   if (!base.value) return '—'
@@ -235,6 +248,35 @@ async function runBaseUpgrade() {
     toastError(error, '底座升级失败')
   } finally {
     upgrading.value = false
+  }
+}
+
+/**
+ * 把刚推出去的升级分支变成一条待审的合并请求（方案 §5.2 后半截）。
+ *
+ * 这一笔必须带 sourceBranch：后端留空就按口径回落项目的发布分支，于是界面会心平气和地
+ * 生成一条「发布分支 → 主干」的请求，而人以为自己在审升级内容 —— 少一个字段不会报错，只会审错东西。
+ * 成功后跳到合并请求页并按项目筛好，省掉「指引说去那边，人还得自己找项目」那一跳。
+ */
+async function runGenerateUpgradeMr(record: UpgradeRecordLike | null) {
+  if (!repo.value) return
+  generatingMr.value = true
+  try {
+    const result = await generateUpgradeMergeRequest(
+      (payload) => platformApi.mergeRequests.refresh(payload),
+      repo.value.id,
+      record,
+    )
+    if (!result.ok) {
+      pushToast(result.reason, 'info')
+      return
+    }
+    await router.push({ path: '/lowcode/merge-request', query: { projectId: String(repo.value.id) } })
+    pushToast(`已按 ${result.sourceBranch} 生成合并请求，清单与预检结论见那页`, 'ok')
+  } catch (error) {
+    toastError(error, '生成合并请求失败')
+  } finally {
+    generatingMr.value = false
   }
 }
 
@@ -554,6 +596,14 @@ async function remove(row: ProjectRow) {
                             @click="runBaseUpgrade">
             发起底座升级
           </PermissionButton>
+          <!-- 有升级记录才给这颗按钮；状态不对时禁用并把原因写在 title 上，
+               那句话与动作拒绝的是同一句（upgradeMrBlockReason），不会两处各说一套 -->
+          <PermissionButton v-if="base?.latest" perm="lowcode:merge-request:sync" icon="branch" size="sm"
+                            :loading="generatingMr" :disabled="Boolean(latestMrHint) || baseLoading"
+                            :title="latestMrHint || `把 ${base.latest.upgradeBranch} 变成待审的合并请求：算清单、做预检，合不合仍由人在那页确认`"
+                            @click="runGenerateUpgradeMr(latestUpgrade)">
+            生成合并请求
+          </PermissionButton>
         </template>
         <DescriptionsItem label="底座落后">{{ pending(baseLoading, baseBehindText) }}</DescriptionsItem>
         <DescriptionsItem label="底座当前提交">{{ pending(baseLoading, shortSha(base?.scaffoldSha)) }}</DescriptionsItem>
@@ -576,8 +626,14 @@ async function remove(row: ProjectRow) {
           <li v-for="path in upgradeResult.conflictPaths" :key="'c' + path"><Tag tone="danger" dot>要人解</Tag><span class="mono">{{ path }}</span></li>
           <li v-for="path in upgradeResult.droppedPaths" :key="'d' + path"><Tag tone="neutral" dot>平台撤掉</Tag><span class="mono">{{ path }}</span></li>
         </ul>
-        <p v-if="upgradeResult.commitSha" class="hint">
-          下一步：在「合并请求」里选 {{ upgradeResult.upgradeBranch }} → {{ repo?.mainBranch }} 审这份差异，确认后才进主干。
+        <p v-if="upgradeResultStep" class="hint">
+          {{ upgradeResultStep }}
+          <PermissionButton perm="lowcode:merge-request:sync" icon="branch" size="sm"
+                            :loading="generatingMr" :disabled="Boolean(upgradeResultHint)"
+                            :title="upgradeResultHint || '就地生成这条升级分支的合并请求，省掉去那页找项目的一跳'"
+                            @click="runGenerateUpgradeMr(upgradeResult)">
+            生成合并请求
+          </PermissionButton>
         </p>
       </template>
 

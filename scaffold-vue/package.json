@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "test:api": "node --test --experimental-strip-types src/api/__tests__/*.test.ts src/views/lowcode/designer/__tests__/*.test.ts",
-    "test:unit": "node --test --experimental-strip-types src/api/__tests__/*.test.ts src/views/lowcode/designer/__tests__/*.test.ts",
+    "test:unit": "node --test --experimental-strip-types src/api/__tests__/*.test.ts src/views/lowcode/__tests__/*.test.ts src/views/lowcode/designer/__tests__/*.test.ts",
     "typecheck": "vue-tsc --noEmit",
     "bundle": "vite build",
     "build": "npm run typecheck && npm run bundle",
