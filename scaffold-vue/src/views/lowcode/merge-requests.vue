@@ -265,14 +265,15 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
             @click="toggleFile(file.path)"
           >
             <Icon class="mr-chev" :class="{ 'is-open': expanded === file.path }" name="chevronRight" :size="12" />
-            <span class="mono nm">{{ file.path }}</span>
-            <span v-if="file.oldPath" class="mono dim">← {{ file.oldPath }}</span>
-            <span class="mr-file-tail">
+            <span class="nm mono">{{ file.path }}<span v-if="file.oldPath" class="dim">← {{ file.oldPath }}</span></span>
+            <span class="col-flag">
               <Tag v-if="file.isConflict" tone="danger" dot>要人解</Tag>
-              <Tag :tone="CHANGE_TONE[file.changeType] ?? 'neutral'">{{ file.changeType }}</Tag>
-              <span class="tnum add">+{{ file.additions }}</span>
-              <span class="tnum del">−{{ file.deletions }}</span>
             </span>
+            <span class="col-type">
+              <Tag :tone="CHANGE_TONE[file.changeType] ?? 'neutral'">{{ file.changeType }}</Tag>
+            </span>
+            <span class="col-num tnum add">+{{ file.additions }}</span>
+            <span class="col-num tnum del">−{{ file.deletions }}</span>
           </button>
           <div v-if="expanded === file.path" class="mr-diff">
             <p v-if="diffLoading" class="mr-diff-empty">读取差异…</p>
@@ -372,12 +373,15 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
    这是 sticky 相对各自父块的自然行为，与 GitHub 的文件区同一套，不需要 JS 算位置。
    top 取负是因为 sticky 钉的是滚动容器的内边距下沿：.drawer-body 有 14px 上内边距，
    top:0 会让行头停在下面 14px，差异行从这条缝里穿过看着就像被上面那块内容遮住了。
-   阴影落在紧邻的那条 1px 分隔线上，钉住时把从下面滑过去的差异行切开，平时看不出来。 */
+   阴影落在紧邻的那条 1px 分隔线上，钉住时把从下面滑过去的差异行切开，平时看不出来。
+   列宽写死成 grid：清单是一列一列对着读的。「要人解」只有冲突行才有，不给它自己的列，
+   后面状态与增删数会逐行左右跳；数字右对齐 + .tnum 等宽数位，+167 与 +9 的个位才对得上。 */
 .mr-file-head {
   position: sticky;
   top: -14px;
   z-index: 2;
-  display: flex;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 70px 74px 46px 46px;
   align-items: center;
   gap: 8px;
   width: 100%;
@@ -399,7 +403,6 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
 }
 
 .mr-file-head .nm {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -407,22 +410,23 @@ const expandedLines = computed<Array<{ text: string, kind: string }>>(() => {
   font-size: 12px;
 }
 
-.mr-file-tail {
+.col-flag,
+.col-type {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: none;
+  min-width: 0;
 }
 
-.mr-file-tail .tnum {
+.col-num {
   font-size: 11.5px;
+  text-align: right;
 }
 
-.mr-file-tail .add {
+.col-num.add {
   color: var(--leaf-text);
 }
 
-.mr-file-tail .del {
+.col-num.del {
   color: var(--red-text);
 }
 
