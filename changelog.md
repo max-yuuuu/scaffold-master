@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-06（PR 10：底座升级 —— 把当前底座的 A 档下发给存量项目，走升级分支 + 合并请求）
+
+§5.2 那一格。A 档（pom、app 壳、登录页、Dockerfile、交付改写表）不在页面发布权限里，所以 PR 8 之后攒下的框架级改动一直下发不出去 —— 这一轮补的就是那条唯一的人工闸门。口径先定死三件：**不碰主干**（推一条独立升级分支，之后跟页面发布一样由人审、由人合）、**冲突的文件不写**（只进清单）、**C 档永不被动**（人工写的扩展点平台不猜）。
+
+- **10A 网关的按文件三方合并** `GitGateway.threeWayMerge(dir, baseSha, oursSha, theirsSha, paths)`：一个文件一个结论，五档 `MergeOutcome`（`CLEAN` / `UNCHANGED` / `CONFLICT` / `DROPPED_BY_PLATFORM` / `BINARY`），判据只有一条 —— 平台既不静默删掉项目里有的东西，也不把没编译过的内容写进别人的仓库，所以只有 `CLEAN` 会落进升级分支。三个 JGit 的坑都记在这里：① `MergeResult.getSequences()` 返回的是**三个输入**而不是合并结果，逐段内容必须按 `MergeChunk(getSequenceIndex/getBegin/getEnd)` 回取，直接拿 sequences 拼出来的是 `FROM xCOPY y` 那种鬼东西；② `RawText.writeLine` **不写行终止符**，行与行会在无换行处粘死，所以补 `'\n'` 是我加的而不是它给的；③ JGit 把**相邻行的两处修改也算冲突**（git 命令行会和掉），这不影响正确性 —— 多报的冲突只是把「平台不替你决定」的范围放宽，方向是安全的。
+- **10B theirs 侧的物化** `GitGateway.snapshotCommit(dir, files, message)`：把「按当前底座该交付的 A 档清单」直接写成一个提交（`DirCache.newInCore()` + `DirCacheBuilder`，条目必须规范化排序并带 `setFileMode`，`writeTree(inserter)` 之后 `inserter.insert(CommitBuilder)` —— JGit 没有 `repo.commit()` 这种顺手写法）。清单本身仍出自 `ScaffoldSnapshotPlanner.plan`，与初始化用的是同一把尺：两边算出不同的 A 档，三方合并就变成「平台自己跟自己冲突」。
+- **10C 服务、结论表与落后读数** `BaseUpgradeService.upgrade|status` + `V13__lowcode_base_upgrade.sql`（一次发起一条：`base_scaffold_sha` / `target_scaffold_sha` / `upgrade_branch` / 逐文件结论 JSON / `status` 四档）。三侧的取法各不相同：base = 项目仓库里交付时打的 `yuanda/platform-base/{sha}` tag，ours = 项目主干，theirs = 现生成的快照提交 —— 都不需要平台保留底座历史。动手之前三道拒绝（远端没主干、同名升级分支已存在、base tag 取不到），可自动合的文件一个都没有时**不建分支也不推**，`status=3` 单独一档。读数那条 `commitCountBetween` **数不出来返回 `null`，不是 0**：「0」在界面上读起来是「已是最新」，那是把「我不知道」报成「没问题」。
+- **10D 接口与合并请求接住升级分支**：`GET /projects/{id}/base-status`（沿用 list 权限，纯读）与 `POST /projects/{id}/base-upgrade`（新权限点 `lowcode:project:upgrade`，按钮 5015 —— 它能往租户自己的仓库推分支，跟 V7 把「同步仓库」从「编辑项目」里分出来是同一个理由）。`MergeRequestService.refresh` 多接一个可选 `sourceBranch`，`requireAllowedSource` 只放开 `gen_branch` 与 `platform-upgrade/*` 两类来源 —— 放开成「任意分支」就等于让任何人拿一条分支把内容刷进别人主干的审核队列。登记同刀补齐：`lc_base_upgrade` 进 `ScaffoldTenantLineHandler.TENANT_TABLES`、V13 进 `ScaffoldTrimPolicy` 排除表（这条漏过一次，症状是交付初始化被残留引用扫描拒绝而单测全绿）。
+- **10E 项目抽屉**：仓库抽屉里加「底座」一节 —— 落后读数（数不出来说「数不出来」，不摆一个 0）、发起升级的按钮走 `PermissionButton` 的执行态、结果屏按三档计数说话，并把**冲突清单与「平台撤掉」清单逐条列出来**（这两类平台都不动，人不知道路径就等于没被告知）。
+- **10F 合并成功后把 base 侧搬过来**：`stampBaseTag` 是**重新 clone 目标分支**再打 tag 的 —— 那笔合并提交只活在临时 clone 与远端，平台工作区连这个对象都没有，在工作区里建出来的 tag 指向一个不存在的提交，推都推不上去。tag 照旧只创建不移动。两处失败都按「宁可拦住，不可硬算」收：tag 打不上去**不回滚合并**（合并是真成了，`base_scaffold_sha` 照实推进，只把告警追加进升级记录，下一次升级会被「找不到底座标记 tag」拦住并说明原因）；分支名是 `platform-upgrade/*` 却查不到升级记录时**不猜底座号**，把这句话写进 `check_message` 让人看得见，状态仍留在「已合入」。
+
+**测试与 e2e 实际跑了什么**：`JGitGatewayTest` 19 → **41 例**（真 JGit + 真仓库：三方合并五档各有正反例、快照提交的树形状、`stampBaseTag` 打在分支当前提交上且同名不移动）；`ProjectWorkspaceApiTest` 15 → 16 例（读数与三道拒绝）；`MergeRequestApiTest` 11 → **12 例**，新增那条真机形状 —— 手工造一条 `platform-upgrade/abcdef1`、插一条升级记录、按 `sourceBranch` 预检、由负责人确认合并，然后断言 `base_scaffold_sha` 变了、`yuanda/platform-base/{新sha}` 剥开后正指向那笔合并、升级记录收成 `status=1`、**发布分支原地不动**；`TenantIsolationApiTest` 12 例；后端全量套件 **367 例 0 失败**（common 10 + framework 42 + lowcode 172 + generator 6 + admin 137），前端 `vite build` + `vue-tsc --noEmit` + 45 例单测全绿。**两件如实说的**：① 全量套件**第一次**跑时 `ProjectWorkspaceApiTest` 16 例整类报 `HTTP/1.1 header parser received no bytes`（Tomcat 确实起在 63501 而请求拿不到响应），单跑该类绿、原样重跑整套也绿 —— 判它是本机端口/传输的一次抖动，没改动那个类；② **升级的「真有一笔可自动合」这条主路，服务级 IT 是拿手工分支造的**，因为本机只有一份底座 checkout、base 侧与 theirs 侧永远同一份内容，造不出「平台改了什么」。这条只能在真机上补，就是 10G。
+
+**没做的**：10G 真机演练（升级 → 审 → 合 → 重打 tag → 读数归零）卡在两件用户侧的事 —— 平台账号口令（管理员口令已改，我不猜）与「是否允许写 `test-lowcode-push` 的 `main`」；人工「补打底座标记 tag」这个动作仍缺（PR 8 起就记在待办里），tag 推失败目前只有告警、没有一键补救。
+
 ## 2026-11-06（PR 9：页面回滚 —— 以一笔新提交把那一版的内容推回发布分支）
 
 §10.3 里 P5 的最后一格。锚点 PR 7 就备齐了（`lc_page_version.commit_sha` + `files_snapshot` + tag + `lc_publish_log`），这一轮补的是读路径、写路径与那道「谁有权写」的闸。
