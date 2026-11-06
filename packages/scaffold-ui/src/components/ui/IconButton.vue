@@ -16,6 +16,8 @@ withDefaults(defineProps<{
   small?: boolean
   active?: boolean
   disabled?: boolean
+  /** 执行中：转圈换掉图标并禁用。图标按钮多是行操作，没有这一步就只剩「点了没反应」 */
+  loading?: boolean
 }>(), {
   size: 17,
 })
@@ -28,8 +30,10 @@ withDefaults(defineProps<{
     :title="hint ?? label"
     :aria-label="label"
     :aria-pressed="active"
-    :disabled="disabled"
+    :disabled="disabled || loading"
+    :aria-busy="loading || undefined"
   >
-    <Icon :name="name" :size="size" />
+    <span v-if="loading" class="spinner" aria-hidden="true" />
+    <Icon v-else :name="name" :size="size" />
   </button>
 </template>
