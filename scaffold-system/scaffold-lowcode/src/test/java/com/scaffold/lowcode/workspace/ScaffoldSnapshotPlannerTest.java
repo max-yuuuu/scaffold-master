@@ -72,6 +72,21 @@ class ScaffoldSnapshotPlannerTest {
     }
 
     @Test
+    void 外壳交付版不含平台运营交互() {
+        // 「回到平台租户」调的是 switchTenant：交付项目恒为单租户，这一项点下去永远只会被
+        // PlatformBoundary 挡回来。它写在交付文件里不是坏链接，而是一格永远点不通的 UI ——
+        // 读起来像「这里有入口但坏了」，而事实是「这个产品不提供这个动作」
+        String topbar = textOf("scaffold-vue/src/components/layout/Topbar.vue");
+        assertThat(topbar).doesNotContain("switchTenant");
+        assertThat(topbar).doesNotContain("回到平台租户");
+        // 但当前租户名与「（已切换）」只是登录态数据的展示，底座有这些字段，不该顺手一起砍
+        assertThat(topbar).contains("tenantName");
+        // 申报方本身也不进门：外壳渲染的是「有人申报过的位置」，交付项目里那张表是空的
+        assertThat(topbar).doesNotContain("backToPlatformTenant");
+        assertThat(SNAPSHOT.paths()).noneMatch(path -> path.startsWith("scaffold-vue/src/platform/"));
+    }
+
+    @Test
     void 应用壳的宿主申报入口不进交付项目而裁后的装配仍能编译() {
         // 平台对应用壳的申报（视图解析表 + 壳外路由）指向的是 views/lowcode 里的页面：
         // 交付项目既没有那些页面也没有 /api/lowcode，留下就是一份指向不存在模块的申报

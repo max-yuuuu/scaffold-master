@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, inject, nextTick, onBeforeUnmount, provide, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import Icon from '@yuanda-lowcode-ai/scaffold-ui/components/Icon.vue'
 import IconButton from '@yuanda-lowcode-ai/scaffold-ui/components/ui/IconButton.vue'
 import Avatar from '@yuanda-lowcode-ai/scaffold-ui/components/ui/Avatar.vue'
-import { currentUser, switchTenant } from '@/composables/auth'
-import { pushToast, toastError } from '@yuanda-lowcode-ai/scaffold-ui/composables/toast'
+import { currentUser } from '@/composables/auth'
+import { USER_MENU_API, shellSlotItems } from '@/shell/slots'
 import { overlayEnter, overlayLeave } from '@yuanda-lowcode-ai/scaffold-ui/composables/motion'
 
 const emit = defineEmits<{
@@ -17,7 +17,6 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
-const router = useRouter()
 const chip = ref<HTMLElement | null>(null)
 const pop = ref<HTMLElement | null>(null)
 const menuOpen = ref(false)
@@ -27,23 +26,16 @@ const group = computed(() => route.meta.group as string | undefined)
 const title = computed(() => route.meta.title as string | undefined)
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 
-/** 平台管理员切换到别的租户查看数据时，顶栏要一直显示「正在看哪个租户」并提供回退入口 */
+/** 当前看的是哪个租户 —— 这是登录态里的数据，交付项目也照样有这个字段，所以留在外壳 */
 const tenantName = computed(() => currentUser.value?.tenantName ?? '')
 const isSwitched = computed(() => {
   const user = currentUser.value
   return !!user && user.homeTenantId !== undefined && user.tenantId !== user.homeTenantId
 })
 
-async function backToPlatformTenant() {
-  closeMenu()
-  try {
-    await switchTenant(null)
-    pushToast('已回到平台租户')
-    await router.replace('/')
-  } catch (error) {
-    toastError(error, '回到平台租户失败')
-  }
-}
+/** 这一格渲染宿主申报进来的组件，外壳自己不实现任何一项动作（机制见 `shell/slots.ts`） */
+const userMenuItems = shellSlotItems('user-menu')
+provide(USER_MENU_API, { close: () => closeMenu() })
 
 async function openMenu() {
   const rect = chip.value?.getBoundingClientRect()
@@ -128,7 +120,7 @@ onBeforeUnmount(() => closeMenu())
             <div class="soft" style="font-size: 12px">@{{ currentUser?.username }}<template v-if="currentUser?.deptName"> · {{ currentUser.deptName }}</template></div>
             <div v-if="tenantName" class="soft" style="font-size: 12px">租户：{{ tenantName }}<template v-if="isSwitched">（已切换）</template></div>
           </div>
-          <button v-if="isSwitched" type="button" class="menu-item" role="menuitem" @click="backToPlatformTenant()"><Icon name="home" :size="16" />回到平台租户</button>
+          <component :is="item" v-for="(item, index) in userMenuItems" :key="'slot-' + index" />
           <button type="button" class="menu-item" role="menuitem" @click="pick('password')"><Icon name="key" :size="16" />修改密码</button>
           <button type="button" class="menu-item" role="menuitem" @click="pick('appearance')"><Icon name="contrast" :size="16" />外观设置</button>
           <button type="button" class="menu-item is-danger" role="menuitem" @click="pick('logout')"><Icon name="logout" :size="16" />退出登录</button>

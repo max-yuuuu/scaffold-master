@@ -37,39 +37,43 @@
   },
   {
     "number": 1,
-    "category": "阶段 1：壳包化（①a 贡献点机制已落地，①b 搬平台页面未完）",
-    "task": "前端壳成为 workspace 包并暴露三个贡献点",
+    "category": "阶段 1：壳包化（①a 机制已落地；①b 只做 Topbar 那一处真实隔离，其余并入第③刀）",
+    "task": "应用壳开贡献点：视图与壳外路由可申报（①a），并把顶栏租户切换搬成宿主申报（①b）",
     "steps": [
       {
-        "step": "先写红用例：断言宿主能在不改壳源码的前提下注册一条自己的路由（RouteContribution），且菜单解析认得宿主贡献的 component 路径",
+        "step": "先写红用例：视图注册表能收下宿主贡献的标识、同标识不静默覆盖、拼不出键返回空",
         "completed": true
       },
       {
-        "step": "再写红用例：断言底座目录内不出现 api/platform 与 views/lowcode 字符串、@/ 只解析到壳自身目录（这一条在旧结构上允许暂时红，作为阶段 3 的守卫提前立好）",
-        "completed": false
-      },
-      {
-        "step": "给 scaffold-vue/package.json 加 exports 与包名 @yuanda-lowcode-ai/scaffold-base-app，并确认根 package.json 的 workspaces 已覆盖它",
-        "completed": false
-      },
-      {
-        "step": "新建 src/shell/index.ts：createScaffoldApp({ routes, menuSource, permission, slots })，沿用 installScaffoldUi 的注入形状，不另造第二套契约",
+        "step": "先写红用例：壳外路由按申报顺序追加、同名不覆盖、空申报不产生条目",
         "completed": true
       },
       {
-        "step": "router/index.ts 改为按贡献表建路由：壳自己的 views 用 glob，宿主页面走显式申报；保留 sys_menu.component 到模块路径的既有解析约定",
+        "step": "shell/views.ts + shell/routes.ts 实现，shell/index.ts 装配底座与宿主申报，shell/router.ts 工厂化（守卫与落点逻辑一格未改），删 router/index.ts",
         "completed": true
       },
       {
-        "step": "AppShell.vue / Topbar.vue / Sidebar.vue 开具名插槽，把平台专属那几处（已切换租户指示、低代码入口）从改源码变成填插槽；顺手收掉 AppShell.vue:34 那条手写 820 断点副本，改读包内 narrow.ts",
-        "completed": false
+        "step": "src/platform.ts 收平台侧申报，ScaffoldTrimPolicy 排除表补一行；ScaffoldSnapshotPlannerTest 加一条「裁后 main.ts 仍能编译」用例并跑负向对照（注释掉排除行当场红）",
+        "completed": true
       },
       {
-        "step": "把平台专属页面与 api/platform.ts、components/platform/** 从 scaffold-vue 移到宿主侧新位置，scaffold-vue 里只留底座内容",
-        "completed": false
+        "step": "①b：新增 shell/slots.ts「用户菜单项」注册表（先写红用例），Topbar provide closeUserMenu",
+        "completed": true
       },
       {
-        "step": "跑 vue-tsc + vite build + 前端单测全绿，并在真浏览器点一次登录、菜单跳转、窄屏抽屉，确认 glob 改动没有静默丢页面",
+        "step": "①b：把 switchTenant /「已切换」/「回到平台租户」从 Topbar.vue 搬进平台申报组件，排除表补该目录",
+        "completed": true
+      },
+      {
+        "step": "①b：快照用例断言裁后的 Topbar.vue 不含 switchTenant（这条才是真隔离的证据）",
+        "completed": true
+      },
+      {
+        "step": "原计划的两项已否：820 副本由 proto.test.ts:159 钉住且字面量有意为之；package.json 成为 workspace 包并入第③刀",
+        "completed": true
+      },
+      {
+        "step": "浏览器点验仍未做（本机后端口令在当前库不通、:5173 被并行会话占用）—— 待整链演练一次覆盖",
         "completed": false
       }
     ],

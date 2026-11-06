@@ -2,6 +2,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import type { Component } from 'vue'
 import { registerViews, type ViewContribution, type ViewLoader } from './views'
 import { registerShellRoutes, shellRouteOwner } from './routes'
+import { registerShellSlot } from './slots'
 import { BASE_STATIC_ROUTES, createScaffoldRouter } from './router'
 
 /**
@@ -41,6 +42,8 @@ export interface ShellContribution {
   views?: ViewContribution
   /** 挂在应用壳之外的路由（画布类页面占满视口，套进导航轨就等于切掉两块） */
   routes?: RouteRecordRaw[]
+  /** 外壳扩展位的内容，键是位置名，清单见 `slots.ts` */
+  slots?: Record<string, Component[]>
 }
 
 export interface ShellInstallResult {
@@ -56,7 +59,7 @@ export function createScaffoldApp(contributions: ShellContribution[] = []): Shel
   const warnings: string[] = []
 
   contributions.forEach((contribution) => {
-    const { owner, views, routes } = contribution
+    const { owner, views, routes, slots } = contribution
 
     if (views) {
       registerViews(owner, views).forEach((conflict) => {
@@ -68,6 +71,14 @@ export function createScaffoldApp(contributions: ShellContribution[] = []): Shel
     refusedRoutes.forEach((route) => {
       const name = typeof route.name === 'string' ? route.name : String(route.name ?? route.path)
       warnings.push(`路由名 ${name} 已由 ${shellRouteOwner(name) ?? 'base'} 申报，${owner} 的这条未生效`)
+    })
+
+    Object.entries(slots ?? {}).forEach(([slot, components]) => {
+      components.forEach((component) => {
+        if (!registerShellSlot(owner, slot, component)) {
+          warnings.push(`${owner} 申报到不存在的外壳扩展位 ${slot}，那份内容一格都不会渲染`)
+        }
+      })
     })
   })
 

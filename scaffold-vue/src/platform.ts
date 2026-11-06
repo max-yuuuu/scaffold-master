@@ -1,5 +1,6 @@
 import type { Component } from 'vue'
 import type { ShellContribution } from '@/shell'
+import TenantSwitchMenuItem from './platform/TenantSwitchMenuItem.vue'
 
 /**
  * 平台侧对应用壳的贡献（本文件属平台，不进交付快照 —— 见 `ScaffoldTrimPolicy` 的排除表）。
@@ -18,6 +19,9 @@ export const platformContribution: ShellContribution = {
   views: {
     prefix: './views/',
     modules: import.meta.glob('./views/lowcode/**/*.vue') as Record<string, () => Promise<{ default: Component }>>,
+  },
+  slots: {
+    'user-menu': [TenantSwitchMenuItem],
   },
   routes: [
     {

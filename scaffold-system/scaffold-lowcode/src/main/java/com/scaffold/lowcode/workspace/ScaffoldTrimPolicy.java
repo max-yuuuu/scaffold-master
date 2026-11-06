@@ -83,6 +83,8 @@ public final class ScaffoldTrimPolicy {
             // 平台对应用壳的申报（视图表与壳外路由）。它 import 的是 views/lowcode 里的页面，
             // 交付项目既没有那些页面也没有 /api/lowcode，留下就是一份指向不存在模块的申报
             "scaffold-vue/src/platform.ts",
+            // 平台申报进外壳的内容（顶栏「回到平台租户」那类运营交互）
+            "scaffold-vue/src/platform/",
             // 上面那份客户端的用例：断言写的是 /api/lowcode 与 /api/platform 的真实 URL，
             // 客户端被裁掉了而测试留着，交付项目就是一跑就红。PR 12 只补了源文件这一半，漏了这一半
             "scaffold-vue/src/api/__tests__/platform.test.ts",

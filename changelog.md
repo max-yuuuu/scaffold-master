@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-06（低代码 · 第①刀 b 段：顶栏那处平台运营交互离开交付文件）
+
+①a 给了机制，这一刀给出**第一个真实使用者**：`components/layout/Topbar.vue` 的用户菜单里原本写死着「回到平台租户」—— 它调 `switchTenant`，而交付项目恒为单租户，点下去只会被 `PlatformBoundary` 挡回来。这不是坏链接，而是一格永远点不通的 UI：读起来像「这里有入口但坏了」，事实是「这个产品不提供这个动作」。
+
+- **为什么用外壳扩展位而不是 `scaffold:platform-only` 标记块**（我中途换过一次主意，理由记下来）：这一处交互散在六行上 —— 一条 `switchTenant` 的 import、一条 toast 的 import、`useRouter` 那行、`backToPlatformTenant` 函数体、模板里那一项。埋标记块就要在一个交付文件里放六对，改的人漏掉一对，裁完不是编译不过就是留下半个引用；而这三类错前端单测与 `vue-tsc` 全都看不见（它们跑在未裁剪源码上）。所以 `shell/slots.ts` 只做一件事：外壳只渲染有人申报进这个位置的组件。
+- **只开一个位置**：`SHELL_SLOT_NAMES = ['user-menu']`。申报到清单外的位置**拒收并记下是谁**（`shellSlotRefusals()`），装配处把它写进 warnings —— 拼错位置比不申报更坏，因为界面上一格都不会出现。同一组件重复申报同一位置不产生第二份（dev 重载会跑第二次装配）。
+- **申报方怎么收起菜单**：外壳 `provide(USER_MENU_API, { close })`。不给这个口子，申报方就会去摸外壳的内部状态或 DOM 结构，那等于把菜单的 DOM 变成对宿主的隐式契约。
+- **样式没受影响**（这点值得确认，否则会静默变样）：`.menu-pop .menu-item` 住在物料包的 `layout.css` 里而不是 Topbar 的 scoped 样式，键盘上下键也是从弹层 DOM 里查 `.menu-item` —— 所以申报进来的组件照样继承外观与方向键导航。
+- **交付版断言**：`ScaffoldSnapshotPlannerTest.外壳交付版不含平台运营交互` 断言裁后的 `Topbar.vue` 不含 `switchTenant` / `回到平台租户` / `backToPlatformTenant`，仍含 `tenantName`（当前租户名是登录态数据，交付项目也有，不该顺手砍掉），且清单里没有 `scaffold-vue/src/platform/` 下任何文件。
+- **过程中自己踩到两次同一个形状的错**：注释里写了被禁的字面量，用例红在自己那句话上（改注释而不是放宽断言 —— 交付文件里提一个不存在的目录只会误导读代码的人）；以及多行 old_string 撞上并行会话的改动，改成单行替换才落准。
+- **跑过**：前端 68 例全绿（新增 4 例 slots 用例，先跑正红）、`vue-tsc` 通过、`vite build` 通过、`ScaffoldSnapshotPlannerTest` 15 例全绿。
+- **负向对照跑过**：把排除表里 `scaffold-vue/src/platform/` 那一行注释掉复跑 → 新用例当场红在 `:86`；恢复后 15 例绿。
+- **仍未浏览器点验**：本机 :8080 后端在当前库口令不通、:5173 被并行会话占用，所以「顶栏菜单里那一项真的出现、点它真的能切回平台租户」是靠逻辑搬迁 + 构建通过推断的，不是验证过的。这一条会由第③刀后的整链演练统一补上。
+
+
 ## 2026-11-06（低代码 · 第①刀 a 段：应用壳的贡献点机制，路由与视图不再只认底座自己那一张表）
 
 `refactor-scaffold-base-package` 的第①刀拆成两段，这次是前一段「贡献点机制」。**目录一个没动**，平台页面仍住在 `scaffold-vue/src/views/lowcode/` —— 后一段（①b）才把它们搬去 `scaffold-platform/vue/`。
