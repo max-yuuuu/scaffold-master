@@ -329,6 +329,60 @@ class PagePublishApiTest {
     /* ── 现场 ── */
 
     /**
+     * 版本历史是回滚的取数入口（PR 9）：人得先看清「有哪几版、各是哪一笔提交、里面有哪些文件」，
+     * 才谈得上「退回其中一版」。库里那两张 JSON 列一直在写，之前没有任何读路径 —— 只有写没有读的表
+     * 等于一张收据没人翻。
+     */
+    @Test
+    void 版本历史按版本倒序返回且每一版带着自己的tag与提交号() {
+        Fixture fx = ready();
+        String first = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+        assertThat(put("/api/lowcode/pages/" + fx.pageId, pageBody(fx.projectId, design("含税金额"))).getBody())
+                .containsEntry("code", 200);
+        String second = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+
+        Map<String, Object> data = dataOf(exchange(HttpMethod.GET,
+                "/api/lowcode/pages/" + fx.pageId + "/versions?pageNum=1&pageSize=10", null));
+        assertThat(data).containsEntry("total", 2);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        castList(data.get("rows")).forEach(item -> rows.add(castMap(item)));
+        // 倒序：最新那一版在最上面，「回滚到上一版」在界面上就是第二行那个按钮
+        assertThat(rows).extracting(row -> number(row.get("version"))).containsExactly(2L, 1L);
+        assertThat(rows.get(0)).containsEntry("commitSha", second)
+                .containsEntry("tagName", "v" + fx.projectCode + "-" + PAGE_CODE + "-2")
+                .containsEntry("publishType", "UPDATE");
+        assertThat(rows.get(1)).containsEntry("commitSha", first).containsEntry("publishType", "CREATE");
+        // 文件数在 SQL 里按 JSON_LENGTH 现算：不存计数列（V9 挡掉三个计数的同一口径），也不回传整份快照
+        assertThat(number(rows.get(0).get("fileCount"))).isEqualTo(FILE_COUNT);
+        assertThat(rows.get(0)).doesNotContainKey("filesSnapshot");
+    }
+
+    @Test
+    void 单版详情给出文件清单并标出哪几档不参与回滚() {
+        Fixture fx = ready();
+        String first = String.valueOf(dataOf(publish(fx)).get("commitSha"));
+
+        Map<String, Object> data = dataOf(exchange(HttpMethod.GET,
+                "/api/lowcode/pages/" + fx.pageId + "/versions/1", null));
+        assertThat(data).containsEntry("version", 1).containsEntry("commitSha", first);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        castList(data.get("files")).forEach(item -> rows.add(castMap(item)));
+        assertThat(rows).hasSize(FILE_COUNT);
+        // 档位由 GeneratedPaths.tier 现场反推，而不是信快照：路径是唯一事实源，
+        // 快照里根本没有 tier 这一维（V9 那份只存 路径 → 哈希）
+        assertThat(rows).anySatisfy(row -> {
+            assertThat(row).containsEntry("path", EXTENSION).containsEntry("tier", "EXTENSION")
+                    .containsEntry("rollbackable", false);
+        });
+        assertThat(rows).anySatisfy(row -> {
+            assertThat(row).containsEntry("path", VIEW).containsEntry("tier", "GENERATED")
+                    .containsEntry("rollbackable", true);
+        });
+        // 哈希是回滚前后要对账的那个号，缺了它就只能「信仓库」
+        assertThat(String.valueOf(rows.get(0).get("sha256"))).hasSize(64);
+    }
+
+    /**
      * 一个可发布的现场：项目 + 远端主干 + 模型字段 + 页面设计。
      *
      * <p>主干是预先在远端建好的：项目仓库在真实世界里本来就有主干，初始化走的「clone 主干 → 从主干切发布分支」

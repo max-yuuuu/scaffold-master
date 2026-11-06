@@ -10,6 +10,7 @@ import com.scaffold.lowcode.page.domain.PagePublishRequest;
 import com.scaffold.lowcode.page.domain.PageWriteRequest;
 import com.scaffold.lowcode.page.service.LcPageService;
 import com.scaffold.lowcode.publish.PagePublishService;
+import com.scaffold.lowcode.publish.PageVersionService;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,10 +34,13 @@ public class LcPageController {
 
     private final LcPageService pageService;
     private final PagePublishService publishService;
+    private final PageVersionService versionService;
 
-    public LcPageController(LcPageService pageService, PagePublishService publishService) {
+    public LcPageController(LcPageService pageService, PagePublishService publishService,
+                            PageVersionService versionService) {
         this.pageService = pageService;
         this.publishService = publishService;
+        this.versionService = versionService;
     }
 
     @GetMapping("/pages")
@@ -99,5 +103,22 @@ public class LcPageController {
     @OperLog(module = "页面设计", action = "发布页面")
     public R<Map<String, Object>> publish(@PathVariable Long id, @Valid @RequestBody PagePublishRequest request) {
         return R.success(publishService.publish(id, request.isForce(), request.getChangeDesc()));
+    }
+
+    /**
+     * 版本历史（PR 9 的回滚入口）。读的是库里那本账，一步都不碰仓库，所以权限沿用
+     * {@code lowcode:page:list} —— 给「看历史」单独开一个权限点，只会让菜单里的按钮越点越多。
+     */
+    @GetMapping("/pages/{id}/versions")
+    @RequiresPermission("lowcode:page:list")
+    public R<PageResult<Map<String, Object>>> versions(@PathVariable Long id, PageQuery query) {
+        return R.success(versionService.versions(id, query));
+    }
+
+    /** 单版详情：文件清单带档位，文件级回滚就是在这份清单里挑 B 档那几个 */
+    @GetMapping("/pages/{id}/versions/{version}")
+    @RequiresPermission("lowcode:page:list")
+    public R<Map<String, Object>> version(@PathVariable Long id, @PathVariable Integer version) {
+        return R.success(versionService.detail(id, version));
     }
 }
