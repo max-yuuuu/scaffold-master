@@ -139,6 +139,11 @@ public class LocalBareGitGateway implements GitGateway {
         return jgit.fileDiff(dir, baseSha, headSha, path);
     }
 
+    @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        return jgit.commitCountBetween(repoDir, fromSha, toSha);
+    }
+
     /** 升级同样照真 JGit 走，远端地址映射到本机裸仓库 —— 否则用例会去推真 GitHub */
     @Override
     public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,

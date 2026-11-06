@@ -57,6 +57,7 @@ public final class ScaffoldTrimPolicy {
             "scaffold-system/sql/V10__lowcode_merge_request.sql",
             "scaffold-system/sql/V11__lowcode_merge_review.sql",
             "scaffold-system/sql/V12__lowcode_page_rollback.sql",
+            "scaffold-system/sql/V13__lowcode_base_upgrade.sql",
             // 双租户越权验收脚本，只在平台侧有意义
             "scaffold-system/sql/verify/",
             // 平台侧验收用例：测的是 /api/lowcode 与 /api/platform，交付项目里没有这些接口，留下就是必然失败的测试。

@@ -216,4 +216,14 @@ public interface GitGateway {
      */
     BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
                             Map<String, byte[]> snapshotFiles, String upgradeBranch, String message);
+
+    /**
+     * 底座 checkout 从 {@code fromSha} 到 {@code toSha} 走了几个提交 —— 项目列表那个「落后 N 个底座提交」
+     * 的读数就靠它（方案 §10.4：平台镜像与底座 checkout 必须成对更新，读数就是这条不变式有没有被打破的表针）。
+     *
+     * <p><b>数不出来返回 {@code null}，不是 0。</b>「0」在界面上读起来是「已是最新」，那是把「我不知道」
+     * 报成「没问题」，比不报更坏：底座 checkout 不是 git 仓库、那一笔不在历史里（项目是在记不到 sha
+     * 的版本上初始化的）、或者只是读仓库时出了 IO 错误，这三种都要走退化分支去给文件级差异清单。
+     */
+    Integer commitCountBetween(Path repoDir, String fromSha, String toSha);
 }

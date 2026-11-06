@@ -584,6 +584,34 @@ public class JGitGateway implements GitGateway {
 
 
 
+
+    @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        if (repoDir == null || fromSha == null || toSha == null || !Files.isDirectory(repoDir)) {
+            return null;
+        }
+        try (Git git = open(repoDir); RevWalk walk = new RevWalk(git.getRepository())) {
+            ObjectId from = git.getRepository().resolve(fromSha + "^{commit}");
+            ObjectId to = git.getRepository().resolve(toSha + "^{commit}");
+            if (from == null || to == null) {
+                return null;
+            }
+            if (from.equals(to)) {
+                return 0;
+            }
+            walk.markStart(walk.parseCommit(to));
+            walk.markUninteresting(walk.parseCommit(from));
+            int count = 0;
+            for (RevCommit ignored : walk) {
+                count++;
+            }
+            return count;
+        } catch (IOException e) {
+            // 读不出就报读不出：把 IO 错误换算成 0 会让「底座 checkout 坏了」看起来像「项目已是最新」
+            return null;
+        }
+    }
+
     @Override
     public BaseUpgrade baseUpgrade(Path workspace, String repoUrl, String mainBranch, String baseTag,
                                    Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {

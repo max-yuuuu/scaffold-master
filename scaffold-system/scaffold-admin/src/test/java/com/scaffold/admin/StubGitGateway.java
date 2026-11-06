@@ -191,6 +191,11 @@ public class StubGitGateway implements GitGateway {
     }
 
     @Override
+    public Integer commitCountBetween(Path repoDir, String fromSha, String toSha) {
+        throw new UnsupportedOperationException("StubGitGateway 没有提交历史可数：落后读数要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");
+    }
+
+    @Override
     public BaseUpgrade baseUpgrade(java.nio.file.Path workspace, String repoUrl, String mainBranch, String baseTag,
                                    java.util.Map<String, byte[]> snapshotFiles, String upgradeBranch, String message) {
         throw new UnsupportedOperationException("StubGitGateway 不做底座升级：三方合并与升级分支要用真 JGit，见 JGitGatewayTest 或 LocalBareGitGateway");

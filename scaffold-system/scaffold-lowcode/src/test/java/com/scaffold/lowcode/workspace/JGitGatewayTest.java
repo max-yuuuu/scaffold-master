@@ -710,6 +710,43 @@ class JGitGatewayTest {
                 .hasMessageContaining("platform-upgrade/taken");
     }
 
+    /**
+     * 落后读数（§10.4 那条不变式的正面）：底座 checkout 能数出从交付那一版到现在走了几步。
+     *
+     * <p>数不出来时必须返回 null 而不是 0 —— 「0」在界面上是「已是最新」，
+     * 那是把「我不知道」报成「没问题」，比不报更坏。
+     */
+    @Test
+    void 底座checkout能数出从交付版本到当前走了几个提交() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String delivered = gateway.commitAll(workspace, "chore: 交付时那一版");
+        write(workspace, "b.txt", "2\n");
+        gateway.commitAll(workspace, "feat: 底座往前走了一步");
+        write(workspace, "c.txt", "3\n");
+        String head = gateway.commitAll(workspace, "feat: 又走了一步");
+
+        assertThat(gateway.commitCountBetween(workspace, delivered, head)).isEqualTo(2);
+        assertThat(gateway.commitCountBetween(workspace, head, head)).isZero();
+        // 同一个号自己比自己是 0，这条给「已是最新」用
+        assertThat(gateway.commitCountBetween(workspace, delivered, delivered)).isZero();
+    }
+
+    @Test
+    void 数不出来时返回null而不是0() throws IOException {
+        Path workspace = tempDir.resolve("workspace");
+        gateway.initEmpty(workspace, remoteUrl, "main");
+        write(workspace, "a.txt", "1\n");
+        String sha = gateway.commitAll(workspace, "chore: 起点");
+
+        // 底座 checkout 不是 git 仓库、或那一笔不在历史里（比如项目是在记不到 sha 的版本上初始化的），
+        // 这两种都要退化成「只给文件级差异清单」，而不是报一个看起来可靠的 0
+        assertThat(gateway.commitCountBetween(workspace, "0123456789abcdef0123456789abcdef01234567", sha)).isNull();
+        assertThat(gateway.commitCountBetween(workspace, sha, "0123456789abcdef0123456789abcdef01234567")).isNull();
+        assertThat(gateway.commitCountBetween(tempDir.resolve("不是仓库"), sha, sha)).isNull();
+    }
+
     private String branchSha(String repoUrl, String branch) {
         return gateway.lsRemote(repoUrl).stream().filter(ref -> branch.equals(ref.branchName()))
                 .findFirst().orElseThrow(() -> new AssertionError("远端没有分支 " + branch)).sha();
