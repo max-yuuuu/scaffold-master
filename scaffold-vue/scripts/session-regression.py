@@ -162,6 +162,27 @@ async def main(base_url):
             assert await page.locator(".nav-item").count() == 12, "管理员菜单不完整"
             await page.unroute("**/api/health")
             await page.unroute("**/api/auth/logout")
+
+            # 刷新/冷启动落在滚动区之外的菜单项上时，导航要滚到那一项，选中玻璃块停在其上；
+            # 菜单一长（超管 18 项）最后一项在 720 高的视口里本来就在可视带外
+            await page.locator(".nav-item").last.click()
+            await page.wait_for_load_state("networkidle")
+            await page.reload()
+            await page.locator(".nav-item.is-active").wait_for()
+            located = await page.evaluate("""() => {
+              const rail = document.querySelector('.rail-nav');
+              const item = document.querySelector('.nav-item.is-active').getBoundingClientRect();
+              const band = rail.getBoundingClientRect();
+              const thumb = document.querySelector('.nav-thumb').getBoundingClientRect();
+              return {
+                scrollTop: Math.round(rail.scrollTop),
+                inView: item.top >= band.top - 1 && item.bottom <= band.bottom + 1,
+                gap: Math.round(Math.abs(thumb.top - item.top)),
+              };
+            }""")
+            assert located["inView"] and located["gap"] <= 2, f"刷新后导航未定位到当前页面对应的菜单：{located}"
+            print("PASS: 刷新后导航定位到当前页面对应的菜单项")
+
             await sign_out(page)
             await sign_in(page, "chensy", password, "/no-access")
             await expect(page.get_by_text("暂未分配可用菜单", exact=True)).to_be_visible()
