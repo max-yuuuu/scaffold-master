@@ -38,6 +38,14 @@ test('空白设计只有一个页面容器，区块要拖进来才有', () => {
   assert.deepEqual(json.layout.children, [])
 })
 
+test('按模型初始化时工具栏默认带导出，行操作默认带编辑与删除', () => {
+  const store = createDesigner(initFromModel(fields))
+  // 「列表页默认具备导出」是脚手架的准则，老链路（没有设计）本来就有这两样；设计器这条新链路
+  // 不能把它丢掉 —— 但补的位置是**设计里**，不是生成时凭空加：画布上看不见的东西不该出现在产物里
+  assert.deepEqual(store.childrenOf('Toolbar').map((node: any) => node.props.action), ['create', 'export'])
+  assert.deepEqual(store.childrenOf('RowActions').map((node: any) => node.props.action), ['edit', 'delete'])
+})
+
 test('按模型初始化时标志位决定初始摆位，自增主键不进表单', () => {
   const store = createDesigner(initFromModel(fields))
   store.setModel('sales_order')
